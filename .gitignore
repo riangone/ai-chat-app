@@ -1,0 +1,21 @@
+# .gitignore for AiChatApp
+
+# .NET
+bin/
+obj/
+*.pdb
+*.user
+*.lock.json
+
+# SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+app.pid
+
+# OS
+.DS_Store
+Thumbs.db
