@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - AI Chat Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.0/dist/full.min.css" rel="stylesheet" />
+</head>
+<body class="bg-base-200 h-screen flex items-center justify-center">
+    <div class="card w-96 bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title justify-center text-2xl font-bold mb-4">Login</h2>
+            <form action="/api/auth/login" method="POST">
+                <div class="form-control w-full">
+                    <label class="label"><span class="label-text">Username</span></label>
+                    <input name="username" type="text" placeholder="username" class="input input-bordered w-full" required />
+                </div>
+                <div class="form-control w-full mt-4">
+                    <label class="label"><span class="label-text">Password</span></label>
+                    <input name="password" type="password" placeholder="password" class="input input-bordered w-full" required />
+                </div>
+                <div class="card-actions justify-end mt-6 flex-col gap-2">
+                    <button class="btn btn-primary w-full">Login</button>
+                    <a href="/register" class="link link-hover text-sm text-center w-full">Don't have an account? Register</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
