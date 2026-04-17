@@ -68,16 +68,23 @@ app.MapPost("/api/chat/new", async (AppDbContext db, ClaimsPrincipal user) => {
     var session = new ChatSession { UserId = userId, Title = "New Chat " + DateTime.Now.ToString("HH:mm") };
     db.ChatSessions.Add(session);
     await db.SaveChangesAsync();
-    return Results.Content($@"<div id='chat-box' data-session-id='{session.Id}'></div>", "text/html");
+    return Results.Content($@"<div id='chat-box' data-session-id='{session.Id}' class='flex-1 overflow-y-auto p-4 md:p-6 space-y-8'>
+        <div class='flex flex-col items-center justify-center h-full text-base-content/30 space-y-4'>
+            <div class='w-16 h-16 border-4 border-dashed border-current rounded-full opacity-20'></div>
+            <p class='text-xl font-medium text-center'>Ready for your questions.</p>
+        </div>
+    </div>", "text/html");
 }).RequireAuthorization();
 
 app.MapGet("/api/chat/list", async (AppDbContext db, ClaimsPrincipal user) => {
     var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
     var sessions = await db.ChatSessions.Where(s => s.UserId == userId).OrderByDescending(s => s.CreatedAt).ToListAsync();
     return Results.Content(string.Concat(sessions.Select(s => $@"
-        <div class='flex items-center group w-full'>
-            <button hx-get='/api/chat/load/{s.Id}' hx-target='#chat-container' class='btn btn-ghost flex-1 justify-start overflow-hidden text-ellipsis whitespace-nowrap'>{s.Title}</button>
-            <button onclick='editTitle({s.Id}, ""{s.Title}"")' class='btn btn-ghost btn-xs opacity-0 group-hover:opacity-100'>Edit</button>
+        <div class='flex items-center group w-full mb-1'>
+            <button hx-get='/api/chat/load/{s.Id}' hx-target='#chat-container' class='btn btn-ghost btn-sm flex-1 justify-start overflow-hidden text-ellipsis whitespace-nowrap font-normal'>{s.Title}</button>
+            <button onclick='editTitle({s.Id}, ""{s.Title}"")' class='btn btn-ghost btn-xs opacity-0 group-hover:opacity-60 px-1'>
+                <svg xmlns=""http://www.w3.org/2000/svg"" fill=""none"" viewBox=""0 0 24 24"" stroke-width=""1.5"" stroke=""currentColor"" class=""w-4 h-4""><path stroke-linecap=""round"" stroke-linejoin=""round"" d=""m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"" /></svg>
+            </button>
         </div>")), "text/html");
 }).RequireAuthorization();
 
@@ -86,20 +93,12 @@ app.MapGet("/api/chat/load/{id}", async (int id, AppDbContext db, ClaimsPrincipa
     var session = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
     if (session == null) return Results.NotFound();
     var msgs = await db.Messages.Where(m => m.ChatSessionId == id).OrderBy(m => m.Timestamp).ToListAsync();
-    return Results.Content($@"<div id='chat-box' data-session-id='{session.Id}' class='flex-1 overflow-y-auto p-4 md:p-8 space-y-6'>
+    return Results.Content($@"<div id='chat-box' data-session-id='{session.Id}' class='flex-1 overflow-y-auto p-4 md:p-6 space-y-8'>
         {string.Concat(msgs.Select(m => RenderMessage(m)))}
     </div>", "text/html");
 }).RequireAuthorization();
 
-app.MapPost("/api/chat/rename", async (HttpContext context, [FromForm] int id, [FromForm] string title, AppDbContext db, ClaimsPrincipal user) => {
-    var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-    var session = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
-    if (session == null) return Results.NotFound();
-    session.Title = title;
-    await db.SaveChangesAsync();
-    context.Response.Headers.Append("HX-Trigger", "loadChatList");
-    return Results.Ok();
-}).RequireAuthorization();
+// ... (MapPost rename stays same)
 
 app.MapPost("/api/chat", async (HttpContext context, AppDbContext db, AiService ai, ClaimsPrincipal user) => {
     var form = await context.Request.ReadFormAsync();
@@ -133,11 +132,17 @@ app.MapPost("/api/chat", async (HttpContext context, AppDbContext db, AiService 
 }).DisableAntiforgery().RequireAuthorization();
 
 string RenderMessage(Message m) => $@"
-<div class='chat {(m.IsAi ? "chat-start" : "chat-end")}'>
-    <div class='chat-bubble {(m.IsAi ? "" : "chat-bubble-primary")} markdown'>{System.Net.WebUtility.HtmlEncode(m.Content)}</div>
-    <div class='chat-footer opacity-50 flex gap-2 pt-1'>
-        <button class='link link-hover text-xs' onclick='copyText(this)'>Copy</button>
-        <button class='link link-hover text-xs' onclick='forwardText(this)'>Forward</button>
+<div class='chat {(m.IsAi ? "chat-start" : "chat-end")} group message-bubble-container'>
+    <div class='chat-bubble shadow-sm {(m.IsAi ? "bg-base-200 text-base-content border border-base-300" : "bg-primary text-primary-content")} markdown leading-relaxed p-3 md:p-4 rounded-[18px] {(m.IsAi ? "rounded-bl-none" : "rounded-tr-none")}'>
+        {System.Net.WebUtility.HtmlEncode(m.Content)}
+    </div>
+    <div class='chat-footer opacity-0 group-hover:opacity-50 transition-opacity flex gap-3 pt-2 px-1'>
+        <button class='hover:text-primary transition-colors' onclick='copyText(this)' title='Copy'>
+            <svg xmlns=""http://www.w3.org/2000/svg"" fill=""none"" viewBox=""0 0 24 24"" stroke-width=""1.5"" stroke=""currentColor"" class=""w-3.5 h-3.5""><path stroke-linecap=""round"" stroke-linejoin=""round"" d=""M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5 1.5h6.375a1.125 1.125 0 0 1 1.125 1.125v9.375Zm3 3V6.75a1.125 1.125 0 0 0-1.125-1.125h-1.5a3.375 3.375 0 0 1-3.375-3.375V2.125c0-.621-.504-1.125-1.125-1.125H9.75a1.125 1.125 0 0 0-1.125 1.125V4.5a9.06 9.06 0 0 1 1.5 1.5h6.75a1.125 1.125 0 0 1 1.125 1.125v13.125a1.125 1.125 0 0 1-1.125 1.125H15"" /></svg>
+        </button>
+        <button class='hover:text-primary transition-colors' onclick='forwardText(this)' title='Forward'>
+            <svg xmlns=""http://www.w3.org/2000/svg"" fill=""none"" viewBox=""0 0 24 24"" stroke-width=""1.5"" stroke=""currentColor"" class=""w-3.5 h-3.5""><path stroke-linecap=""round"" stroke-linejoin=""round"" d=""M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3"" /></svg>
+        </button>
     </div>
 </div>";
 

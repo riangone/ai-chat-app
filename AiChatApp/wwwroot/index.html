@@ -9,26 +9,70 @@
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.0/dist/full.min.css" rel="stylesheet" />
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
-        .htmx-indicator {
-            display: none;
-        }
-        .htmx-request .htmx-indicator {
-            display: inline-block;
-        }
-        .htmx-request button, .htmx-request input, .htmx-request select {
+        .htmx-indicator { display: none; }
+        .htmx-request .htmx-indicator { display: inline-block; }
+        .htmx-request button, .htmx-request input, .htmx-request select, .htmx-request textarea {
             pointer-events: none;
             opacity: 0.6;
         }
         
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
+            from { opacity: 0; transform: translateY(15px); }
             to { opacity: 1; transform: translateY(0); }
         }
-        .chat {
-            animation: fadeIn 0.3s ease-out forwards;
+        .chat { animation: fadeIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+        #chat-box { scroll-behavior: smooth; }
+
+        /* Typing Indicator Animation */
+        .typing-dot {
+            width: 4px;
+            height: 4px;
+            background: currentColor;
+            border-radius: 50%;
+            display: inline-block;
+            animation: bounce 1.4s infinite ease-in-out both;
         }
-        #chat-box {
-            scroll-behavior: smooth;
+        .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+        .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); opacity: 0.3; }
+            40% { transform: scale(1); opacity: 1; }
+        }
+        
+        /* UI-design.md Specifications */
+        .markdown pre {
+            overflow-x: auto;
+            max-width: 100%;
+            border-radius: 8px;
+            margin: 0.5rem 0;
+        }
+        .markdown table {
+            display: block;
+            overflow-x: auto;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+        .markdown th, .markdown td {
+            border: 1px solid currentColor;
+            padding: 0.5rem;
+            opacity: 0.8;
+        }
+        
+        /* Auto-expanding textarea */
+        .input-container textarea {
+            min-height: 44px;
+            max-height: 200px;
+            resize: none;
+            overflow-y: hidden; /* Hide scrollbar during auto-expand */
+        }
+        
+        /* Message container centering */
+        .message-bubble-container {
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+            width: 100%;
         }
     </style>
 </head>
@@ -36,112 +80,128 @@
     <div class="drawer lg:drawer-open h-screen">
         <input id="my-drawer" type="checkbox" class="drawer-toggle" />
         <div class="drawer-content flex flex-col h-screen overflow-hidden bg-base-100">
-            <!-- Navbar -->
-            <div class="navbar bg-base-100 border-b lg:hidden flex-none">
+            <!-- Navbar (Mobile Only) -->
+            <div class="navbar bg-base-100/80 backdrop-blur border-b lg:hidden flex-none px-4 min-h-[3.5rem] sticky top-0 z-10">
                 <div class="flex-none">
                     <label for="my-drawer" class="btn btn-square btn-ghost">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-5 h-5 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="w-6 h-6 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
                     </label>
                 </div>
                 <div class="flex-1">
-                    <a class="btn btn-ghost normal-case text-xl">AI Chat Pro</a>
+                    <a class="text-lg font-bold ml-2">AI Chat Pro</a>
                 </div>
             </div>
 
             <!-- Chat Container -->
-            <main id="chat-container" class="flex-1 flex flex-col overflow-hidden">
-                <div id="chat-box" class="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
-                    <div class="flex items-center justify-center h-full text-base-content/50">
-                        Select a chat or start a new one
+            <main id="chat-container" class="flex-1 flex flex-col overflow-hidden relative">
+                <div id="chat-box" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-8">
+                    <div class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4">
+                        <div class="w-16 h-16 border-4 border-dashed border-current rounded-full opacity-20"></div>
+                        <p class="text-xl font-medium text-center">How can I help you today?</p>
                     </div>
                 </div>
             </main>
 
-            <!-- Input Area -->
-            <footer class="p-4 bg-base-100 border-t flex-none">
-                <form id="chat-form" hx-post="/api/chat" hx-target="#chat-box" hx-swap="beforeend" 
-                      hx-on::after-request="if(event.detail.successful) { this.reset(); scrollToBottom(); }"
-                      hx-indicator="#loading-spinner"
-                      class="max-w-4xl mx-auto">
-                    <input type="hidden" name="sessionId" id="session-id-input" />
-                    <div class="flex gap-2">
-                        <select name="provider" class="select select-bordered focus:outline-none">
-                            <option value="gemini" selected>Gemini</option>
-                            <option value="gh-copilot">Copilot</option>
-                        </select>
-                        <div class="relative flex-1">
-                            <input name="content" id="chat-input" type="text" placeholder="Message AI..." 
-                                   class="input input-bordered w-full pr-12" required autocomplete="off" />
-                            <button type="button" class="absolute right-2 top-2 btn btn-ghost btn-xs" 
-                                    onclick="document.getElementById('chat-input').value=''; document.getElementById('chat-input').focus();">✕</button>
+            <!-- Input Area (Floating Style) -->
+            <footer class="p-4 md:p-6 bg-gradient-to-t from-base-100 via-base-100 to-transparent flex-none">
+                <div class="max-w-3xl mx-auto relative">
+                    <form id="chat-form" hx-post="/api/chat" hx-target="#chat-box" hx-swap="beforeend" 
+                          hx-on::after-request="if(event.detail.successful) { this.reset(); resetInputHeight(); scrollToBottom(); }"
+                          hx-indicator="#loading-spinner"
+                          class="input-container relative bg-base-200 rounded-[24px] shadow-2xl border border-base-300 transition-all focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 flex flex-col p-2">
+                        
+                        <input type="hidden" name="sessionId" id="session-id-input" />
+                        
+                        <!-- Top Bar: Provider Select -->
+                        <div class="flex items-center px-2 pt-1">
+                            <select name="provider" class="select select-ghost select-xs focus:outline-none focus:bg-base-300 rounded-full opacity-60 hover:opacity-100 transition-all">
+                                <option value="gemini" selected>Gemini 2.0</option>
+                                <option value="gh-copilot">GitHub Copilot</option>
+                            </select>
                         </div>
-                        <button type="submit" class="btn btn-primary px-6" id="send-btn">
-                            <span id="loading-spinner" class="loading loading-spinner loading-sm htmx-indicator"></span>
-                            <span>Send</span>
-                        </button>
-                    </div>
-                </form>
+
+                        <!-- Main Content: Textarea + Send -->
+                        <div class="flex items-end gap-2">
+                            <!-- Real Multi-line Input -->
+                            <textarea name="content" id="chat-input" placeholder="Message AI... (Ctrl+Enter to send)" 
+                                      class="textarea textarea-ghost focus:bg-transparent focus:outline-none w-full py-3 px-3 leading-relaxed text-base min-h-[44px]"
+                                      required autocomplete="off"
+                                      oninput="autoExpand(this)"></textarea>
+
+                            <!-- Send Button -->
+                            <div class="flex-none pb-1.5 pr-1.5">
+                                <button type="submit" class="btn btn-circle btn-primary btn-sm md:btn-md shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95 disabled:bg-base-300" id="send-btn">
+                                    <span id="loading-spinner" class="loading loading-spinner loading-xs htmx-indicator"></span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 md:h-6 md:w-6 transform transition-transform group-active:translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                    <p class="text-[10px] text-center mt-2 opacity-40">AI can make mistakes. Check important info.</p>
+                </div>
             </footer>
         </div>
 
         <!-- Sidebar -->
         <div class="drawer-side border-r z-20">
             <label for="my-drawer" class="drawer-overlay"></label>
-            <div class="p-4 w-80 bg-base-100 h-full flex flex-col gap-4">
-                <div class="flex items-center justify-between mb-2">
-                    <span class="text-xl font-bold">AI Chat Pro</span>
+            <div class="p-4 w-72 md:w-80 bg-base-100 h-full flex flex-col gap-6">
+                <div class="flex items-center justify-between px-2">
                     <div class="flex items-center gap-2">
-                        <div class="dropdown dropdown-end">
-                            <div tabindex="0" role="button" class="btn btn-ghost btn-xs">Theme</div>
-                            <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-200 rounded-box w-52 max-h-96 overflow-y-auto">
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Default" value="default"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Light" value="light"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Dark" value="dark"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Cupcake" value="cupcake"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Bumblebee" value="bumblebee"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Emerald" value="emerald"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Corporate" value="corporate"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Synthwave" value="synthwave"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Retro" value="retro"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Cyberpunk" value="cyberpunk"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Valentine" value="valentine"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Halloween" value="halloween"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Garden" value="garden"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Forest" value="forest"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Aqua" value="aqua"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Lofi" value="lofi"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Pastel" value="pastel"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Fantasy" value="fantasy"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Wireframe" value="wireframe"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Black" value="black"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Luxury" value="luxury"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Dracula" value="dracula"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Cmyk" value="cmyk"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Autumn" value="autumn"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Business" value="business"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Acid" value="acid"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Lemonade" value="lemonade"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Night" value="night"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Coffee" value="coffee"/></li>
-                                <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Winter" value="winter"/></li>
-                            </ul>
-                        </div>
-                        <form action="/api/auth/logout" method="POST">
-                            <button class="btn btn-ghost btn-xs text-error">Logout</button>
-                        </form>
+                        <div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-primary-content font-bold">A</div>
+                        <span class="text-xl font-bold tracking-tight">AI Chat Pro</span>
                     </div>
+                    <div class="dropdown dropdown-end">
+                        <div tabindex="0" role="button" class="btn btn-ghost btn-xs opacity-50">Theme</div>
+                        <!-- (Theme menu remains same) -->
+                        <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-200 rounded-box w-52 max-h-96 overflow-y-auto">
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Default" value="default"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Light" value="light"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Dark" value="dark"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Cupcake" value="cupcake"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Bumblebee" value="bumblebee"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Emerald" value="emerald"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Corporate" value="corporate"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Synthwave" value="synthwave"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Retro" value="retro"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Cyberpunk" value="cyberpunk"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Valentine" value="valentine"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Halloween" value="halloween"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Garden" value="garden"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Forest" value="forest"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Aqua" value="aqua"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Lofi" value="lofi"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Pastel" value="pastel"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Fantasy" value="fantasy"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Wireframe" value="wireframe"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Black" value="black"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Luxury" value="luxury"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Dracula" value="dracula"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Cmyk" value="cmyk"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Autumn" value="autumn"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Business" value="business"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Acid" value="acid"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Lemonade" value="lemonade"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Night" value="night"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Coffee" value="coffee"/></li>
+                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Winter" value="winter"/></li>
+                        </ul>
+                    </div>
+                    <form action="/api/auth/logout" method="POST">
+                        <button class="btn btn-ghost btn-xs text-error">Logout</button>
+                    </form>
                 </div>
                 
-                <button hx-post="/api/chat/new" hx-target="#chat-container" class="btn btn-primary w-full">+ New Chat</button>
+                <button hx-post="/api/chat/new" hx-target="#chat-container" class="btn btn-primary w-full shadow-md font-bold text-lg">+ New Chat</button>
                 
-                <div class="divider text-xs opacity-50 uppercase font-bold">Recent Chats</div>
+                <div class="divider text-[10px] opacity-30 uppercase font-bold tracking-widest px-2">Recent</div>
                 
-                <div id="chat-list" hx-get="/api/chat/list" hx-trigger="load, loadChatList from:body" class="flex-1 flex flex-col gap-1 overflow-y-auto pr-2">
+                <div id="chat-list" hx-get="/api/chat/list" hx-trigger="load, loadChatList from:body" class="flex-1 flex flex-col gap-1 overflow-y-auto pr-2 custom-scrollbar">
                     <!-- Chat list items will load here -->
                 </div>
                 
-                <div class="mt-auto pt-4 border-t text-xs text-center opacity-50">
-                    v2.0 - Gemini Terminal Wrapper
+                <div class="mt-auto pt-4 border-t border-base-300/50 text-[10px] text-center opacity-30">
+                    AiChatApp v2.0 • Build 2026
                 </div>
             </div>
         </div>
@@ -181,14 +241,63 @@
 
         initTheme();
 
+        // Handle Textarea Keys: Ctrl+Enter to Send, Enter to newline
+        const chatInput = document.getElementById('chat-input');
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && e.ctrlKey) {
+                e.preventDefault();
+                if (chatInput.value.trim() && !document.body.classList.contains('htmx-request')) {
+                    htmx.trigger('#chat-form', 'submit');
+                }
+            }
+        });
+
+        function autoExpand(el) {
+            el.style.height = 'auto';
+            el.style.height = (el.scrollHeight) + 'px';
+            // Show scrollbar only if exceeding max-height (200px)
+            if (el.scrollHeight > 200) {
+                el.style.overflowY = 'auto';
+            } else {
+                el.style.overflowY = 'hidden';
+            }
+        }
+
+        function resetInputHeight() {
+            const input = document.getElementById('chat-input');
+            input.style.height = '44px';
+            input.style.overflowY = 'hidden';
+        }
+
+        // Instant UI Feedback: Show typing indicator before request
+        document.body.addEventListener('htmx:beforeRequest', (evt) => {
+            if (evt.detail.target.id === 'chat-box') {
+                const chatBox = document.getElementById('chat-box');
+                const typingHtml = `
+                    <div id="typing-indicator" class="chat chat-start group message-bubble-container">
+                        <div class="chat-bubble bg-base-200 text-base-content border border-base-300 p-3 rounded-[18px] rounded-tl-none flex items-center gap-1 min-h-[44px]">
+                            <span class="typing-dot"></span>
+                            <span class="typing-dot"></span>
+                            <span class="typing-dot"></span>
+                        </div>
+                    </div>`;
+                chatBox.insertAdjacentHTML('beforeend', typingHtml);
+                setTimeout(scrollToBottom, 10);
+            }
+        });
+
+        document.body.addEventListener('htmx:beforeSwap', (evt) => {
+            // Remove typing indicator before swapping in the real response
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) indicator.remove();
+        });
+
         document.body.addEventListener('htmx:afterOnLoad', (evt) => {
             renderMarkdown();
             
-            // If we loaded a chat box (e.g. from chat list or new chat), update the hidden session ID input
             const chatBox = document.getElementById('chat-box');
             if (chatBox && chatBox.dataset.sessionId) {
                 document.getElementById('session-id-input').value = chatBox.dataset.sessionId;
-                // Wait a bit for images/content to stabilize before scrolling
                 setTimeout(scrollToBottom, 50);
             }
         });
