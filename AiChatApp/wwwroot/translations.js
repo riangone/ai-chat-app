@@ -1,0 +1,472 @@
+const translations = {
+    en: {
+        "app-title": "AI Chat Pro",
+        "welcome-message": "How can I help you today?",
+        "input-placeholder": "Message AI... (Ctrl+Enter to send)",
+        "clear-input": "Clear input",
+        "mistake-disclaimer": "AI can make mistakes. Check important info.",
+        "logout": "Logout",
+        "theme": "Theme",
+        "new-chat": "+ New Chat",
+        "history": "History",
+        "memory": "Memory",
+        "skills": "Skills",
+        "projects": "Projects",
+        "recent": "Recent",
+        "facts": "Facts",
+        "plugins": "Plugins",
+        "workspaces": "Workspaces",
+        "new-project": "+ New",
+        "memory-tip": "AI will automatically recall facts when tags match your message.",
+        "memory-tip-save": "Tip: Click the microphone icon on any AI response to save it.",
+        "skills-tip": "Active plugins that extend AI capabilities (e.g. Skill Creator, Shell Access).",
+        "skills-example": "Example: \"Help me create a new skill for testing.\"",
+        "rename-chat-title": "Rename Chat",
+        "cancel": "Cancel",
+        "save": "Save",
+        "save-to-memory-title": "Save to Long-term Memory",
+        "memory-desc": "This fact will be available to AI in future conversations when keywords match.",
+        "memory-tags-label": "Memory Tags (Comma separated)",
+        "memory-tags-placeholder": "e.g. code, csharp, project_name",
+        "memory-tags-tip": "Using multiple tags improves search accuracy.",
+        "content-label": "Content",
+        "save-memory-btn": "Save Memory",
+        "create-project-title": "Create New Project",
+        "project-desc": "Code generation will happen within this directory.",
+        "project-name-label": "Project Name",
+        "project-name-placeholder": "My Awesome Project",
+        "root-path-label": "Root Path",
+        "root-path-placeholder": "/home/ubuntu/ws/my-project",
+        "root-path-tip": "Ensure the application has write permissions to this path.",
+        "create-project-btn": "Create Project",
+        "agent-roles-title": "Project Agent Roles",
+        "agent-roles-desc": "Agents execute in the order listed. In Multi-Agent mode, these replace the default pipeline.",
+        "add-new-role": "Add New Role",
+        "apply-preset": "Apply Preset",
+        "role-name-label": "Role Name",
+        "ai-provider-label": "AI Provider",
+        "system-prompt-label": "System Prompt",
+        "color-label": "Color",
+        "add-role-btn": "+ Add Role",
+        "done": "Done",
+        "mode-normal": "Normal",
+        "mode-multi": "Multi-Agent",
+        "connecting-agents": "Connecting agents...",
+        "processing": "Multi-Agent Processing",
+        "copied": "Copied!",
+        "no-project": "No Project",
+        "roles": "Roles",
+        "clear": "Clear",
+        "no-agents": "No agents yet. Add roles below to customize the pipeline.",
+        "presets": {
+            "Frontend Developer": {
+                "prompt": "You are an expert Frontend Developer specializing in React, TypeScript, and Tailwind CSS. Focus on building accessible, performant, and responsive UIs. Use modern patterns like hooks and functional components. Ensure all styles align with the existing project's aesthetic.",
+                "color": "info"
+            },
+            "Backend Architect": {
+                "prompt": "You are a Backend Architect specializing in ASP.NET Core and Clean Architecture. Focus on designing scalable APIs, robust data models, and efficient database interactions with EF Core. Prioritize security, validation, and clear error handling.",
+                "color": "primary"
+            },
+            "Python Expert": {
+                "prompt": "You are a Senior Python Developer specializing in FastAPI, Data Science, and Automation. Write idiomatic (Pythonic) code using type hints and best practices. Focus on efficiency, readability, and PEP 8 standards.",
+                "color": "success"
+            },
+            "DevOps Engineer": {
+                "prompt": "You are a DevOps and Cloud Infrastructure Expert. Focus on Docker, Kubernetes, CI/CD pipelines, and Infrastructure as Code (Terraform/Ansible). Prioritize automation, monitoring, and security.",
+                "color": "secondary"
+            },
+            "UI/UX Designer": {
+                "prompt": "You are a UI/UX Design Specialist. Focus on user-centric design principles, accessibility (WCAG), and visual hierarchy. Provide guidance on color theory, typography, and interactive feedback to improve the overall look and feel.",
+                "color": "accent"
+            },
+            "Code Reviewer": {
+                "prompt": "You are a meticulous Senior Code Reviewer. Your goal is to identify bugs, potential security risks, and technical debt. Provide constructive feedback on readability, performance, and adherence to industry standards.",
+                "color": "warning"
+            },
+            "Security Expert": {
+                "prompt": "You are a Cyber Security Expert. Analyze requirements and code for vulnerabilities (OWASP Top 10). Focus on authentication, authorization, data encryption, and input sanitization.",
+                "color": "error"
+            },
+            "Unit Test Specialist": {
+                "prompt": "You are a Unit Testing Specialist. Your focus is on maximum code coverage and identifying edge cases. Write clean, maintainable tests using xUnit, NUnit, or Pytest.",
+                "color": "success"
+            }
+        }
+    },
+    zh: {
+        "app-title": "AI 聊天助手",
+        "welcome-message": "今天我能帮您做些什么？",
+        "input-placeholder": "给 AI 发送消息... (Ctrl+Enter 发送)",
+        "clear-input": "清空输入",
+        "mistake-disclaimer": "AI 可能会犯错。请核实重要信息。",
+        "logout": "退出登录",
+        "theme": "主题",
+        "new-chat": "+ 新建对话",
+        "history": "历史",
+        "memory": "记忆",
+        "skills": "插件",
+        "projects": "项目",
+        "recent": "最近",
+        "facts": "事实",
+        "plugins": "扩展",
+        "workspaces": "工作区",
+        "new-project": "+ 新建",
+        "memory-tip": "当标签与您的消息匹配时，AI 将自动调取相关事实。",
+        "memory-tip-save": "提示：点击 AI 回复上的保存图标将其存入记忆。",
+        "skills-tip": "扩展 AI 能力的活动插件（如技能创建、Shell 访问）。",
+        "skills-example": "示例：\"帮我创建一个用于测试的新技能。\"",
+        "rename-chat-title": "重命名对话",
+        "cancel": "取消",
+        "save": "保存",
+        "save-to-memory-title": "保存到长期记忆",
+        "memory-desc": "当关键词匹配时，这些事实将在未来的对话中提供给 AI。",
+        "memory-tags-label": "记忆标签（逗号分隔）",
+        "memory-tags-placeholder": "例如：代码, csharp, 项目名称",
+        "memory-tags-tip": "使用多个标签可以提高搜索准确性。",
+        "content-label": "内容",
+        "save-memory-btn": "保存记忆",
+        "create-project-title": "创建新项目",
+        "project-desc": "代码生成将在此目录中进行。",
+        "project-name-label": "项目名称",
+        "project-name-placeholder": "我的超棒项目",
+        "root-path-label": "根路径",
+        "root-path-placeholder": "/home/ubuntu/ws/my-project",
+        "root-path-tip": "确保应用程序对该路径具有写入权限。",
+        "create-project-btn": "创建项目",
+        "agent-roles-title": "项目代理角色",
+        "agent-roles-desc": "代理按列出的顺序执行。在多代理模式下，它们将替换默认流程。",
+        "add-new-role": "添加新角色",
+        "apply-preset": "应用预设",
+        "role-name-label": "角色名称",
+        "ai-provider-label": "AI 提供商",
+        "system-prompt-label": "系统提示词",
+        "color-label": "颜色",
+        "add-role-btn": "+ 添加角色",
+        "done": "完成",
+        "mode-normal": "普通模式",
+        "mode-multi": "多代理模式",
+        "connecting-agents": "正在连接代理...",
+        "processing": "多代理并行处理中",
+        "copied": "已复制！",
+        "no-project": "未选择项目",
+        "roles": "角色",
+        "clear": "清除",
+        "no-agents": "暂无代理。在下方添加角色以自定义流程。",
+        "presets": {
+            "前端开发专家": {
+                "prompt": "你是一名精通 React, TypeScript 和 Tailwind CSS 的前端专家。专注于构建可访问、高性能且响应式的 UI。使用现代模式（如 Hooks 和函数式组件）。确保所有风格符合项目现有的审美。",
+                "color": "info"
+            },
+            "后端架构师": {
+                "prompt": "你是一名精通 ASP.NET Core 和整洁架构（Clean Architecture）的后端架构师。专注于设计可扩展的 API、健壮的数据模型以及高效的 EF Core 数据库交互。优先考虑安全性、校验和清晰的错误处理。",
+                "color": "primary"
+            },
+            "Python 专家": {
+                "prompt": "你是一名资深的 Python 开发专家，精通 FastAPI、数据科学和自动化。编写地道的（Pythonic）代码，使用类型提示和最佳实践。关注效率、可读性和 PEP 8 标准。",
+                "color": "success"
+            },
+            "DevOps 工程师": {
+                "prompt": "你是一名 DevOps 和云基础设施专家。专注于 Docker, Kubernetes, CI/CD 流水线以及基础设施即代码（Terraform/Ansible）。优先考虑自动化、监控和安全性。",
+                "color": "secondary"
+            },
+            "UI/UX 设计师": {
+                "prompt": "你是一名 UI/UX 设计专家。专注于以用户为中心的设计原则、可访问性（WCAG）和视觉层级。提供关于色彩理论、版式和交互反馈的指导，以提升整体感官体验。",
+                "color": "accent"
+            },
+            "代码审查员": {
+                "prompt": "你是一名严谨的高级代码审查员。你的目标是识别错误、潜在安全风险和技术债。提供关于可读性、性能和遵守行业标准的建设性反馈。",
+                "color": "warning"
+            },
+            "安全专家": {
+                "prompt": "你是一名网络安全专家。分析需求和代码中的漏洞（OWASP Top 10）。专注于身份认证、授权、数据加密和输入净化。",
+                "color": "error"
+            },
+            "单元测试专家": {
+                "prompt": "你是一名单元测试专家。专注于最大化代码覆盖率并识别边界情况。使用 xUnit, NUnit 或 Pytest 编写简洁、可维护的测试。",
+                "color": "success"
+            }
+        }
+    },
+    zt: {
+        "app-title": "AI 聊天助手",
+        "welcome-message": "今天我能幫您做些什麼？",
+        "input-placeholder": "給 AI 發送消息... (Ctrl+Enter 發送)",
+        "clear-input": "清空輸入",
+        "mistake-disclaimer": "AI 可能會犯錯。請核實重要信息。",
+        "logout": "退出登錄",
+        "theme": "主題",
+        "new-chat": "+ 新建對話",
+        "history": "歷史",
+        "memory": "記憶",
+        "skills": "插件",
+        "projects": "項目",
+        "recent": "最近",
+        "facts": "事實",
+        "plugins": "擴展",
+        "workspaces": "工作區",
+        "new-project": "+ 新建",
+        "memory-tip": "當標籤與您的消息匹配時，AI 將自動調取相關事實。",
+        "memory-tip-save": "提示：點擊 AI 回覆上的保存圖標將其存入記憶。",
+        "skills-tip": "擴展 AI 能力的活動插件（如技能創建、Shell 訪問）。",
+        "skills-example": "示例：\"幫我創建一個用於測試的新技能。\"",
+        "rename-chat-title": "重命名對話",
+        "cancel": "取消",
+        "save": "保存",
+        "save-to-memory-title": "保存到長期記憶",
+        "memory-desc": "當關鍵詞匹配時，這些事實將在未來的對話中提供給 AI。",
+        "memory-tags-label": "記憶標籤（逗號分隔）",
+        "memory-tags-placeholder": "例如：代碼, csharp, 項目名稱",
+        "memory-tags-tip": "使用多個標籤可以提高搜索準確性。",
+        "content-label": "內容",
+        "save-memory-btn": "保存記憶",
+        "create-project-title": "創建新項目",
+        "project-desc": "代碼生成將在此目錄中進行。",
+        "project-name-label": "項目名稱",
+        "project-name-placeholder": "我的超棒項目",
+        "root-path-label": "根路徑",
+        "root-path-placeholder": "/home/ubuntu/ws/my-project",
+        "root-path-tip": "確保應用程序對該路徑具有寫入權限。",
+        "create-project-btn": "創建項目",
+        "agent-roles-title": "項目代理角色",
+        "agent-roles-desc": "代理按列出的順序執行。在多代理模式下，它們將替換默認流程。",
+        "add-new-role": "添加新角色",
+        "apply-preset": "應用預設",
+        "role-name-label": "角色名稱",
+        "ai-provider-label": "AI 提供商",
+        "system-prompt-label": "系統提示詞",
+        "color-label": "顏色",
+        "add-role-btn": "+ 添加角色",
+        "done": "完成",
+        "mode-normal": "普通模式",
+        "mode-multi": "多代理模式",
+        "connecting-agents": "正在連接代理...",
+        "processing": "多代理並行處理中",
+        "copied": "已複製！",
+        "no-project": "未選擇項目",
+        "roles": "角色",
+        "clear": "清除",
+        "no-agents": "暫無代理。在下方添加角色以自定義流程。",
+        "presets": {
+            "前端開發專家": {
+                "prompt": "你是一名精通 React, TypeScript 和 Tailwind CSS 的前端專家。專注於構建可訪問、高性能且響應式的 UI。使用現代模式（如 Hooks 和函數式組件）。確保所有風格符合項目現有的審美。",
+                "color": "info"
+            },
+            "後端架構師": {
+                "prompt": "你是一名精通 ASP.NET Core 和整潔架構（Clean Architecture）的後端架構師。專注於設計可擴展的 API、健壯的数据模型以及高效的 EF Core 數據庫交互。優先考慮安全性、校驗和清晰的錯誤處理。",
+                "color": "primary"
+            },
+            "Python 專家": {
+                "prompt": "你是一名資深的 Python 開發專家，精通 FastAPI、數據科學和自動化。編寫地道的（Pythonic）代碼，使用類型提示和最佳實踐。關注效率、可讀性和 PEP 8 標準。",
+                "color": "success"
+            },
+            "DevOps 工程師": {
+                "prompt": "你是一名 DevOps 和雲基礎設施專家。專注於 Docker, Kubernetes, CI/CD 流水線以及基礎設施即代碼（Terraform/Ansible）。優先考慮自動化、監控和安全性。",
+                "color": "secondary"
+            },
+            "UI/UX 設計師": {
+                "prompt": "你是一名 UI/UX 設計專家。專注於以用戶為中心的设计原則、可訪問性（WCAG）和視覺層級。提供關於色彩理論、版式和交互反饋的指導，以提升整體感官體驗。",
+                "color": "accent"
+            },
+            "代碼審查員": {
+                "prompt": "你是一名嚴謹的高级代碼審查員。你的目標是識別錯誤、潛在安全風險和技術債。提供關於可讀性、性能和遵守行業標準的建設性反饋。",
+                "color": "warning"
+            },
+            "安全專家": {
+                "prompt": "你是一名網絡安全專家。分析需求和代碼中的漏洞（OWASP Top 10）。專注於身份認證、授權、數據加密和輸入淨化。",
+                "color": "error"
+            },
+            "單元測試專家": {
+                "prompt": "你是一名單元測試專家。專注於最大化代碼覆蓋率並識別邊界情況。使用 xUnit, NUnit 或 Pytest 編寫簡潔、可維護的測試。",
+                "color": "success"
+            }
+        }
+    },
+    ja: {
+        "app-title": "AIチャットプロ",
+        "welcome-message": "今日はどのようなお手伝いができますか？",
+        "input-placeholder": "AIにメッセージを送信... (Ctrl+Enterで送信)",
+        "clear-input": "入力をクリア",
+        "mistake-disclaimer": "AIは間違いを犯す可能性があります。重要な情報を確認してください。",
+        "logout": "ログアウト",
+        "theme": "テーマ",
+        "new-chat": "+ 新規チャット",
+        "history": "履歴",
+        "memory": "メモリ",
+        "skills": "スキル",
+        "projects": "プロジェクト",
+        "recent": "最近",
+        "facts": "事実",
+        "plugins": "プラグイン",
+        "workspaces": "ワークスペース",
+        "new-project": "+ 新規",
+        "memory-tip": "タグがメッセージと一致すると、AIは自動的に事実を思い出します。",
+        "memory-tip-save": "ヒント：AIの返信にあるマイクアイコンをクリックして保存します。",
+        "skills-tip": "AIの機能を拡張するアクティブなプラグイン（例：スキルクリエイター、シェルアクセス）。",
+        "skills-example": "例：「テスト用の新しいスキルを作成するのを手伝って」",
+        "rename-chat-title": "チャット名の変更",
+        "cancel": "キャンセル",
+        "save": "保存",
+        "save-to-memory-title": "長期メモリに保存",
+        "memory-desc": "この事実は、キーワードが一致したときに将来の会話で利用可能になります。",
+        "memory-tags-label": "メモリタグ（カンマ区切り）",
+        "memory-tags-placeholder": "例：code, csharp, project_name",
+        "memory-tags-tip": "複数のタグを使用すると、検索精度が向上します。",
+        "content-label": "内容",
+        "save-memory-btn": "メモリを保存",
+        "create-project-title": "新規プロジェクト作成",
+        "project-desc": "コード生成はこのディレクトリ内で行われます。",
+        "project-name-label": "プロジェクト名",
+        "project-name-placeholder": "マイ・アメイジング・プロジェクト",
+        "root-path-label": "ルートパス",
+        "root-path-placeholder": "/home/ubuntu/ws/my-project",
+        "root-path-tip": "アプリケーションがこのパスへの書き込み権限を持っていることを確認してください。",
+        "create-project-btn": "プロジェクトを作成",
+        "agent-roles-title": "プロジェクトエージェントの役割",
+        "agent-roles-desc": "エージェントはリストされた順序で実行されます。マルチエージェントモードでは、これらがデフォルトのパイプラインに置き換わります。",
+        "add-new-role": "新しい役割を追加",
+        "apply-preset": "プリセットを適用",
+        "role-name-label": "役割名",
+        "ai-provider-label": "AIプロバイダー",
+        "system-prompt-label": "システムプロンプト",
+        "color-label": "カラー",
+        "add-role-btn": "+ 役割を追加",
+        "done": "完了",
+        "mode-normal": "ノーマル",
+        "mode-multi": "マルチエージェント",
+        "connecting-agents": "エージェントに接続中...",
+        "processing": "マルチエージェント処理中",
+        "copied": "コピーしました！",
+        "no-project": "プロジェクトなし",
+        "roles": "役割",
+        "clear": "クリア",
+        "no-agents": "エージェントはまだありません。以下に役割を追加してパイプラインをカスタマイズしてください。",
+        "presets": {
+            "フロントエンド開発者": {
+                "prompt": "あなたは React、TypeScript、Tailwind CSS を専門とするフロントエンド開発のエキスパートです。アクセシビリティ、パフォーマンス、レスポンシブな UI の構築に集中してください。フックや関数型コンポーネントなどの最新のパターンを使用してください。すべてのスタイルがプロジェクトの既存の美学と一致するようにしてください。",
+                "color": "info"
+            },
+            "バックエンドアーキテクト": {
+                "prompt": "あなたは ASP.NET Core とクリーンアーキテクチャを専門とするバックエンドアーキテクトです。スケーラブルな API、堅牢なデータモデル、EF Core を使用した効率的なデータベースインタラクションの設計に集中してください。セキュリティ、バリデーション、明確なエラー処理を優先してください。",
+                "color": "primary"
+            },
+            "Python エキスパート": {
+                "prompt": "あなたは FastAPI、データサイエンス、自動化を専門とするシニア Python 開発者です。型ヒントとベストプラクティスを使用して、慣用的な（Pythonic な）コードを記述してください。効率、可読性、PEP 8 標準に集中してください。",
+                "color": "success"
+            },
+            "DevOps エンジニア": {
+                "prompt": "あなたは DevOps およびクラウドインフラストラクチャのエキスパートです。Docker、Kubernetes、CI/CD パイプライン、および Infrastructure as Code (Terraform/Ansible) に集中してください。自動化、監視、セキュリティを優先してください。",
+                "color": "secondary"
+            },
+            "UI/UX デザイナー": {
+                "prompt": "あなたは UI/UX デザインのスペシャリストです。ユーザー中心設計の原則、アクセシビリティ (WCAG)、視覚的階層に集中してください。全体的なルックアンドフィールを向上させるために、色彩理論、タイポグラフィ、インタラクティブなフィードバックに関するガイダンスを提供してください。",
+                "color": "accent"
+            },
+            "コードレビュアー": {
+                "prompt": "あなたは細心の注意を払うシニアコードレビュアーです。あなたの目標は、バグ、潜在的なセキュリティリスク、およびテクニカルデットを特定することです。可読性、パフォーマンス、および業界標準への準拠について建設的なフィードバックを提供してください。",
+                "color": "warning"
+            },
+            "セキュリティエキスパート": {
+                "prompt": "あなたはサイバーセキュリティのエキスパートです。脆弱性 (OWASP Top 10) について要件とコードを分析してください。認証、認可、データ暗号化、および入力のサニタイズに集中してください。",
+                "color": "error"
+            },
+            "テストスペシャリスト": {
+                "prompt": "あなたはユニットテストのスペシャリストです。コードカバレッジを最大化し、エッジケースを特定することに集中してください。xUnit、NUnit、または Pytest を使用して、クリーンでメンテナンス可能なテストを記述してください。",
+                "color": "success"
+            }
+        }
+    },
+    ko: {
+        "app-title": "AI 채팅 프로",
+        "welcome-message": "오늘 무엇을 도와드릴까요?",
+        "input-placeholder": "AI에게 메시지 보내기... (Ctrl+Enter로 전송)",
+        "clear-input": "입력 지우기",
+        "mistake-disclaimer": "AI는 실수를 할 수 있습니다. 중요한 정보를 확인하세요.",
+        "logout": "로그아웃",
+        "theme": "테마",
+        "new-chat": "+ 새 채팅",
+        "history": "기록",
+        "memory": "기억",
+        "skills": "스킬",
+        "projects": "프로젝트",
+        "recent": "최근",
+        "facts": "사실",
+        "plugins": "플러그인",
+        "workspaces": "워크스페이스",
+        "new-project": "+ 새로 만들기",
+        "memory-tip": "태그가 메시지와 일치하면 AI가 자동으로 사실을 기억해냅니다.",
+        "memory-tip-save": "팁: AI 응답의 마이크 아이콘을 클릭하여 저장하세요.",
+        "skills-tip": "AI 기능을 확장하는 활성 플러그인 (예: 스킬 크리에이터, 쉘 액세스).",
+        "skills-example": "예: \"테스트를 위한 새로운 스킬 생성을 도와줘.\"",
+        "rename-chat-title": "채팅 이름 바꾸기",
+        "cancel": "취소",
+        "save": "저장",
+        "save-to-memory-title": "장기 기억에 저장",
+        "memory-desc": "이 사실은 키워드가 일치할 때 향후 대화에서 사용할 수 있습니다.",
+        "memory-tags-label": "기억 태그 (쉼표로 구분)",
+        "memory-tags-placeholder": "예: code, csharp, project_name",
+        "memory-tags-tip": "여러 태그를 사용하면 검색 정확도가 향상됩니다.",
+        "content-label": "내용",
+        "save-memory-btn": "기억 저장",
+        "create-project-title": "새 프로젝트 생성",
+        "project-desc": "코드 생성은 이 디렉토리 내에서 이루어집니다.",
+        "project-name-label": "프로젝트 이름",
+        "project-name-placeholder": "나의 멋진 프로젝트",
+        "root-path-label": "루트 경로",
+        "root-path-placeholder": "/home/ubuntu/ws/my-project",
+        "root-path-tip": "응용 프로그램이 이 경로에 대한 쓰기 권한이 있는지 확인하세요.",
+        "create-project-btn": "프로젝트 생성",
+        "agent-roles-title": "프로젝트 에이전트 역할",
+        "agent-roles-desc": "에이전트는 나열된 순서대로 실행됩니다. 멀티 에이전트 모드에서는 기본 파이프라인을 대체합니다.",
+        "add-new-role": "새 역할 추가",
+        "apply-preset": "프리셋 적용",
+        "role-name-label": "역할 이름",
+        "ai-provider-label": "AI 제공자",
+        "system-prompt-label": "시스템 프롬프트",
+        "color-label": "색상",
+        "add-role-btn": "+ 역할 추가",
+        "done": "완료",
+        "mode-normal": "일반",
+        "mode-multi": "멀티 에이전트",
+        "connecting-agents": "에이전트 연결 중...",
+        "processing": "멀티 에이전트 처리 중",
+        "copied": "복사됨!",
+        "no-project": "프로젝트 없음",
+        "roles": "역할",
+        "clear": "지우기",
+        "no-agents": "에이전트가 아직 없습니다. 아래에 역할을 추가하여 파이프라인을 설정하세요.",
+        "presets": {
+            "프론트엔드 전문가": {
+                "prompt": "당신은 React, TypeScript 및 Tailwind CSS를 전문으로 하는 프론트엔드 개발 전문가입니다. 접근성, 성능 및 반응형 UI 구축에 집중하세요. Hooks 및 함수형 컴포넌트와 같은 현대적인 패턴을 사용하세요. 모든 스타일이 프로젝트의 기존 미학과 일치하도록 하세요.",
+                "color": "info"
+            },
+            "백엔드 아키텍트": {
+                "prompt": "당신은 ASP.NET Core 및 클린 아키텍처를 전문으로 하는 백엔드 아키텍트입니다. 확장 가능한 API, 견고한 데이터 모델 및 EF Core를 사용한 효율적인 데이터베이스 상호 작용 설계에 집중하세요. 보안, 유효성 검사 및 명확한 오류 처리를 우선시하세요.",
+                "color": "primary"
+            },
+            "Python 전문가": {
+                "prompt": "당신은 FastAPI, 데이터 과학 및 자동화를 전문으로 하는 시니어 Python 개발자입니다. 유형 힌트와 모범 사례를 사용하여 관용적인(Pythonic) 코드를 작성하세요. 효율성, 가독성 및 PEP 8 표준에 집중하세요.",
+                "color": "success"
+            },
+            "DevOps 엔지니어": {
+                "prompt": "당신은 DevOps 및 클라우드 인프라 전문가입니다. Docker, Kubernetes, CI/CD 파이프라인 및 Infrastructure as Code(Terraform/Ansible)에 집중하세요. 자동화, 모니터링 및 보안을 우선시하세요.",
+                "color": "secondary"
+            },
+            "UI/UX 디자이너": {
+                "prompt": "당신은 UI/UX 디자인 전문가입니다. 사용자 중심 디자인 원칙, 접근성(WCAG) 및 시각적 계층 구조에 집중하세요. 전체적인 모양과 느낌을 개선하기 위해 색상 이론, 타이포그래피 및 인터랙티브 피드백에 대한 지침을 제공하세요.",
+                "color": "accent"
+            },
+            "코드 리뷰어": {
+                "prompt": "당신은 꼼꼼한 시니어 코드 리뷰어입니다. 당신의 목표는 버그, 잠재적인 보안 위험 및 기술 부채를 식별하는 것입니다. 가독성, 성능 및 업계 표준 준수에 대한 건설적인 피드백을 제공하세요.",
+                "color": "warning"
+            },
+            "보안 전문가": {
+                "prompt": "당신은 사이버 보안 전문가입니다. 요구 사항과 코드에서 취약점(OWASP Top 10)을 분석하세요. 인증, 권한 부여, 데이터 암호화 및 입력 삭제에 집중하세요.",
+                "color": "error"
+            },
+            "테스트 전문가": {
+                "prompt": "당신은 유닛 테스트 전문가입니다. 코드 커버리지 극대화와 엣지 케이스 식별에 집중하세요. xUnit, NUnit 또는 Pytest를 사용하여 깔끔하고 유지 관리가 쉬운 테스트를 작성하세요.",
+                "color": "success"
+            }
+        }
+    }
+};

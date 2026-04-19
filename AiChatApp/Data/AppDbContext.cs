@@ -13,6 +13,8 @@ public class AppDbContext : DbContext
     public DbSet<LongTermMemory> LongTermMemories => Set<LongTermMemory>();
     public DbSet<Skill> Skills => Set<Skill>();
     public DbSet<AgentStep> AgentSteps => Set<AgentStep>();
+    public DbSet<Project> Projects => Set<Project>();
+    public DbSet<AgentProfile> AgentProfiles => Set<AgentProfile>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

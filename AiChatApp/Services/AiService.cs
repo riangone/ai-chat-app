@@ -25,13 +25,14 @@ public class AiService
     public async Task<string> GetResponseAsync(
         string prompt, int userId, int? chatSessionId, string provider = "gemini")
     {
-        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, agentRole: null);
+        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agentRole: null);
+        var workingDir = await GetProjectRootAsync(chatSessionId);
         var history = await BuildHistoryBlockAsync(chatSessionId, limit: 10);
         string fullPrompt = string.IsNullOrEmpty(history)
             ? prompt
             : $"{history}\nUser: {prompt}";
 
-        return await ExecuteCliDirectAsync(fullPrompt, provider, systemPrompt);
+        return await ExecuteCliDirectAsync(fullPrompt, provider, systemPrompt, workingDir);
     }
 
     /// <summary>
@@ -40,11 +41,55 @@ public class AiService
     /// 各ステップの結果を AgentStep としてDBに記録する。
     /// </summary>
     public async Task<(string Html, List<AgentStep> Steps)> CooperateAsync(
-        string task, int userId, int messageId, string provider = "gemini",
+        string task, int userId, int messageId, int? chatSessionId, string provider = "gemini",
         Func<string, string, Task>? onStepComplete = null)
     {
         var steps = new List<AgentStep>();
 
+        // 获取项目自定义角色
+        List<AgentProfile> customAgents = new();
+        if (chatSessionId.HasValue)
+        {
+            var session = await _db.ChatSessions
+                .Include(s => s.Project)
+                    .ThenInclude(p => p!.Agents)
+                .FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
+            
+            if (session?.Project?.Agents != null && session.Project.Agents.Any())
+            {
+                customAgents = session.Project.Agents.Where(a => a.IsActive).OrderBy(a => a.Id).ToList();
+            }
+        }
+
+        if (customAgents.Any())
+        {
+            // --- 自定义多智能体流程 ---
+            string lastOutput = "";
+            foreach (var agent in customAgents)
+            {
+                string activeProvider = agent.PreferredProvider ?? provider;
+                string input = string.IsNullOrEmpty(lastOutput) 
+                    ? task 
+                    : $"Task: {task}\n\nPrevious Agent Output:\n{lastOutput}";
+
+                var step = await RunAgentStepAsync(
+                    role: agent.RoleName,
+                    persona: agent.SystemPrompt,
+                    input: input,
+                    messageId: messageId,
+                    provider: activeProvider,
+                    userId: userId,
+                    chatSessionId: chatSessionId
+                );
+                steps.Add(step);
+                lastOutput = step.Output;
+                if (onStepComplete != null) await onStepComplete(step.Role, BuildStepHtml(step));
+            }
+            string html = BuildCooperativeHtml(steps, lastOutput);
+            return (html, steps);
+        }
+
+        // --- 默认 3 阶段流程 ---
         // ─── Step 1: Orchestrator ───
         string orchestratorPersona = """
             あなたはタスク分解の専門家（Orchestrator）です。
@@ -64,14 +109,15 @@ public class AiService
             input: task,
             messageId: messageId,
             provider: provider,
-            userId: userId
+            userId: userId,
+            chatSessionId: chatSessionId
         );
         steps.Add(orchStep);
         if (onStepComplete != null) await onStepComplete(orchStep.Role, BuildStepHtml(orchStep));
 
-        // JSONパース試行（失敗時はテキストプランとして継続）
+        // JSONパース試行
         string planSummary = orchStep.Output;
-        string subtaskBlock = task; // フォールバック
+        string subtaskBlock = task;
         try
         {
             var planDoc = System.Text.Json.JsonDocument.Parse(ExtractJson(orchStep.Output));
@@ -81,21 +127,16 @@ public class AiService
                 .Where(s => !string.IsNullOrEmpty(s));
             subtaskBlock = string.Join("\n", subtasks.Select((s, i) => $"{i + 1}. {s}"));
         }
-        catch { /* JSONでない場合はそのまま使用 */ }
+        catch { }
 
         // ─── Step 2: Executor（最大2回）───
-        string executorPersona = """
-            あなたは実装の専門家（Executor）です。
-            Orchestratorの計画に基づいて、コード・文章・分析など具体的な成果物を作成してください。
-            品質を重視し、完全な実装を提供してください。
-            """;
-
+        string executorPersona = "あなたは実装の専門家（Executor）です。Orchestratorの計画に基づいて成果物を作成してください。";
         AgentStep execStep = null!;
         for (int attempt = 1; attempt <= 2; attempt++)
         {
             string execInput = attempt == 1
                 ? $"計画:\n{subtaskBlock}\n\n原タスク:\n{task}"
-                : $"計画:\n{subtaskBlock}\n\n原タスク:\n{task}\n\n前回の実行結果（改善が必要）:\n{execStep.Output}\n\n上記を改善して再実装してください。";
+                : $"計画:\n{subtaskBlock}\n\n原タスク:\n{task}\n\n前回の実行結果:\n{execStep.Output}\n\n再実装してください。";
 
             execStep = await RunAgentStepAsync(
                 role: "Executor",
@@ -104,12 +145,12 @@ public class AiService
                 messageId: messageId,
                 provider: provider,
                 userId: userId,
+                chatSessionId: chatSessionId,
                 attemptNumber: attempt
             );
             steps.Add(execStep);
             if (onStepComplete != null) await onStepComplete(execStep.Role, BuildStepHtml(execStep));
 
-            // Reviewerに品質チェックを依頼（最終ループでは不要）
             if (attempt < 2)
             {
                 bool qualityOk = await QuickQualityCheckAsync(task, execStep.Output, provider);
@@ -120,13 +161,7 @@ public class AiService
         }
 
         // ─── Step 3: Reviewer ───
-        string reviewerPersona = """
-            あなたは評審の専門家（Reviewer）です。
-            以下の情報を受け取り、ユーザーへの最終的な回答を作成してください。
-            - 元のタスクの要件が満たされているか確認する
-            - 不完全な点があれば補足する
-            - Markdownで整形して読みやすく提示する
-            """;
+        string reviewerPersona = "あなたは評審の専門家（Reviewer）です。最終的な回答をMarkdownで作成してください。";
 
         var reviewStep = await RunAgentStepAsync(
             role: "Reviewer",
@@ -134,28 +169,85 @@ public class AiService
             input: $"元タスク:\n{task}\n\n計画:\n{planSummary}\n\n実行結果:\n{execStep.Output}",
             messageId: messageId,
             provider: provider,
-            userId: userId
+            userId: userId,
+            chatSessionId: chatSessionId
         );
         steps.Add(reviewStep);
         reviewStep.WasAccepted = true;
         await _db.SaveChangesAsync();
         if (onStepComplete != null) await onStepComplete(reviewStep.Role, BuildStepHtml(reviewStep));
 
-        // ─── HTML構造を生成 ───
-        string html = BuildCooperativeHtml(steps, reviewStep.Output);
-        return (html, steps);
+        return (BuildCooperativeHtml(steps, reviewStep.Output), steps);
+    }
+
+    public async IAsyncEnumerable<string> CooperateStreamAsync(
+        string task, int userId, int messageId, string provider = "gemini")
+    {
+        var steps = new List<AgentStep>();
+
+        // ─── Step 1: Orchestrator ───
+        yield return "event: step-start\ndata: Orchestrator\n\n";
+        string orchestratorPersona = """
+            あなたはタスク分解の専門家（Orchestrator）です。
+            ユーザーのタスクを分析し、以下のJSON形式でのみ回答してください：
+            {
+              "plan": "全体方針の概要（1-2文）",
+              "subtasks": [
+                {"id": 1, "description": "サブタスクの説明", "expectedOutput": "期待される成果物"},
+                ...
+              ]
+            }
+            """;
+
+        var orchStep = await RunAgentStepAsync("Orchestrator", orchestratorPersona, task, messageId, provider, userId);
+        steps.Add(orchStep);
+        yield return $"event: step-complete\ndata: Orchestrator|{BuildStepHtml(orchStep).Replace("\n", "\\n")}\n\n";
+
+        // JSONパース
+        string planSummary = orchStep.Output;
+        string subtaskBlock = task;
+        try
+        {
+            var planDoc = System.Text.Json.JsonDocument.Parse(ExtractJson(orchStep.Output));
+            planSummary = planDoc.RootElement.GetProperty("plan").GetString() ?? orchStep.Output;
+            var subtasks = planDoc.RootElement.GetProperty("subtasks").EnumerateArray()
+                .Select(s => s.GetProperty("description").GetString() ?? "")
+                .Where(s => !string.IsNullOrEmpty(s));
+            subtaskBlock = string.Join("\n", subtasks.Select((s, i) => $"{i + 1}. {s}"));
+        }
+        catch { }
+
+        // ─── Step 2: Executor ───
+        yield return "event: step-start\ndata: Executor\n\n";
+        string executorPersona = "あなたは実装の専門家（Executor）です。計画に基づいて成果物を作成してください。";
+        string execInput = $"計画:\n{subtaskBlock}\n\n原タスク:\n{task}";
+        
+        var execStep = await RunAgentStepAsync("Executor", executorPersona, execInput, messageId, provider, userId);
+        steps.Add(execStep);
+        yield return $"event: step-complete\ndata: Executor|{BuildStepHtml(execStep).Replace("\n", "\\n")}\n\n";
+
+        // ─── Step 3: Reviewer ───
+        yield return "event: step-start\ndata: Reviewer\n\n";
+        string reviewerPersona = "あなたは評審の専門家（Reviewer）です。最終的な回答をMarkdownで作成してください。";
+        
+        var reviewStep = await RunAgentStepAsync("Reviewer", reviewerPersona, $"元タスク:\n{task}\n\n実行結果:\n{execStep.Output}", messageId, provider, userId);
+        steps.Add(reviewStep);
+        
+        string finalHtml = BuildCooperativeHtml(steps, reviewStep.Output);
+        yield return $"event: final\ndata: {finalHtml.Replace("\n", "\\n")}\n\n";
     }
 
     public async IAsyncEnumerable<string> GetResponseStreamAsync(
         string prompt, int userId, int? chatSessionId, string provider = "gemini")
     {
-        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, agentRole: null);
+        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agentRole: null);
+        var workingDir = await GetProjectRootAsync(chatSessionId);
         var history = await BuildHistoryBlockAsync(chatSessionId, limit: 10);
         string fullPrompt = string.IsNullOrEmpty(history)
             ? prompt
             : $"{history}\nUser: {prompt}";
 
-        var processInfo = SetupProcessInfo(fullPrompt, provider, systemPrompt);
+        var processInfo = SetupProcessInfo(fullPrompt, provider, systemPrompt, workingDir);
 
         using var process = Process.Start(processInfo);
         if (process == null) 
@@ -173,8 +265,15 @@ public class AiService
         await process.WaitForExitAsync();
     }
 
-    public Task<string> ExecuteCliDirectAsync(string prompt, string provider, string? systemPrompt = null)
-        => ExecuteCliAsync(prompt, provider, systemPrompt);
+    public Task<string> ExecuteCliDirectAsync(string prompt, string provider, string? systemPrompt = null, string? workingDir = null)
+        => ExecuteCliAsync(prompt, provider, systemPrompt, workingDir);
+
+    private async Task<string?> GetProjectRootAsync(int? chatSessionId)
+    {
+        if (!chatSessionId.HasValue) return null;
+        var session = await _db.ChatSessions.Include(s => s.Project).FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
+        return session?.Project?.RootPath;
+    }
 
     // ─────────────────────────────────────────
     // 内部実装
@@ -182,10 +281,27 @@ public class AiService
 
     private async Task<AgentStep> RunAgentStepAsync(
         string role, string persona, string input, int messageId,
-        string provider, int userId, int attemptNumber = 1)
+        string provider, int userId, int? chatSessionId = null, int attemptNumber = 1)
     {
         var roleSkills = await _memorySearch.SearchSkillsAsync(input, userId, agentRole: role);
+        var workingDir = await GetProjectRootAsync(chatSessionId);
         string fullPersona = persona;
+
+        // Fetch project-specific role prompt if exists
+        if (chatSessionId.HasValue)
+        {
+            var session = await _db.ChatSessions
+                .Include(s => s.Project)
+                .ThenInclude(p => p!.Agents)
+                .FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
+            
+            var projectAgent = session?.Project?.Agents.FirstOrDefault(a => a.RoleName.Equals(role, StringComparison.OrdinalIgnoreCase));
+            if (projectAgent != null)
+            {
+                fullPersona = projectAgent.SystemPrompt + "\n\n" + persona;
+            }
+        }
+
         if (roleSkills.Any())
         {
             fullPersona += "\n\n[追加スキル指示]:\n" +
@@ -193,7 +309,7 @@ public class AiService
         }
 
         var sw = Stopwatch.StartNew();
-        string output = await ExecuteCliAsync(input, provider, fullPersona);
+        string output = await ExecuteCliAsync(input, provider, fullPersona, workingDir);
         sw.Stop();
 
         var step = new AgentStep
@@ -227,12 +343,35 @@ public class AiService
         return result.Contains("OK", StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task<string> BuildSystemPromptAsync(string prompt, int userId, string? agentRole)
+    private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int? chatSessionId, string? agentRole)
     {
         var memories = await _memorySearch.SearchAsync(prompt, userId);
         var skills = await _memorySearch.SearchSkillsAsync(prompt, userId, agentRole);
 
         var sb = new StringBuilder("あなたは高度なAIアシスタントです。");
+
+        // Add Project Context if available
+        if (chatSessionId.HasValue)
+        {
+            var session = await _db.ChatSessions
+                .Include(s => s.Project)
+                .ThenInclude(p => p!.Agents)
+                .FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
+
+            if (session?.Project != null)
+            {
+                sb.Append($"\n\n[プロジェクト文脈]:\nプロジェクト名: {session.Project.Name}\nルートパス: {session.Project.RootPath}");
+                
+                if (session.Project.Agents.Any())
+                {
+                    sb.Append("\n\n[利用可能なエージェント役割]:\n");
+                    foreach (var agent in session.Project.Agents)
+                    {
+                        sb.Append($"- {agent.RoleName}: {agent.SystemPrompt}\n");
+                    }
+                }
+            }
+        }
 
         if (memories.Any())
         {
@@ -324,7 +463,7 @@ public class AiService
         return "{}";
     }
 
-    private ProcessStartInfo SetupProcessInfo(string prompt, string provider, string? systemPrompt = null)
+    private ProcessStartInfo SetupProcessInfo(string prompt, string provider, string? systemPrompt = null, string? workingDirectory = null)
     {
         string fileName = provider switch
         {
@@ -344,7 +483,8 @@ public class AiService
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
-            CreateNoWindow = true
+            CreateNoWindow = true,
+            WorkingDirectory = workingDirectory ?? Directory.GetCurrentDirectory()
         };
 
         if (provider == "codex")
@@ -373,9 +513,9 @@ public class AiService
         return processInfo;
     }
 
-    private async Task<string> ExecuteCliAsync(string prompt, string provider, string? systemPrompt = null)
+    private async Task<string> ExecuteCliAsync(string prompt, string provider, string? systemPrompt = null, string? workingDirectory = null)
     {
-        var processInfo = SetupProcessInfo(prompt, provider, systemPrompt);
+        var processInfo = SetupProcessInfo(prompt, provider, systemPrompt, workingDirectory);
 
         try
         {

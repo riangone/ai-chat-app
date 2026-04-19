@@ -7,11 +7,13 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite("Data Source=chat.db"));
 builder.Services.AddScoped<MemorySearchService>();
 builder.Services.AddScoped<MemoryConsolidationService>();
+builder.Services.AddScoped<ProjectService>();
 builder.Services.AddScoped<AiService>();
 builder.Services.AddAntiforgery();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -25,6 +27,8 @@ var app = builder.Build();
 app.UseAntiforgery();
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.MapProjectEndpoints();
 
 using (var scope = app.Services.CreateScope())
 {
@@ -102,9 +106,11 @@ app.MapGet("/", (ClaimsPrincipal user) => {
 });
 
 // Chat Management
-app.MapPost("/api/chat/new", async (AppDbContext db, ClaimsPrincipal user) => {
+app.MapPost("/api/chat/new", async (HttpContext context, AppDbContext db, ClaimsPrincipal user) => {
+    var form = await context.Request.ReadFormAsync();
+    int? projectId = int.TryParse(form["projectId"].ToString(), out var pid) ? pid : null;
     var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-    var session = new ChatSession { UserId = userId, Title = "New Chat " + DateTime.Now.ToString("HH:mm") };
+    var session = new ChatSession { UserId = userId, ProjectId = projectId, Title = "New Chat " + DateTime.Now.ToString("HH:mm") };
     db.ChatSessions.Add(session);
     await db.SaveChangesAsync();
     return Results.Content($@"<div id='chat-box' data-session-id='{session.Id}' class='flex-1 overflow-y-auto p-4 md:p-6 space-y-8'>
@@ -113,7 +119,7 @@ app.MapPost("/api/chat/new", async (AppDbContext db, ClaimsPrincipal user) => {
             <p class='text-xl font-medium text-center'>Ready for your questions.</p>
         </div>
     </div>", "text/html");
-}).RequireAuthorization();
+}).DisableAntiforgery().RequireAuthorization();
 
 app.MapGet("/api/chat/list", async (AppDbContext db, ClaimsPrincipal user) => {
     var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -185,7 +191,7 @@ app.MapPost("/api/chat", async (HttpContext context, AppDbContext db, AiService 
         db.Messages.Add(aMsg);
         await db.SaveChangesAsync();
 
-        var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, provider);
+        var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, session.Id, provider);
         aMsg.Content = html;
         await db.SaveChangesAsync();
 
@@ -290,14 +296,36 @@ app.MapPost("/api/chat/cooperate/stream", async (
     db.Messages.Add(aMsg);
     await db.SaveChangesAsync();
 
-    // セッションIDをフロントへ通知（新規作成時）
-    await SendEvent("session", session.Id.ToString());
+    // セッションIDとエージェントリストをフロントへ通知
+    List<string> agentRoles;
+    var sessionWithProject = await db.ChatSessions
+        .Include(s => s.Project)
+            .ThenInclude(p => p!.Agents)
+        .FirstOrDefaultAsync(s => s.Id == session.Id);
+    
+    var customAgents = sessionWithProject?.Project?.Agents?
+        .Where(a => a.IsActive)
+        .OrderBy(a => a.Id)
+        .Select(a => a.RoleName)
+        .ToList();
+    
+    agentRoles = (customAgents != null && customAgents.Any())
+        ? customAgents
+        : new List<string> { "Orchestrator", "Executor", "Reviewer" };
+
+    var sessionPayload = JsonSerializer.Serialize(new
+    {
+        sessionId = session.Id,
+        agents = agentRoles
+    });
+    await SendEvent("session", sessionPayload);
 
     // 各ステップの開始通知
-    var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, provider,
+    var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, session.Id, provider,
         onStepComplete: async (role, stepHtml) =>
         {
-            await SendEvent("step-complete", $"{role}|{stepHtml}");
+            var payload = JsonSerializer.Serialize(new { role, html = stepHtml });
+            await SendEvent("step-complete", payload);
         });
 
     aMsg.Content = html;
