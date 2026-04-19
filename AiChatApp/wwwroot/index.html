@@ -11,9 +11,14 @@
     <style>
         .htmx-indicator { display: none; }
         .htmx-request .htmx-indicator { display: inline-block; }
-        .htmx-request button, .htmx-request input, .htmx-request select, .htmx-request textarea {
+        /* Disable inputs during request */
+        .requesting #send-btn, 
+        .requesting #chat-input,
+        .htmx-request #send-btn, 
+        .htmx-request #chat-input {
             pointer-events: none;
-            opacity: 0.6;
+            opacity: 0.5;
+            cursor: not-allowed;
         }
         
         @keyframes fadeIn {
@@ -23,7 +28,6 @@
         .chat { animation: fadeIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
         #chat-box { scroll-behavior: smooth; }
 
-        /* Typing Indicator Animation */
         .typing-dot {
             width: 4px;
             height: 4px;
@@ -40,7 +44,6 @@
             40% { transform: scale(1); opacity: 1; }
         }
         
-        /* UI-design.md Specifications */
         .markdown pre {
             overflow-x: auto;
             max-width: 100%;
@@ -58,21 +61,34 @@
             padding: 0.5rem;
             opacity: 0.8;
         }
+        .markdown blockquote {
+            border-left: 4px solid currentColor;
+            padding-left: 1rem;
+            margin: 0.5rem 0;
+            opacity: 0.7;
+            font-style: italic;
+            background: rgba(0,0,0,0.05);
+            border-radius: 0 4px 4px 0;
+        }
         
-        /* Auto-expanding textarea */
         .input-container textarea {
             min-height: 44px;
             max-height: 200px;
             resize: none;
-            overflow-y: hidden; /* Hide scrollbar during auto-expand */
+            overflow-y: hidden;
         }
         
-        /* Message container centering */
         .message-bubble-container {
             max-width: 800px;
             margin-left: auto;
             margin-right: auto;
             width: 100%;
+        }
+
+        .step-result pre {
+            background: rgba(0,0,0,0.1);
+            padding: 10px;
+            border-radius: 4px;
         }
     </style>
 </head>
@@ -95,43 +111,55 @@
             <!-- Chat Container -->
             <main id="chat-container" class="flex-1 flex flex-col overflow-hidden relative">
                 <div id="chat-box" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-8">
-                    <div class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4">
+                    <div id="welcome-message" class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4">
                         <div class="w-16 h-16 border-4 border-dashed border-current rounded-full opacity-20"></div>
                         <p class="text-xl font-medium text-center">How can I help you today?</p>
                     </div>
                 </div>
             </main>
 
-            <!-- Input Area (Floating Style) -->
+            <!-- Input Area -->
             <footer class="p-4 md:p-6 bg-gradient-to-t from-base-100 via-base-100 to-transparent flex-none">
                 <div class="max-w-3xl mx-auto relative">
-                    <form id="chat-form" hx-post="/api/chat" hx-target="#chat-box" hx-swap="beforeend" 
-                          hx-on::after-request="if(event.detail.successful) { this.reset(); resetInputHeight(); scrollToBottom(); }"
-                          hx-indicator="#loading-spinner"
+                    <form id="chat-form" onsubmit="return handleFormSubmit(event)"
                           class="input-container relative bg-base-200 rounded-[24px] shadow-2xl border border-base-300 transition-all focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 flex flex-col p-2">
                         
                         <input type="hidden" name="sessionId" id="session-id-input" />
                         
-                        <!-- Top Bar: Provider Select -->
-                        <div class="flex items-center px-2 pt-1">
-                            <select name="provider" class="select select-ghost select-xs focus:outline-none focus:bg-base-300 rounded-full opacity-60 hover:opacity-100 transition-all">
-                                <option value="gemini" selected>Gemini 2.0</option>
-                                <option value="gh-copilot">GitHub Copilot</option>
-                            </select>
+                        <div class="flex items-center justify-between px-3 pt-1 pb-1 border-b border-base-content/5 mb-1">
+                            <div class="flex items-center gap-2">
+                                <select name="provider" class="select select-ghost select-xs focus:outline-none focus:bg-base-300 rounded-full opacity-60 hover:opacity-100 transition-all font-semibold">
+                                    <option value="gemini" selected>Gemini 2.0</option>
+                                    <option value="gh-copilot">GitHub Copilot</option>
+                                    <option value="claude">Claude Code</option>
+                                    <option value="codex">OpenAI Codex</option>
+                                </select>
+                            </div>
+                            
+                            <div class="flex items-center gap-2">
+                                <label class="label cursor-pointer gap-2 py-0">
+                                    <span class="label-text text-[10px] font-bold opacity-50 uppercase tracking-wider">Cooperative Mode</span> 
+                                    <input type="checkbox" name="mode" value="cooperative" class="toggle toggle-primary toggle-xs" />
+                                </label>
+                            </div>
                         </div>
 
-                        <!-- Main Content: Textarea + Send -->
-                        <div class="flex items-end gap-2">
-                            <!-- Real Multi-line Input -->
-                            <textarea name="content" id="chat-input" placeholder="Message AI... (Ctrl+Enter to send)" 
-                                      class="textarea textarea-ghost focus:bg-transparent focus:outline-none w-full py-3 px-3 leading-relaxed text-base min-h-[44px]"
-                                      required autocomplete="off"
-                                      oninput="autoExpand(this)"></textarea>
+                        <div class="flex items-end gap-2 w-full">
+                            <div class="relative w-full flex-1">
+                                <textarea name="content" id="chat-input" placeholder="Message AI... (Ctrl+Enter to send)" 
+                                          class="textarea textarea-ghost focus:bg-transparent focus:outline-none w-full py-3 pl-3 pr-10 leading-relaxed text-base min-h-[44px]"
+                                          required autocomplete="off"
+                                          oninput="autoExpand(this)"></textarea>
+                                          
+                                <button type="button" onclick="document.getElementById('chat-input').value=''; resetInputHeight(); document.getElementById('chat-input').focus();" 
+                                        class="absolute right-2 top-3 btn btn-ghost btn-xs btn-circle opacity-40 hover:opacity-100 transition-opacity" title="Clear input">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
 
-                            <!-- Send Button -->
                             <div class="flex-none pb-1.5 pr-1.5">
                                 <button type="submit" class="btn btn-circle btn-primary btn-sm md:btn-md shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95 disabled:bg-base-300" id="send-btn">
-                                    <span id="loading-spinner" class="loading loading-spinner loading-xs htmx-indicator"></span>
+                                    <span id="loading-spinner" class="loading loading-spinner loading-xs hidden"></span>
                                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 md:h-6 md:w-6 transform transition-transform group-active:translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
                                 </button>
                             </div>
@@ -148,56 +176,37 @@
             <div class="p-4 w-72 md:w-80 bg-base-100 h-full flex flex-col gap-6">
                 <div class="flex items-center justify-between px-2">
                     <div class="flex items-center gap-2">
-                        <div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-primary-content font-bold">A</div>
-                        <span class="text-xl font-bold tracking-tight">AI Chat Pro</span>
+                        <div id="user-avatar" class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-primary-content font-bold uppercase">?</div>
+                        <div class="flex flex-col">
+                            <span id="user-display-name" class="text-sm font-bold tracking-tight">Loading...</span>
+                            <form action="/api/auth/logout" method="POST">
+                                <button class="text-[10px] text-error hover:underline bg-transparent border-none p-0 h-auto min-h-0 text-left">Logout</button>
+                            </form>
+                        </div>
                     </div>
-                    <div class="dropdown dropdown-end">
-                        <div tabindex="0" role="button" class="btn btn-ghost btn-xs opacity-50">Theme</div>
-                        <!-- (Theme menu remains same) -->
-                        <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-200 rounded-box w-52 max-h-96 overflow-y-auto">
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Default" value="default"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Light" value="light"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Dark" value="dark"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Cupcake" value="cupcake"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Bumblebee" value="bumblebee"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Emerald" value="emerald"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Corporate" value="corporate"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Synthwave" value="synthwave"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Retro" value="retro"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Cyberpunk" value="cyberpunk"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Valentine" value="valentine"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Halloween" value="halloween"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Garden" value="garden"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Forest" value="forest"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Aqua" value="aqua"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Lofi" value="lofi"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Pastel" value="pastel"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Fantasy" value="fantasy"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Wireframe" value="wireframe"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Black" value="black"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Luxury" value="luxury"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Dracula" value="dracula"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Cmyk" value="cmyk"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Autumn" value="autumn"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Business" value="business"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Acid" value="acid"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Lemonade" value="lemonade"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Night" value="night"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Coffee" value="coffee"/></li>
-                            <li><input type="radio" name="theme-dropdown" class="theme-controller btn btn-sm btn-block btn-ghost justify-start" aria-label="Winter" value="winter"/></li>
-                        </ul>
-                    </div>
-                    <form action="/api/auth/logout" method="POST">
-                        <button class="btn btn-ghost btn-xs text-error">Logout</button>
-                    </form>
                 </div>
                 
                 <button hx-post="/api/chat/new" hx-target="#chat-container" class="btn btn-primary w-full shadow-md font-bold text-lg">+ New Chat</button>
                 
-                <div class="divider text-[10px] opacity-30 uppercase font-bold tracking-widest px-2">Recent</div>
-                
-                <div id="chat-list" hx-get="/api/chat/list" hx-trigger="load, loadChatList from:body" class="flex-1 flex flex-col gap-1 overflow-y-auto pr-2 custom-scrollbar">
-                    <!-- Chat list items will load here -->
+                <div role="tablist" class="tabs tabs-boxed bg-base-200 p-1">
+                    <a role="tab" class="tab tab-active" onclick="switchTab(this, 'chat-list-container')">History</a>
+                    <a role="tab" class="tab" onclick="switchTab(this, 'memory-container')" hx-get="/api/memories" hx-target="#memory-list">Memory</a>
+                    <a role="tab" class="tab" onclick="switchTab(this, 'skills-container')" hx-get="/api/skills" hx-target="#skills-list">Skills</a>
+                </div>
+
+                <div id="chat-list-container" class="tab-content flex-1 flex flex-col min-h-0">
+                    <div class="divider text-[10px] opacity-30 uppercase font-bold tracking-widest px-2">Recent</div>
+                    <div id="chat-list" hx-get="/api/chat/list" hx-trigger="load, loadChatList from:body" class="flex-1 flex flex-col gap-1 overflow-y-auto pr-2 custom-scrollbar"></div>
+                </div>
+
+                <div id="memory-container" class="tab-content hidden flex-1 flex flex-col min-h-0">
+                    <div class="divider text-[10px] opacity-30 uppercase font-bold tracking-widest px-2">Facts</div>
+                    <div id="memory-list" class="flex-1 flex flex-col gap-3 overflow-y-auto pr-2 custom-scrollbar"></div>
+                </div>
+
+                <div id="skills-container" class="tab-content hidden flex-1 flex flex-col min-h-0">
+                    <div class="divider text-[10px] opacity-30 uppercase font-bold tracking-widest px-2">Plugins</div>
+                    <div id="skills-list" class="flex-1 flex flex-col gap-3 overflow-y-auto pr-2 custom-scrollbar"></div>
                 </div>
                 
                 <div class="mt-auto pt-4 border-t border-base-300/50 text-[10px] text-center opacity-30">
@@ -207,7 +216,7 @@
         </div>
     </div>
 
-    <!-- Rename Modal -->
+    <!-- Modals -->
     <dialog id="rename_modal" class="modal">
         <div class="modal-box">
             <h3 class="font-bold text-lg">Rename Chat</h3>
@@ -222,45 +231,254 @@
         </div>
     </dialog>
 
+    <dialog id="memory_modal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg">Save to Long-term Memory</h3>
+            <p class="text-sm opacity-60 mt-1">This fact will be available to AI in future conversations when keywords match.</p>
+            <form id="memory-form" hx-post="/api/memories" hx-swap="none" class="mt-4 space-y-4">
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-bold">Memory Tags (Comma separated)</span></label>
+                    <input type="text" name="tags" id="memory-tags" placeholder="e.g. code, csharp, project_name" class="input input-bordered w-full" required />
+                    <p class="text-[10px] opacity-50 mt-1">Using multiple tags improves search accuracy.</p>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-bold">Content</span></label>
+                    <textarea name="content" id="memory-content" class="textarea textarea-bordered w-full h-24" required></textarea>
+                </div>
+                <div class="modal-action">
+                    <button type="button" class="btn" onclick="memory_modal.close()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" onclick="memory_modal.close()">Save Memory</button>
+                </div>
+            </form>
+        </div>
+    </dialog>
+
     <script>
+        // Init marked
+        marked.setOptions({ gfm: true, breaks: true });
+
         // Theme control
-        function initTheme() {
-            const savedTheme = localStorage.getItem('theme') || 'light';
-            document.documentElement.setAttribute('data-theme', savedTheme);
-            const controller = document.querySelector(`.theme-controller[value="${savedTheme}"]`);
-            if (controller) controller.checked = true;
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+
+        async function handleFormSubmit(e) {
+            e.preventDefault();
+            const form = e.target;
+            const formData = new FormData(form);
+            const isCooperative = formData.get('mode') === 'cooperative';
+            
+            if (isCooperative) {
+                await sendCooperativeMessage(formData);
+            } else {
+                await sendMessageStream(formData);
+            }
+            return false;
         }
 
-        document.querySelectorAll('.theme-controller').forEach(controller => {
-            controller.addEventListener('change', (e) => {
-                const theme = e.target.value;
-                document.documentElement.setAttribute('data-theme', theme);
-                localStorage.setItem('theme', theme);
-            });
-        });
+        async function sendMessageStream(formData) {
+            const content = formData.get('content').trim();
+            if (!content) return;
 
-        initTheme();
+            addUserMessage(content);
+            const input = document.getElementById('chat-input');
+            input.value = '';
+            resetInputHeight();
+            
+            document.body.classList.add('requesting');
+            document.getElementById('loading-spinner').classList.remove('hidden');
 
-        // Handle Textarea Keys: Ctrl+Enter to Send, Enter to newline
-        const chatInput = document.getElementById('chat-input');
-        chatInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && e.ctrlKey) {
-                e.preventDefault();
-                if (chatInput.value.trim() && !document.body.classList.contains('htmx-request')) {
-                    htmx.trigger('#chat-form', 'submit');
+            const chatBox = document.getElementById('chat-box');
+            const aiBubbleId = 'ai-' + Date.now();
+            chatBox.insertAdjacentHTML('beforeend', renderAiBubbleId('', aiBubbleId));
+            scrollToBottom();
+
+            const bubble = document.getElementById(aiBubbleId).querySelector('.markdown');
+            let accumulated = '';
+
+            try {
+                const sessionId = document.getElementById('session-id-input').value;
+                if (sessionId) formData.append('sessionId', sessionId);
+
+                const response = await fetch('/api/chat/stream', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let firstChunk = true;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const text = decoder.decode(value);
+                    const lines = text.split('\n');
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            if (data === '[DONE]') break;
+                            
+                            if (firstChunk) {
+                                bubble.innerHTML = '';
+                                firstChunk = false;
+                            }
+                            
+                            accumulated += data.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
+                            bubble.innerHTML = marked.parse(accumulated);
+                            scrollToBottom();
+                        }
+                    }
                 }
+                bubble.innerHTML = marked.parse(accumulated);
+                bubble.dataset.rendered = "true";
+                document.body.dispatchEvent(new CustomEvent('loadChatList'));
+            } catch (err) {
+                console.error('Streaming error:', err);
+                bubble.innerHTML = '<span class="text-error">Error: Failed to get response.</span>';
+            } finally {
+                document.body.classList.remove('requesting');
+                document.getElementById('loading-spinner').classList.add('hidden');
+                scrollToBottom();
             }
-        });
+        }
+
+        async function sendCooperativeMessage(formData) {
+            const content = formData.get('content').trim();
+            if (!content) return;
+
+            addUserMessage(content);
+            const input = document.getElementById('chat-input');
+            input.value = '';
+            resetInputHeight();
+
+            document.body.classList.add('requesting');
+            document.getElementById('loading-spinner').classList.remove('hidden');
+
+            const chatBox = document.getElementById('chat-box');
+            const progressId = 'progress-' + Date.now();
+            chatBox.insertAdjacentHTML('beforeend', renderProgressBubble(progressId));
+            scrollToBottom();
+
+            try {
+                const sessionId = document.getElementById('session-id-input').value;
+                if (sessionId) formData.append('sessionId', sessionId);
+
+                const response = await fetch('/api/chat/cooperate/stream', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                const progressEl = document.getElementById(progressId);
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value, { stream: true });
+                    const lines = text.split('\n');
+                    let eventName = '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('event: ')) {
+                            eventName = line.slice(7).trim();
+                        } else if (line.startsWith('data: ')) {
+                            const data = line.slice(6).trim();
+                            handleSSEEvent(eventName, data, progressEl, progressId, chatBox);
+                        }
+                    }
+                }
+                document.body.dispatchEvent(new CustomEvent('loadChatList'));
+            } catch (e) {
+                console.error('SSE error:', e);
+            } finally {
+                document.body.classList.remove('requesting');
+                document.getElementById('loading-spinner').classList.add('hidden');
+                scrollToBottom();
+            }
+        }
+
+        function handleSSEEvent(event, data, progressEl, progressId, chatBox) {
+            if (event === 'session') {
+                document.getElementById('session-id-input').value = data;
+            } else if (event === 'step-complete') {
+                const [role, stepHtml] = data.split('|', 2);
+                if (progressEl) {
+                    const innerBubble = progressEl.querySelector('.chat-bubble');
+                    const cleanStepHtml = stepHtml.replace(/\\n/g, '\n');
+                    innerBubble.insertAdjacentHTML('beforeend', `<div class="step-result mt-2">${cleanStepHtml}</div>`);
+                    innerBubble.querySelector('.step-status').textContent = `Step complete: ${role}`;
+                    scrollToBottom();
+                }
+            } else if (event === 'final') {
+                const finalHtml = data.replace(/\\n/g, '\n');
+                const progressContainer = document.getElementById(progressId);
+                if (progressContainer) {
+                    progressContainer.outerHTML = renderAiBubble(finalHtml);
+                }
+                renderMarkdown();
+                scrollToBottom();
+            }
+        }
+
+        function addUserMessage(content) {
+            const chatBox = document.getElementById('chat-box');
+            const welcomeMsg = document.getElementById('welcome-message');
+            if (welcomeMsg) welcomeMsg.remove();
+
+            const html = `
+                <div class="chat chat-end group message-bubble-container">
+                    <div class="chat-bubble shadow-sm bg-primary text-primary-content markdown leading-relaxed p-3 md:p-4 rounded-[18px] rounded-tr-none" data-rendered="true">
+                        ${marked.parse(escapeHtml(content))}
+                    </div>
+                </div>`;
+            chatBox.insertAdjacentHTML('beforeend', html);
+            scrollToBottom();
+        }
+
+        function renderAiBubbleId(content, id) {
+            return `<div id="${id}" class="chat chat-start group message-bubble-container">
+                <div class="chat-bubble shadow-sm bg-base-200 text-base-content border border-base-300 markdown leading-relaxed p-3 md:p-4 rounded-[18px] rounded-bl-none">
+                    ${content || '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>'}
+                </div>
+                <div class="chat-footer opacity-0 group-hover:opacity-50 transition-opacity flex gap-3 pt-2 px-1">
+                    <button class="hover:text-primary transition-colors" onclick="copyText(this)" title="Copy"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5 1.5h6.375a1.125 1.125 0 0 1 1.125 1.125v9.375Zm3 3V6.75a1.125 1.125 0 0 0-1.125-1.125h-1.5a3.375 3.375 0 0 1-3.375-3.375V2.125c0-.621-.504-1.125-1.125-1.125H9.75a1.125 1.125 0 0 0-1.125 1.125V4.5a9.06 9.06 0 0 1 1.5 1.5h6.75a1.125 1.125 0 0 1 1.125 1.125v13.125a1.125 1.125 0 0 1-1.125 1.125H15" /></svg></button>
+                    <button class="hover:text-primary transition-colors" onclick="forwardText(this)" title="Forward"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg></button>
+                    <button class="hover:text-primary transition-colors" onclick="saveToMemory(this)" title="Save to Memory"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" /></svg></button>
+                </div>
+            </div>`;
+        }
+
+        function renderAiBubble(content) {
+            return `<div class="chat chat-start group message-bubble-container">
+                <div class="chat-bubble shadow-sm bg-base-200 text-base-content border border-base-300 markdown leading-relaxed p-3 md:p-4 rounded-[18px] rounded-bl-none">
+                    ${content}
+                </div>
+            </div>`;
+        }
+
+        function renderProgressBubble(id) {
+            return `<div id="${id}" class="chat chat-start group message-bubble-container">
+                <div class="chat-bubble shadow-sm bg-base-200 text-base-content border border-base-300 leading-relaxed p-3 md:p-4 rounded-[18px] rounded-bl-none">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="loading loading-dots loading-xs"></span>
+                        <span class="step-status text-xs opacity-60">Harness Agents processing...</span>
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        function scrollToBottom() {
+            const chatBox = document.getElementById('chat-box');
+            if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+        }
 
         function autoExpand(el) {
             el.style.height = 'auto';
             el.style.height = (el.scrollHeight) + 'px';
-            // Show scrollbar only if exceeding max-height (200px)
-            if (el.scrollHeight > 200) {
-                el.style.overflowY = 'auto';
-            } else {
-                el.style.overflowY = 'hidden';
-            }
+            el.style.overflowY = el.scrollHeight > 200 ? 'auto' : 'hidden';
         }
 
         function resetInputHeight() {
@@ -269,90 +487,72 @@
             input.style.overflowY = 'hidden';
         }
 
-        // Instant UI Feedback: Show typing indicator before request
-        document.body.addEventListener('htmx:beforeRequest', (evt) => {
-            if (evt.detail.target.id === 'chat-box') {
-                const chatBox = document.getElementById('chat-box');
-                const typingHtml = `
-                    <div id="typing-indicator" class="chat chat-start group message-bubble-container">
-                        <div class="chat-bubble bg-base-200 text-base-content border border-base-300 p-3 rounded-[18px] rounded-tl-none flex items-center gap-1 min-h-[44px]">
-                            <span class="typing-dot"></span>
-                            <span class="typing-dot"></span>
-                            <span class="typing-dot"></span>
-                        </div>
-                    </div>`;
-                chatBox.insertAdjacentHTML('beforeend', typingHtml);
-                setTimeout(scrollToBottom, 10);
-            }
-        });
-
-        document.body.addEventListener('htmx:beforeSwap', (evt) => {
-            // Remove typing indicator before swapping in the real response
-            const indicator = document.getElementById('typing-indicator');
-            if (indicator) indicator.remove();
-        });
-
-        document.body.addEventListener('htmx:afterOnLoad', (evt) => {
-            renderMarkdown();
-            
-            const chatBox = document.getElementById('chat-box');
-            if (chatBox && chatBox.dataset.sessionId) {
-                document.getElementById('session-id-input').value = chatBox.dataset.sessionId;
-                setTimeout(scrollToBottom, 50);
-            }
-        });
-
-        document.body.addEventListener('htmx:afterRequest', (evt) => {
-            if (evt.detail.target.id === 'chat-box') {
-                renderMarkdown();
-                setTimeout(scrollToBottom, 50);
-            }
-        });
-
-        // Ensure session ID is always sent with chat requests
-        document.body.addEventListener('htmx:configRequest', (evt) => {
-            if (evt.detail.path === '/api/chat') {
-                const sessionId = document.getElementById('session-id-input').value;
-                if (sessionId) {
-                    evt.detail.parameters['sessionId'] = sessionId;
-                }
-            }
-        });
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
 
         function renderMarkdown() {
             document.querySelectorAll('.markdown').forEach(el => {
                 if (!el.dataset.rendered) {
-                    // Pre-process: replace newlines with actual line breaks for better marked.js handling if needed
-                    // or just let marked handle it. Standard marked needs raw text.
-                    el.innerHTML = marked.parse(el.textContent.trim());
+                    el.innerHTML = marked.parse(el.textContent);
                     el.dataset.rendered = "true";
                 }
             });
         }
 
-        function scrollToBottom() {
-            const chatBox = document.getElementById('chat-box');
-            if (chatBox) {
-                chatBox.scrollTop = chatBox.scrollHeight;
-            }
+        // Sidebar tabs
+        function switchTab(el, containerId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('tab-active'));
+            el.classList.add('tab-active');
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+            document.getElementById(containerId).classList.remove('hidden');
         }
 
+        // Global HTMX handlers
+        document.body.addEventListener('htmx:afterOnLoad', renderMarkdown);
+        document.body.addEventListener('htmx:afterRequest', (evt) => {
+            if (evt.detail.target.id === 'chat-box') {
+                renderMarkdown();
+                scrollToBottom();
+            }
+        });
+
+        async function fetchUserInfo() {
+            const r = await fetch('/api/auth/me');
+            if (r.ok) {
+                const data = await r.json();
+                document.getElementById('user-display-name').textContent = data.username;
+                document.getElementById('user-avatar').textContent = data.username.charAt(0);
+            }
+        }
+        fetchUserInfo();
+
         function copyText(btn) {
-            const bubble = btn.closest('.chat').querySelector('.markdown');
-            navigator.clipboard.writeText(bubble.innerText);
-            btn.innerText = 'Copied!';
-            setTimeout(() => btn.innerText = 'Copy', 2000);
+            navigator.clipboard.writeText(btn.closest('.chat').querySelector('.markdown').innerText);
+            const orig = btn.innerHTML;
+            btn.innerHTML = '<span class="text-[10px] font-bold">Copied!</span>';
+            setTimeout(() => btn.innerHTML = orig, 1500);
         }
 
         function forwardText(btn) {
             const text = btn.closest('.chat').querySelector('.markdown').innerText;
-            document.getElementById('chat-input').value = text;
-            document.getElementById('chat-input').focus();
+            const input = document.getElementById('chat-input');
+            input.value = text.split('\n').map(l => '> ' + l).join('\n') + '\n\n';
+            autoExpand(input);
+            input.focus();
         }
 
-        function editTitle(id, currentTitle) {
+        function saveToMemory(btn) {
+            document.getElementById('memory-content').value = btn.closest('.chat').querySelector('.markdown').innerText;
+            document.getElementById('memory-tags').value = '';
+            memory_modal.showModal();
+        }
+
+        function editTitle(id, title) {
             document.getElementById('rename-id').value = id;
-            document.getElementById('rename-title').value = currentTitle;
+            document.getElementById('rename-title').value = title;
             rename_modal.showModal();
         }
     </script>
