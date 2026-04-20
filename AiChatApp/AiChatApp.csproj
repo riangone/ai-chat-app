@@ -7,6 +7,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="test-project\**" />
+    <Compile Remove="test-project-2\**" />
+    <EmbeddedResource Remove="test-project\**" />
+    <EmbeddedResource Remove="test-project-2\**" />
+    <None Remove="test-project\**" />
+    <None Remove="test-project-2\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="BCrypt.Net-Next" Version="4.1.0" />
     <PackageReference Include="Markdig" Version="1.1.2" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.Cookies" Version="2.3.9" />

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo Manager</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto py-10 px-4">
+        <h1 class="text-3xl font-bold text-center text-blue-600 mb-8">Photo Management System</h1>
+
+        <!-- Upload Form -->
+        <div class="max-w-md mx-auto bg-white p-6 rounded-lg shadow-md mb-10">
+            <h2 class="text-xl font-semibold mb-4">Upload New Photo</h2>
+            <form hx-post="/upload" 
+                  hx-encoding="multipart/form-data" 
+                  hx-on::after-request="if(event.detail.successful) this.reset()"
+                  class="space-y-4">
+                <input type="file" name="file" accept="image/*" required
+                       class="w-full border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button type="submit" 
+                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition duration-200">
+                    Upload Photo
+                </button>
+            </form>
+        </div>
+
+        <!-- Photo Grid -->
+        <div id="photo-list" 
+             hx-get="/photos" 
+             hx-trigger="load, photoListChanged from:body" 
+             class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            <p class="col-span-full text-center text-gray-500">Loading photos...</p>
+        </div>
+    </div>
+</body>
+</html>

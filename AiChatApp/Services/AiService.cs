@@ -12,62 +12,26 @@ public class AiService
     private readonly MemorySearchService _memorySearch;
     private readonly SessionMemoryService _sessionMemory;
     private readonly IServiceProvider _serviceProvider;
+    private readonly SkillManagerService _skillManager;
     private SkillLearningService _skillLearning => _serviceProvider.GetRequiredService<SkillLearningService>();
 
-    public record AgentDefinition(string Name, string Description, string SystemPrompt);
+    public record AgentDefinition(string Name, string DisplayName, string Description, string SystemPrompt);
 
     public AiService(AppDbContext db, MemorySearchService memorySearch, 
-        SessionMemoryService sessionMemory, IServiceProvider serviceProvider)
+        SessionMemoryService sessionMemory, IServiceProvider serviceProvider, SkillManagerService skillManager)
     {
         _db = db;
         _memorySearch = memorySearch;
         _sessionMemory = sessionMemory;
         _serviceProvider = serviceProvider;
+        _skillManager = skillManager;
     }
 
-    /// <summary>获取所有可用的代理定义（从数据库和文件系统）</summary>
+    /// <summary>获取所有可用的代理定义（统一从 SkillManager 获取）</summary>
     public async Task<List<AgentDefinition>> GetAvailableAgentsAsync(int userId)
     {
-        var agents = new List<AgentDefinition>();
-
-        // 1. 从文件系统加载技能作为代理
-        var skillPaths = new[] { "test-skill", ".gemini/skills" };
-        var rootDir = Directory.GetCurrentDirectory();
-        
-        // 确保目录存在
-        foreach (var relativePath in skillPaths)
-        {
-            var path = Path.Combine(rootDir, relativePath);
-            if (!Directory.Exists(path)) continue;
-
-            // 如果是单一技能目录
-            if (relativePath == "test-skill")
-            {
-                var def = await LoadAgentFromDirAsync(path);
-                if (def != null) agents.Add(def);
-            }
-            else
-            {
-                // 如果是技能根目录，遍历子目录
-                foreach (var dir in Directory.GetDirectories(path))
-                {
-                    var def = await LoadAgentFromDirAsync(dir);
-                    if (def != null) agents.Add(def);
-                }
-            }
-        }
-
-        // 2. 从数据库加载自定义角色
-        var dbAgents = await _db.AgentProfiles.Where(a => a.IsActive).ToListAsync();
-        foreach (var da in dbAgents)
-        {
-            if (!agents.Any(a => a.Name == da.RoleName))
-            {
-                agents.Add(new AgentDefinition(da.RoleName, "Database defined agent", da.SystemPrompt));
-            }
-        }
-
-        return agents;
+        var skills = await _skillManager.GetAllSkillsAsync();
+        return skills.Select(s => new AgentDefinition(s.Name, s.DisplayName, s.Description, s.Prompt)).ToList();
     }
 
     private async Task<AgentDefinition?> LoadAgentFromDirAsync(string dirPath)
@@ -97,7 +61,7 @@ public class AiService
             }
         }
 
-        return new AgentDefinition(name, description, systemPrompt);
+        return new AgentDefinition(name, name, description, systemPrompt);
     }
 
     // ─────────────────────────────────────────
@@ -151,7 +115,7 @@ public class AiService
             if (session?.Project?.Agents != null && session.Project.Agents.Any())
             {
                 var activeAgents = session.Project.Agents.Where(a => a.IsActive).OrderBy(a => a.Id).ToList();
-                agentsToRun = activeAgents.Select(a => new AgentDefinition(a.RoleName, "DB Agent", a.SystemPrompt)).ToList();
+                agentsToRun = activeAgents.Select(a => new AgentDefinition(a.RoleName, a.RoleName, "DB Agent", a.SystemPrompt)).ToList();
             }
         }
 

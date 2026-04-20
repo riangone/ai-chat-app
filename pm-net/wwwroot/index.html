@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>照片管理系统 - .NET 10 + HTMX</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-10 text-center">
+            <h1 class="text-4xl font-bold text-gray-800">照片管理器</h1>
+            <p class="text-gray-600 mt-2">基于 .NET 10 Minimal API & HTMX</p>
+        </header>
+
+        <!-- 上传区域 -->
+        <div class="bg-white p-6 rounded-xl shadow-md mb-8 max-w-xl mx-auto">
+            <h2 class="text-xl font-semibold mb-4 text-gray-700">上传新照片</h2>
+            <form hx-post="/api/photos/upload" 
+                  hx-encoding="multipart/form-data" 
+                  hx-target="#photo-list"
+                  hx-on::after-request="this.reset()"
+                  class="space-y-4">
+                <div class="flex items-center justify-center w-full">
+                    <label class="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
+                        <div class="flex flex-col items-center justify-center pt-5 pb-6">
+                            <svg class="w-8 h-8 mb-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                            </svg>
+                            <p class="mb-2 text-sm text-gray-500"><span class="font-semibold">点击选择照片</span></p>
+                        </div>
+                        <input name="photo" type="file" class="hidden" accept="image/*" required />
+                    </label>
+                </div>
+                <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-sm">
+                    开始上传
+                </button>
+            </form>
+        </div>
+
+        <!-- 照片列表 -->
+        <div class="bg-white p-6 rounded-xl shadow-md min-h-[400px]">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-semibold text-gray-700">照片库</h2>
+                <button hx-get="/api/photos" hx-target="#photo-list" class="text-sm bg-gray-200 px-3 py-1 rounded hover:bg-gray-300">
+                    刷新列表
+                </button>
+            </div>
+            
+            <div id="photo-list" hx-get="/api/photos" hx-trigger="load">
+                <!-- HTMX 将在此加载内容 -->
+                <div class="flex justify-center items-center py-20">
+                    <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

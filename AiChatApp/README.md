@@ -6,7 +6,7 @@ AiChatApp is a modern, web-based chat interface that bridges professional AI CLI
 
 ## 🚀 Key Features
 
-- **Multi-Provider Support**: Seamlessly switch between `Gemini 2.0` and `GitHub Copilot` (via CLI wrappers).
+- **Multi-Provider Support**: Seamlessly switch between `Gemini` and `GitHub Copilot` (via CLI wrappers).
 - **Cooperative Mode**: A multi-agent workflow where an **Orchestrator** plans, an **Executor** implements, and a **Reviewer** verifies the output.
 - **Long-Term Memory**: AI remembers user-defined facts and preferences. Memories are retrieved based on keyword tags during conversations.
 - **Skill System**: Toggleable "Plugins" or instructions that enhance AI capabilities for specific tasks.

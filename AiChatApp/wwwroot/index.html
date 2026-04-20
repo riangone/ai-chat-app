@@ -377,22 +377,30 @@
                             <p class="text-[10px] opacity-60" data-i18n="project-desc">Code generation will happen within this directory.</p>
                         </div>
                     </div>
+
+                    <div id="selected-project-info" class="hidden px-3 mb-4">
+                        <div class="p-3 bg-primary/10 border border-primary/20 rounded-lg">
+                            <div class="flex justify-between items-start">
+                                <span class="text-xs font-bold text-primary" id="current-project-name">No Project</span>
+                                <button onclick="deselectProject()" class="btn btn-ghost btn-xs text-error">✕</button>
+                            </div>
+                            <p class="text-[10px] opacity-60 mt-1 truncate" id="current-project-path"></p>
+                            <div class="mt-2 flex gap-1">
+                                <button onclick="showAgentModal()" class="btn btn-xs btn-outline btn-primary" data-i18n="roles">Roles</button>
+                            </div>
+                        </div>
+
+                        <div class="divider text-[10px] opacity-30 uppercase font-bold tracking-widest mt-4">Project History</div>
+                        <div id="project-chat-list" class="flex flex-col gap-1 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+                            <!-- Project specific chats load here -->
+                        </div>
+                    </div>
+
                     <div class="flex items-center justify-between px-3 mb-2">
                         <div class="text-[10px] opacity-30 uppercase font-bold tracking-widest" data-i18n="workspaces">Workspaces</div>
                         <button onclick="project_modal.showModal()" class="btn btn-ghost btn-xs text-primary" data-i18n="new-project">+ New</button>
                     </div>
                     <div id="projects-list" class="flex-1 flex flex-col gap-1 overflow-y-auto pr-2 custom-scrollbar px-2"></div>
-                    
-                    <div id="selected-project-info" class="hidden mt-4 p-3 bg-primary/10 border border-primary/20 rounded-lg">
-                        <div class="flex justify-between items-start">
-                            <span class="text-xs font-bold text-primary" id="current-project-name">No Project</span>
-                            <button onclick="deselectProject()" class="btn btn-ghost btn-xs text-error" data-i18n="clear">Clear</button>
-                        </div>
-                        <p class="text-[10px] opacity-60 mt-1 truncate" id="current-project-path"></p>
-                        <div class="mt-2 flex gap-1">
-                            <button onclick="showAgentModal()" class="btn btn-xs btn-outline btn-primary" data-i18n="roles">Roles</button>
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -521,10 +529,12 @@
                     selector.classList.remove('hidden');
                     container.innerHTML = agents.map(a => `
                         <button type="button" onclick="toggleAgent('${a.name}')" id="chip-${a.name}"
-                                class="btn btn-xs rounded-full px-3 btn-ghost border border-base-content/10 font-normal hover:bg-primary/10 hover:border-primary/30 transition-all whitespace-nowrap">
-                            ${a.name}
+                                class="btn btn-xs rounded-full px-3 ${selectedAgents.includes(a.name) ? 'btn-primary shadow-sm' : 'btn-ghost border border-base-content/10'} font-normal hover:bg-primary/10 hover:border-primary/30 transition-all whitespace-nowrap">
+                            ${a.displayName || a.name}
                         </button>
                     `).join('');
+                } else {
+                    selector.classList.add('hidden');
                 }
             } catch (e) { console.error("Failed to load agents", e); }
         }
@@ -535,11 +545,11 @@
             if (idx > -1) {
                 selectedAgents.splice(idx, 1);
                 chip.classList.remove('btn-primary', 'shadow-sm');
-                chip.classList.add('btn-ghost');
+                chip.classList.add('btn-ghost', 'border-base-content/10');
             } else {
                 selectedAgents.push(name);
                 chip.classList.add('btn-primary', 'shadow-sm');
-                chip.classList.remove('btn-ghost');
+                chip.classList.remove('btn-ghost', 'border-base-content/10');
             }
         }
 
@@ -772,6 +782,9 @@
             el.classList.add('tab-active');
             document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
             document.getElementById(containerId).classList.remove('hidden');
+            if (containerId === 'skills-container') {
+                loadAvailableAgents();
+            }
         }
 
         function copyText(btn) {
@@ -809,6 +822,9 @@
             localStorage.setItem('selectedProject', JSON.stringify({ id, name, path }));
             updateProjectBanner(name);
             loadAgents(id);
+            refreshProjectChats(id);
+            // Refresh general history to filter out project chats
+            htmx.ajax('GET', '/api/chat/list', '#chat-list');
         }
 
         function deselectProject() {
@@ -816,6 +832,13 @@
             document.getElementById('selected-project-info').classList.add('hidden');
             localStorage.removeItem('selectedProject');
             updateProjectBanner(null);
+            // Refresh general history
+            htmx.ajax('GET', '/api/chat/list', '#chat-list');
+        }
+
+        function refreshProjectChats(pid) {
+            if (!pid) return;
+            htmx.ajax('GET', `/api/chat/list?projectId=${pid}`, '#project-chat-list');
         }
 
         function updateProjectBanner(n) {
@@ -870,8 +893,53 @@
             }
         }
 
+        function editSkillPrompt(name) {
+            const area = document.getElementById(`prompt-${name}`);
+            const btnEdit = document.getElementById(`btn-edit-${name}`);
+            const btnSave = document.getElementById(`btn-save-${name}`);
+            area.readOnly = false;
+            area.classList.remove('bg-base-300');
+            area.classList.add('bg-base-100', 'border-primary');
+            btnEdit.classList.add('hidden');
+            btnSave.classList.remove('hidden');
+            area.focus();
+        }
+
+        async function saveSkillPrompt(name, isSystem) {
+            const area = document.getElementById(`prompt-${name}`);
+            const btnEdit = document.getElementById(`btn-edit-${name}`);
+            const btnSave = document.getElementById(`btn-save-${name}`);
+            
+            const formData = new FormData();
+            formData.append('name', name);
+            formData.append('prompt', area.value);
+            formData.append('isSystem', isSystem);
+
+            const r = await fetch('/api/skills/save', { method: 'POST', body: formData });
+            if (r.ok) {
+                area.readOnly = true;
+                area.classList.add('bg-base-300');
+                area.classList.remove('bg-base-100', 'border-primary');
+                btnEdit.classList.remove('hidden');
+                btnSave.classList.add('hidden');
+                // Refresh chips to apply new prompt instantly
+                loadAvailableAgents();
+            }
+        }
+
         document.body.addEventListener('htmx:configRequest', (e) => {
-            if (e.detail.path === '/api/chat/new' && selectedProjectId) e.detail.parameters['projectId'] = selectedProjectId;
+            if (e.detail.path === '/api/chat/new' && selectedProjectId) {
+                e.detail.parameters['projectId'] = selectedProjectId;
+            }
+            if (e.detail.path === '/api/chat/list' && !e.detail.parameters['projectId']) {
+                // If we are getting the list and no projectId is set, it might be the general history tab
+                // We don't need to force it here as the server defaults to null if missing,
+                // but we can be explicit if we wanted.
+            }
+        });
+
+        document.body.addEventListener('loadChatList', () => {
+            if (selectedProjectId) refreshProjectChats(selectedProjectId);
         });
 
         (async () => {
