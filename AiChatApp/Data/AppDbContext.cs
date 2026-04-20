@@ -15,6 +15,7 @@ public class AppDbContext : DbContext
     public DbSet<AgentStep> AgentSteps => Set<AgentStep>();
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<AgentProfile> AgentProfiles => Set<AgentProfile>();
+    public DbSet<SessionMemory> SessionMemories => Set<SessionMemory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

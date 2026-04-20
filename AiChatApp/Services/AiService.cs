@@ -10,11 +10,94 @@ public class AiService
 {
     private readonly AppDbContext _db;
     private readonly MemorySearchService _memorySearch;
+    private readonly SessionMemoryService _sessionMemory;
+    private readonly IServiceProvider _serviceProvider;
+    private SkillLearningService _skillLearning => _serviceProvider.GetRequiredService<SkillLearningService>();
 
-    public AiService(AppDbContext db, MemorySearchService memorySearch)
+    public record AgentDefinition(string Name, string Description, string SystemPrompt);
+
+    public AiService(AppDbContext db, MemorySearchService memorySearch, 
+        SessionMemoryService sessionMemory, IServiceProvider serviceProvider)
     {
         _db = db;
         _memorySearch = memorySearch;
+        _sessionMemory = sessionMemory;
+        _serviceProvider = serviceProvider;
+    }
+
+    /// <summary>获取所有可用的代理定义（从数据库和文件系统）</summary>
+    public async Task<List<AgentDefinition>> GetAvailableAgentsAsync(int userId)
+    {
+        var agents = new List<AgentDefinition>();
+
+        // 1. 从文件系统加载技能作为代理
+        var skillPaths = new[] { "test-skill", ".gemini/skills" };
+        var rootDir = Directory.GetCurrentDirectory();
+        
+        // 确保目录存在
+        foreach (var relativePath in skillPaths)
+        {
+            var path = Path.Combine(rootDir, relativePath);
+            if (!Directory.Exists(path)) continue;
+
+            // 如果是单一技能目录
+            if (relativePath == "test-skill")
+            {
+                var def = await LoadAgentFromDirAsync(path);
+                if (def != null) agents.Add(def);
+            }
+            else
+            {
+                // 如果是技能根目录，遍历子目录
+                foreach (var dir in Directory.GetDirectories(path))
+                {
+                    var def = await LoadAgentFromDirAsync(dir);
+                    if (def != null) agents.Add(def);
+                }
+            }
+        }
+
+        // 2. 从数据库加载自定义角色
+        var dbAgents = await _db.AgentProfiles.Where(a => a.IsActive).ToListAsync();
+        foreach (var da in dbAgents)
+        {
+            if (!agents.Any(a => a.Name == da.RoleName))
+            {
+                agents.Add(new AgentDefinition(da.RoleName, "Database defined agent", da.SystemPrompt));
+            }
+        }
+
+        return agents;
+    }
+
+    private async Task<AgentDefinition?> LoadAgentFromDirAsync(string dirPath)
+    {
+        var skillFile = Path.Combine(dirPath, "SKILL.md");
+        if (!File.Exists(skillFile)) return null;
+
+        var content = await File.ReadAllTextAsync(skillFile);
+        var name = Path.GetFileName(dirPath);
+        var description = "";
+        var systemPrompt = content;
+
+        // 尝试解析 YAML Front Matter (简单实现)
+        if (content.StartsWith("---"))
+        {
+            var endIdx = content.IndexOf("---", 3);
+            if (endIdx > 0)
+            {
+                var yaml = content.Substring(3, endIdx - 3);
+                var lines = yaml.Split('\n');
+                foreach (var line in lines)
+                {
+                    if (line.StartsWith("name:")) name = line.Replace("name:", "").Trim();
+                    if (line.StartsWith("description:")) description = line.Replace("description:", "").Trim();
+                }
+                systemPrompt = content.Substring(endIdx + 3).Trim();
+            }
+        }
+
+        return new AgentDefinition(name, description, systemPrompt);
     }
 
     // ─────────────────────────────────────────
@@ -42,14 +125,24 @@ public class AiService
     /// </summary>
     public async Task<(string Html, List<AgentStep> Steps)> CooperateAsync(
         string task, int userId, int messageId, int? chatSessionId, string provider = "gemini",
+        List<string>? selectedAgentNames = null,
         Func<string, string, Task>? onStepComplete = null)
     {
         var steps = new List<AgentStep>();
+        List<AgentDefinition> agentsToRun = new();
 
-        // 获取项目自定义角色
-        List<AgentProfile> customAgents = new();
-        if (chatSessionId.HasValue)
+        if (selectedAgentNames != null && selectedAgentNames.Any())
         {
+            var allAvailable = await GetAvailableAgentsAsync(userId);
+            foreach (var name in selectedAgentNames)
+            {
+                var def = allAvailable.FirstOrDefault(a => a.Name == name);
+                if (def != null) agentsToRun.Add(def);
+            }
+        }
+        else if (chatSessionId.HasValue)
+        {
+            // 获取项目自定义角色 (原有逻辑)
             var session = await _db.ChatSessions
                 .Include(s => s.Project)
                     .ThenInclude(p => p!.Agents)
@@ -57,27 +150,27 @@ public class AiService
             
             if (session?.Project?.Agents != null && session.Project.Agents.Any())
             {
-                customAgents = session.Project.Agents.Where(a => a.IsActive).OrderBy(a => a.Id).ToList();
+                var activeAgents = session.Project.Agents.Where(a => a.IsActive).OrderBy(a => a.Id).ToList();
+                agentsToRun = activeAgents.Select(a => new AgentDefinition(a.RoleName, "DB Agent", a.SystemPrompt)).ToList();
             }
         }
 
-        if (customAgents.Any())
+        if (agentsToRun.Any())
         {
-            // --- 自定义多智能体流程 ---
+            // --- 统一多智能体流程 ---
             string lastOutput = "";
-            foreach (var agent in customAgents)
+            foreach (var agent in agentsToRun)
             {
-                string activeProvider = agent.PreferredProvider ?? provider;
                 string input = string.IsNullOrEmpty(lastOutput) 
                     ? task 
                     : $"Task: {task}\n\nPrevious Agent Output:\n{lastOutput}";
 
                 var step = await RunAgentStepAsync(
-                    role: agent.RoleName,
+                    role: agent.Name,
                     persona: agent.SystemPrompt,
                     input: input,
                     messageId: messageId,
-                    provider: activeProvider,
+                    provider: provider,
                     userId: userId,
                     chatSessionId: chatSessionId
                 );
@@ -86,6 +179,16 @@ public class AiService
                 if (onStepComplete != null) await onStepComplete(step.Role, BuildStepHtml(step));
             }
             string html = BuildCooperativeHtml(steps, lastOutput);
+
+            // --- Post-Cooperation Tasks (Async) ---
+            if (chatSessionId.HasValue)
+            {
+                _ = Task.Run(async () => {
+                    await _sessionMemory.PromoteToLongTermAsync(chatSessionId.Value, userId);
+                    await _skillLearning.LearnFromInteractionAsync(task, lastOutput, steps, userId);
+                });
+            }
+
             return (html, steps);
         }
 
@@ -176,6 +279,15 @@ public class AiService
         reviewStep.WasAccepted = true;
         await _db.SaveChangesAsync();
         if (onStepComplete != null) await onStepComplete(reviewStep.Role, BuildStepHtml(reviewStep));
+
+        // --- Post-Cooperation Tasks (Async) ---
+        if (chatSessionId.HasValue)
+        {
+            _ = Task.Run(async () => {
+                await _sessionMemory.PromoteToLongTermAsync(chatSessionId.Value, userId);
+                await _skillLearning.LearnFromInteractionAsync(task, reviewStep.Output, steps, userId);
+            });
+        }
 
         return (BuildCooperativeHtml(steps, reviewStep.Output), steps);
     }
@@ -300,17 +412,37 @@ public class AiService
             {
                 fullPersona = projectAgent.SystemPrompt + "\n\n" + persona;
             }
+
+            // Inject Session Memory
+            var sessionMemoryContext = await _sessionMemory.ReadAllAsContextAsync(chatSessionId.Value);
+            if (!string.IsNullOrEmpty(sessionMemoryContext))
+            {
+                fullPersona += "\n\n" + sessionMemoryContext;
+            }
+
+            // Memory Instruction
+            fullPersona += "\n\n[MEMORY INSTRUCTION]:\n重要な発見や制約があれば \"MEMORY: key=value\" の形式で行末に出力してください。";
         }
 
         if (roleSkills.Any())
         {
             fullPersona += "\n\n[追加スキル指示]:\n" +
                 string.Join("\n", roleSkills.Select(s => $"- {s.Description}"));
+            
+            // 使用したスキルのメトリクスを更新（簡易的に最初の1つ）
+            var firstSkill = roleSkills.First();
+            _ = Task.Run(() => _skillLearning.UpdateSkillMetricsAsync(firstSkill.Id, true));
         }
 
         var sw = Stopwatch.StartNew();
         string output = await ExecuteCliAsync(input, provider, fullPersona, workingDir);
         sw.Stop();
+
+        // Extract and Save Memory
+        if (chatSessionId.HasValue)
+        {
+            await ParseAndSaveMemoryAsync(chatSessionId.Value, role, output);
+        }
 
         var step = new AgentStep
         {
@@ -327,6 +459,23 @@ public class AiService
         await _db.SaveChangesAsync();
 
         return step;
+    }
+
+    private async Task ParseAndSaveMemoryAsync(int sessionId, string role, string output)
+    {
+        var lines = output.Split('\n');
+        foreach (var line in lines)
+        {
+            if (line.Contains("MEMORY:", StringComparison.OrdinalIgnoreCase))
+            {
+                var content = line.Substring(line.IndexOf("MEMORY:", StringComparison.OrdinalIgnoreCase) + 7).Trim();
+                var parts = content.Split('=');
+                if (parts.Length == 2)
+                {
+                    await _sessionMemory.WriteAsync(sessionId, role, parts[0].Trim(), parts[1].Trim());
+                }
+            }
+        }
     }
 
     private async Task<bool> QuickQualityCheckAsync(string originalTask, string execution, string provider)

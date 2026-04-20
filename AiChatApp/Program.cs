@@ -14,7 +14,12 @@ builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite("Data S
 builder.Services.AddScoped<MemorySearchService>();
 builder.Services.AddScoped<MemoryConsolidationService>();
 builder.Services.AddScoped<ProjectService>();
+builder.Services.AddScoped<SessionMemoryService>();
+builder.Services.AddScoped<SkillLearningService>();
 builder.Services.AddScoped<AiService>();
+builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options => {
+    options.SerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+});
 builder.Services.AddAntiforgery();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options => {
@@ -105,6 +110,12 @@ app.MapGet("/", (ClaimsPrincipal user) => {
     return Results.File(Path.Combine(Directory.GetCurrentDirectory(), "wwwroot/index.html"), "text/html");
 });
 
+app.MapGet("/api/agents/list", async (AiService ai, ClaimsPrincipal user) => {
+    var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+    var agents = await ai.GetAvailableAgentsAsync(userId);
+    return Results.Ok(agents);
+}).RequireAuthorization();
+
 // Chat Management
 app.MapPost("/api/chat/new", async (HttpContext context, AppDbContext db, ClaimsPrincipal user) => {
     var form = await context.Request.ReadFormAsync();
@@ -164,41 +175,41 @@ app.MapPost("/api/chat", async (HttpContext context, AppDbContext db, AiService 
     var content = form["content"].ToString();
     var sessionIdStr = form["sessionId"].ToString();
     var provider = form["provider"].ToString() is { Length: > 0 } p ? p : "gemini";
+    var selectedAgents = form["selectedAgents"].ToString().Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
     int? sessionId = int.TryParse(sessionIdStr, out var id) ? id : null;
     var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
     var isCooperative = form["mode"] == "cooperative";
-    
+
     ChatSession? session;
     if (sessionId.HasValue) {
         session = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId);
     } else {
         session = await db.ChatSessions.Where(s => s.UserId == userId).OrderByDescending(s => s.CreatedAt).FirstOrDefaultAsync();
     }
-    
+
     if (session == null) {
         session = new ChatSession { UserId = userId, Title = content.Length > 20 ? content[..20] + "..." : content };
         db.ChatSessions.Add(session);
         await db.SaveChangesAsync();
     }
-    
+
     var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
     db.Messages.Add(uMsg);
     await db.SaveChangesAsync();
-    
+
     string aiResponse;
-    if (isCooperative) {
+    if (isCooperative || selectedAgents.Any()) {
         var aMsg = new Message { ChatSessionId = session.Id, Content = "", IsAi = true };
         db.Messages.Add(aMsg);
         await db.SaveChangesAsync();
 
-        var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, session.Id, provider);
+        var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, session.Id, provider, selectedAgents.Any() ? selectedAgents : null);
         aMsg.Content = html;
         await db.SaveChangesAsync();
-
         aiResponse = html;
-        _ = Task.Run(() => consolidation.TryConsolidateAsync(content, html, userId));
 
-        return Results.Content(RenderMessage(aMsg), "text/html");
+        _ = Task.Run(() => consolidation.TryConsolidateAsync(content, html, userId));
+        return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg), "text/html");
     } else {
         aiResponse = await ai.GetResponseAsync(content, userId, session.Id, provider);
         var aMsg = new Message { ChatSessionId = session.Id, Content = aiResponse, IsAi = true };
@@ -206,10 +217,10 @@ app.MapPost("/api/chat", async (HttpContext context, AppDbContext db, AiService 
         await db.SaveChangesAsync();
 
         _ = Task.Run(() => consolidation.TryConsolidateAsync(content, aiResponse, userId));
-
-        return Results.Content(RenderMessage(aMsg), "text/html");
+        return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg), "text/html");
     }
 }).DisableAntiforgery().RequireAuthorization();
+
 
 app.MapPost("/api/chat/stream", async (HttpContext context, AppDbContext db, AiService ai, ClaimsPrincipal user) => {
     var form = await context.Request.ReadFormAsync();
@@ -383,24 +394,55 @@ app.MapDelete("/api/memories/{id}", async (int id, AppDbContext db, ClaimsPrinci
 // Skill Management
 app.MapGet("/api/skills", async (AppDbContext db, ClaimsPrincipal user) => {
     var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-    var skills = await db.Skills.Where(s => s.UserId == userId).ToListAsync();
-    return Results.Content(string.Concat(skills.Select(s => $@"
-        <div class='flex items-center justify-between p-3 bg-base-200 rounded-lg'>
-            <div>
-                <div class='font-bold text-sm'>{s.Name}</div>
-                <div class='text-xs opacity-60'>{s.Description}</div>
-                {(string.IsNullOrEmpty(s.TriggerKeywords) ? "" : $"<div class='text-xs opacity-40 mt-1'>Keywords: {s.TriggerKeywords}</div>")}
+    var skills = await db.Skills.Where(s => s.UserId == userId).OrderByDescending(s => s.Id).ToListAsync();
+    return Results.Content(string.Concat(skills.Select(s => {
+        var statusBadge = s.IsAutoGenerated && !s.IsApproved 
+            ? "<span class='badge badge-warning badge-xs mb-1'>New Candidate</span>" 
+            : "";
+        var stats = s.UseCount > 0 
+            ? $"<div class='text-[10px] opacity-40 mt-1'>Used {s.UseCount} times (Success: {s.SuccessCount})</div>" 
+            : "";
+        var approveBtn = s.IsAutoGenerated && !s.IsApproved
+            ? $"<button hx-post='/api/skills/approve/{s.Id}' hx-target='closest div' hx-swap='outerHTML' class='btn btn-primary btn-xs mt-2'>Approve</button>"
+            : "";
+
+        return $@"
+        <div class='flex flex-col p-3 bg-base-200 rounded-lg group'>
+            <div class='flex items-start justify-between'>
+                <div class='flex-1'>
+                    {statusBadge}
+                    <div class='font-bold text-sm'>{s.Name}</div>
+                    <div class='text-xs opacity-60'>{s.Description}</div>
+                    {(string.IsNullOrEmpty(s.TriggerKeywords) ? "" : $"<div class='text-[10px] opacity-40 mt-1 font-mono'>Keywords: {s.TriggerKeywords}</div>")}
+                    {stats}
+                    {approveBtn}
+                </div>
+                <div class='flex flex-col items-end gap-2'>
+                    <input type='checkbox' class='toggle toggle-primary toggle-sm' {(s.IsEnabled ? "checked" : "")} 
+                           hx-post='/api/skills/toggle/{s.Id}' hx-swap='none' />
+                    <button hx-delete='/api/skills/{s.Id}' hx-target='closest div' hx-swap='outerHTML'
+                            class='btn btn-ghost btn-xs text-error opacity-0 group-hover:opacity-100'>Delete</button>
+                </div>
             </div>
-            <input type='checkbox' class='toggle toggle-primary toggle-sm' {(s.IsEnabled ? "checked" : "")} 
-                   hx-post='/api/skills/toggle/{s.Id}' hx-swap='none' />
-        </div>")), "text/html");
+        </div>";
+    })), "text/html");
 }).RequireAuthorization();
 
-app.MapPost("/api/skills/toggle/{id}", async (int id, AppDbContext db, ClaimsPrincipal user) => {
+app.MapPost("/api/skills/approve/{id}", async (int id, AppDbContext db, ClaimsPrincipal user) => {
     var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
     var skill = await db.Skills.FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
     if (skill != null) {
-        skill.IsEnabled = !skill.IsEnabled;
+        skill.IsApproved = true;
+        await db.SaveChangesAsync();
+    }
+    return Results.Redirect("/api/skills"); // 再描画
+}).RequireAuthorization();
+
+app.MapDelete("/api/skills/{id}", async (int id, AppDbContext db, ClaimsPrincipal user) => {
+    var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+    var skill = await db.Skills.FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
+    if (skill != null) {
+        db.Skills.Remove(skill);
         await db.SaveChangesAsync();
     }
     return Results.Ok();
