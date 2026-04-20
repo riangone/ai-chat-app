@@ -144,7 +144,7 @@ app.MapGet("/api/chat/list", async (int? projectId, AppDbContext db, ClaimsPrinc
     var sessions = await query.OrderByDescending(s => s.CreatedAt).ToListAsync();
     return Results.Content(string.Concat(sessions.Select(s => $@"
         <div class='flex items-center group w-full mb-1'>
-            <button hx-get='/api/chat/load/{s.Id}' hx-target='#chat-container' class='btn btn-ghost btn-sm flex-1 justify-start overflow-hidden text-ellipsis whitespace-nowrap font-normal'>{s.Title}</button>
+            <button onclick='loadChatSession({s.Id})' class='btn btn-ghost btn-sm flex-1 justify-start overflow-hidden text-ellipsis whitespace-nowrap font-normal'>{s.Title}</button>
             <button onclick='editTitle({s.Id}, ""{s.Title}"")' class='btn btn-ghost btn-xs opacity-0 group-hover:opacity-60 px-1'>
                 <svg xmlns=""http://www.w3.org/2000/svg"" fill=""none"" viewBox=""0 0 24 24"" stroke-width=""1.5"" stroke=""currentColor"" class=""w-4 h-4""><path stroke-linecap=""round"" stroke-linejoin=""round"" d=""m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"" /></svg>
             </button>
@@ -170,7 +170,7 @@ app.MapGet("/api/chat/load/{id}", async (int id, AppDbContext db, ClaimsPrincipa
 
     return Results.Content($@"<div id='chat-box' data-session-id='{id}' class='flex-1 overflow-y-auto p-4 md:p-6 space-y-8 custom-scrollbar'>
         {messagesHtml}
-        <script>renderMarkdown(); scrollToBottom();</script>
+        <script>renderMarkdown(); syncActiveSessionFromDom(); scrollToBottom();</script>
     </div>", "text/html");
 }).RequireAuthorization();
 
@@ -194,6 +194,7 @@ app.MapPost("/api/chat", async (HttpContext context, AppDbContext db, AiService 
     var form = await context.Request.ReadFormAsync();
     var content = form["content"].ToString();
     var sessionIdStr = form["sessionId"].ToString();
+    int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
     var provider = form["provider"].ToString() is { Length: > 0 } p ? p : "gemini";
     var selectedAgents = form["selectedAgents"].ToString().Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
     int? sessionId = int.TryParse(sessionIdStr, out var id) ? id : null;
@@ -204,11 +205,14 @@ app.MapPost("/api/chat", async (HttpContext context, AppDbContext db, AiService 
     if (sessionId.HasValue) {
         session = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId);
     } else {
-        session = await db.ChatSessions.Where(s => s.UserId == userId).OrderByDescending(s => s.CreatedAt).FirstOrDefaultAsync();
+        session = await db.ChatSessions
+            .Where(s => s.UserId == userId && s.ProjectId == projectId)
+            .OrderByDescending(s => s.CreatedAt)
+            .FirstOrDefaultAsync();
     }
 
     if (session == null) {
-        session = new ChatSession { UserId = userId, Title = content.Length > 20 ? content[..20] + "..." : content };
+        session = new ChatSession { UserId = userId, ProjectId = projectId, Title = content.Length > 20 ? content[..20] + "..." : content };
         db.ChatSessions.Add(session);
         await db.SaveChangesAsync();
     }
@@ -247,6 +251,7 @@ app.MapPost("/api/chat/stream", async (HttpContext context, AppDbContext db, AiS
     var content = form["content"].ToString();
     var provider = form["provider"].ToString() is { Length: > 0 } p ? p : "gemini";
     var sessionIdStr = form["sessionId"].ToString();
+    int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
     int? sessionId = int.TryParse(sessionIdStr, out var id) ? id : null;
     var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
@@ -255,11 +260,14 @@ app.MapPost("/api/chat/stream", async (HttpContext context, AppDbContext db, AiS
     if (sessionId.HasValue) {
         session = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId);
     } else {
-        session = await db.ChatSessions.Where(s => s.UserId == userId).OrderByDescending(s => s.CreatedAt).FirstOrDefaultAsync();
+        session = await db.ChatSessions
+            .Where(s => s.UserId == userId && s.ProjectId == projectId)
+            .OrderByDescending(s => s.CreatedAt)
+            .FirstOrDefaultAsync();
     }
     
     if (session == null) {
-        session = new ChatSession { UserId = userId, Title = content.Length > 20 ? content[..20] + "..." : content };
+        session = new ChatSession { UserId = userId, ProjectId = projectId, Title = content.Length > 20 ? content[..20] + "..." : content };
         db.ChatSessions.Add(session);
         await db.SaveChangesAsync();
     }
@@ -271,6 +279,7 @@ app.MapPost("/api/chat/stream", async (HttpContext context, AppDbContext db, AiS
     context.Response.Headers.Append("Content-Type", "text/event-stream");
     context.Response.Headers.Append("Cache-Control", "no-cache");
     context.Response.Headers.Append("X-Accel-Buffering", "no");
+    context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
 
     var fullResponse = new StringBuilder();
     await foreach (var chunk in ai.GetResponseStreamAsync(content, userId, session.Id, provider))
@@ -297,6 +306,7 @@ app.MapPost("/api/chat/cooperate/stream", async (
     var form = await context.Request.ReadFormAsync();
     var content = form["content"].ToString();
     var provider = form["provider"].ToString() is { Length: > 0 } p ? p : "gemini";
+    int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
     int? sessionId = int.TryParse(form["sessionId"].ToString(), out var sid) ? sid : null;
     var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
@@ -316,10 +326,12 @@ app.MapPost("/api/chat/cooperate/stream", async (
         : null;
     if (session == null)
     {
-        session = new ChatSession { UserId = userId, Title = content.Length > 20 ? content[..20] + "..." : content };
+        session = new ChatSession { UserId = userId, ProjectId = projectId, Title = content.Length > 20 ? content[..20] + "..." : content };
         db.ChatSessions.Add(session);
         await db.SaveChangesAsync();
     }
+
+    context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
 
     var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
     db.Messages.Add(uMsg);
@@ -483,7 +495,7 @@ app.MapGet("/api/cli/sessions", () => {
         };
         return $@"
         <div class='flex items-center group w-full mb-1'>
-            <button hx-get='/api/cli/load?source={s.Source}&path={Uri.EscapeDataString(s.Path)}' hx-target='#chat-container' 
+            <button onclick='loadCliSession(""{s.Source}"", ""{s.Path.Replace("\\", "\\\\").Replace("\"", "&quot;")}"")'
                     class='btn btn-ghost btn-sm flex-1 justify-start overflow-hidden text-ellipsis whitespace-nowrap font-normal text-xs'>
                 <span class='badge {badgeColor} badge-xs mr-2 opacity-70'>{s.Source}</span>
                 {s.Time:MM/dd HH:mm}
@@ -538,7 +550,7 @@ app.MapGet("/api/cli/load", (string source, string path) => {
         htmlBuilder.Append($"<pre class='p-4 bg-base-300 rounded text-xs overflow-auto'>{File.ReadAllText(path)}</pre>");
     }
 
-    htmlBuilder.Append("</div><script>renderMarkdown(); scrollToBottom();</script>");
+    htmlBuilder.Append("</div><script>renderMarkdown(); syncActiveSessionFromDom(); scrollToBottom();</script>");
     return Results.Content(htmlBuilder.ToString(), "text/html");
 }).RequireAuthorization();
 
