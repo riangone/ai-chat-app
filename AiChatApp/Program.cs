@@ -102,7 +102,10 @@ app.MapPost("/api/auth/logout", async (HttpContext context) => {
 
 app.MapGet("/api/auth/me", (ClaimsPrincipal user) => {
     if (user.Identity?.IsAuthenticated != true) return Results.Unauthorized();
-    return Results.Ok(new { username = user.Identity.Name });
+    return Results.Ok(new {
+        id = user.FindFirstValue(ClaimTypes.NameIdentifier),
+        username = user.Identity.Name
+    });
 }).RequireAuthorization();
 
 // Pages

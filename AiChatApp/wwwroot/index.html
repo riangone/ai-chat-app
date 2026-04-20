@@ -38,16 +38,30 @@
         @keyframes bounce { 0%, 80%, 100% { transform: scale(0); opacity: 0.3; } 40% { transform: scale(1); opacity: 1; } }
         .shell-header { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-bottom: 1px solid hsl(var(--bc) / 0.08); background: linear-gradient(180deg, hsl(var(--b1)), hsl(var(--b1) / 0.92)); }
         .shell-badge { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.75rem; border-radius: 999px; background: hsl(var(--b2)); border: 1px solid hsl(var(--bc) / 0.08); font-size: 11px; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; }
+        .settings-card { border: 1px solid hsl(var(--bc) / 0.08); background: linear-gradient(180deg, hsl(var(--b1)), hsl(var(--b2) / 0.45)); border-radius: 1.5rem; padding: 1.25rem; }
+        .settings-section-title { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.45; }
+        .settings-theme-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.75rem; }
+        .settings-theme-item { width: 100%; justify-content: flex-start; text-transform: capitalize; }
+        .settings-kv { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.875rem 1rem; border-radius: 1rem; background: hsl(var(--b2) / 0.55); border: 1px solid hsl(var(--bc) / 0.06); }
     </style>
     <script>
         const themes = ["light", "dark", "cupcake", "bumblebee", "emerald", "corporate", "synthwave", "retro", "cyberpunk", "valentine", "halloween", "garden", "forest", "aqua", "lofi", "pastel", "fantasy", "wireframe", "black", "luxury", "dracula", "cmyk", "autumn", "business", "acid", "lemonade", "night", "coffee", "winter"];
+        let currentUser = null;
         function setTheme(t) { document.documentElement.setAttribute('data-theme', t); localStorage.setItem('theme', t); }
         function initTheme() { const s = localStorage.getItem('theme') || 'light'; setTheme(s); document.querySelectorAll('.theme-controller').forEach(c => { if(!c) return; if(c.value===s) c.checked=true; c.addEventListener('change', e=>setTheme(e.target.value)); }); }
         let currentLang = localStorage.getItem('lang') || 'en';
         function setLanguage(l) { currentLang = l; localStorage.setItem('lang', l); updateUI(); }
         function i18n(k) { return (translations[currentLang] && translations[currentLang][k]) || k; }
-        function updateUI() { document.querySelectorAll('[data-i18n]').forEach(el => { const k = el.getAttribute('data-i18n'); const t = i18n(k); if(el.tagName==='INPUT'||el.tagName==='TEXTAREA') el.placeholder=t; else el.innerHTML=t; }); document.title = i18n('app-title'); updateLanguageSwitcher(); updatePresetDropdown(); syncProviders(); }
-        function updateLanguageSwitcher() { const c = document.getElementById('language-switcher'); if(!c) return; c.innerHTML = Object.keys(translations).map(l => `<button onclick="setLanguage('${l}')" class="text-[10px] hover:text-primary transition-colors font-bold ${currentLang===l?'opacity-100 text-primary':'opacity-40'}">${l.toUpperCase()}</button>`).join('<span>|</span>'); }
+        function updateUI() { document.querySelectorAll('[data-i18n]').forEach(el => { const k = el.getAttribute('data-i18n'); const t = i18n(k); if(el.tagName==='INPUT'||el.tagName==='TEXTAREA') el.placeholder=t; else el.innerHTML=t; }); document.title = i18n('app-title'); updateLanguageSwitcher(); updatePresetDropdown(); syncProviders(); renderUserProfile(); }
+        function renderLanguageButtons(compact = false) {
+            return Object.keys(translations).map(l => `<button onclick="setLanguage('${l}')" class="${compact ? 'btn btn-xs rounded-full ' : 'btn btn-sm rounded-xl '}font-bold ${currentLang===l ? 'btn-primary' : 'btn-ghost'}">${l.toUpperCase()}</button>`).join(compact ? '<span>|</span>' : '');
+        }
+        function updateLanguageSwitcher() {
+            const c = document.getElementById('language-switcher');
+            if (c) c.innerHTML = renderLanguageButtons(true);
+            const s = document.getElementById('settings-language-switcher');
+            if (s) s.innerHTML = renderLanguageButtons(false);
+        }
         function updatePresetDropdown() { const d = document.getElementById('preset-dropdown'); if(!d) return; const p = translations[currentLang].presets || {}; d.innerHTML = Object.keys(p).map(n => `<li><a onclick="applyRolePreset('${n}')">${n}</a></li>`).join(''); }
         function syncProviders() { const m = document.querySelector('select[name="provider"]'); const a = document.getElementById('new-agent-provider'); if(m&&a) a.innerHTML = Array.from(m.options).map(o => `<option value="${o.value}">${o.textContent}</option>`).join(''); }
         window.showAgentModal = () => { syncProviders(); document.getElementById('agent_modal').showModal(); };
@@ -190,6 +204,7 @@
             const tabEl = document.querySelector(`.main-tab[data-target="${id}"]`); if(tabEl) tabEl.classList.remove('hidden');
             const f = document.getElementById('global-footer'); if(f) { if(id==='chat-panel') f.classList.remove('hidden'); else f.classList.add('hidden'); }
             const iconMap = { 'chat-panel':'new-btn', 'history-panel':'history-btn', 'projects-panel':'projects-btn', 'skills-panel':'skills-btn', 'memory-panel':'memory-btn', 'cli-panel':'cli-btn' };
+            iconMap['settings-panel'] = 'settings-btn';
             document.querySelectorAll('.sidebar-icon').forEach(i => i.classList.remove('active'));
             const ai = document.getElementById(iconMap[id]); if(ai) ai.classList.add('active');
             const drawer = document.getElementById('my-drawer'); if(drawer && window.innerWidth < 1024) drawer.checked = false;
@@ -208,14 +223,45 @@
             loadPanelData(id);
         }
 
+        function renderUserProfile() {
+            const username = currentUser?.username || '...';
+            const userId = currentUser?.id ?? '--';
+            const initial = username && username !== '...' ? username[0].toUpperCase() : '?';
+            const avatar = document.getElementById('user-avatar');
+            const name = document.getElementById('user-display-name');
+            const settingsName = document.getElementById('settings-username');
+            const settingsId = document.getElementById('settings-user-id');
+            const settingsStatus = document.getElementById('settings-auth-status');
+            const heroName = document.getElementById('settings-hero-name');
+            const heroAvatar = document.getElementById('settings-avatar');
+            if (avatar) avatar.textContent = initial;
+            if (name) name.textContent = username;
+            if (settingsName) settingsName.textContent = username;
+            if (settingsId) settingsId.textContent = userId;
+            if (settingsStatus) settingsStatus.textContent = currentUser ? i18n('authenticated') : i18n('loading');
+            if (heroName) heroName.textContent = username;
+            if (heroAvatar) heroAvatar.textContent = initial;
+        }
+
+        async function loadCurrentUser() {
+            try {
+                const r = await fetch('/api/auth/me');
+                if (!r.ok) return;
+                currentUser = await r.json();
+                renderUserProfile();
+            } catch {}
+        }
+
         // Global HTMX listener for history clicks
         window.addEventListener('DOMContentLoaded', () => {
             initTheme();
             updateUI();
+            renderUserProfile();
             renderMarkdown();
             syncActiveSessionFromDom();
             syncProjectContext();
             wirePanelNavigation();
+            loadCurrentUser();
             loadPanelData('history-panel');
             document.body.addEventListener('htmx:afterOnLoad', function(evt) {
                 if (evt.detail.target.id === 'chat-panel' || evt.detail.target.id === 'chat-box') {
@@ -245,6 +291,7 @@
                 <div class="main-tab hidden group" data-target="skills-panel" onclick="switchMainTab('skills-panel')"><span data-i18n="skills">Skills</span><button onclick="closeMainTab('skills-panel', event)" class="close-tab-btn">✕</button></div>
                 <div class="main-tab hidden group" data-target="memory-panel" onclick="switchMainTab('memory-panel')"><span data-i18n="memory">Memory</span><button onclick="closeMainTab('memory-panel', event)" class="close-tab-btn">✕</button></div>
                 <div class="main-tab hidden group" data-target="cli-panel" onclick="switchMainTab('cli-panel')"><span data-i18n="cli">CLI</span><button onclick="closeMainTab('cli-panel', event)" class="close-tab-btn">✕</button></div>
+                <div class="main-tab hidden group" data-target="settings-panel" onclick="switchMainTab('settings-panel')"><span data-i18n="settings">Settings</span><button onclick="closeMainTab('settings-panel', event)" class="close-tab-btn">✕</button></div>
             </div>
             <main id="chat-container" class="flex-1 flex flex-col overflow-hidden relative">
                 <div id="chat-panel" class="tab-panel active">
@@ -257,6 +304,57 @@
                 <div id="skills-panel" class="tab-panel"><div id="skills-list-container" hx-get="/api/skills" hx-trigger="load, loadSkills" hx-target="#skills-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6" id="skills-list"></div></div></div>
                 <div id="memory-panel" class="tab-panel"><div id="memory-list-container" hx-get="/api/memories" hx-trigger="load, loadMemories" hx-target="#memory-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-4xl mx-auto space-y-4" id="memory-list"></div></div></div>
                 <div id="cli-panel" class="tab-panel"><div id="cli-list-container" hx-get="/api/cli/sessions" hx-trigger="load, loadCli" hx-target="#cli-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="cli-list"></div></div></div>
+                <div id="settings-panel" class="tab-panel">
+                    <div class="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar">
+                        <div class="max-w-5xl mx-auto space-y-6">
+                            <div class="settings-card flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+                                <div class="flex items-center gap-4">
+                                    <div id="settings-avatar" class="w-16 h-16 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-2xl font-black shadow-lg">?</div>
+                                    <div>
+                                        <div class="text-xs font-black uppercase tracking-[0.24em] opacity-40" data-i18n="settings">Settings</div>
+                                        <h2 id="settings-hero-name" class="text-3xl font-black">...</h2>
+                                        <p class="text-sm opacity-60" data-i18n="settings-subtitle">Manage your account, language, theme, and session preferences.</p>
+                                    </div>
+                                </div>
+                                <form action="/api/auth/logout" method="POST">
+                                    <button class="btn btn-error rounded-2xl px-6" data-i18n="logout">Logout</button>
+                                </form>
+                            </div>
+
+                            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                                <section class="settings-card space-y-4">
+                                    <div class="settings-section-title" data-i18n="account">Account</div>
+                                    <div class="settings-kv">
+                                        <span class="text-sm opacity-60" data-i18n="username">Username</span>
+                                        <strong id="settings-username" class="text-base">...</strong>
+                                    </div>
+                                    <div class="settings-kv">
+                                        <span class="text-sm opacity-60" data-i18n="user-id">User ID</span>
+                                        <strong id="settings-user-id" class="text-base">--</strong>
+                                    </div>
+                                    <div class="settings-kv">
+                                        <span class="text-sm opacity-60" data-i18n="auth-status">Status</span>
+                                        <strong id="settings-auth-status" class="text-base text-success">...</strong>
+                                    </div>
+                                </section>
+
+                                <section class="settings-card space-y-4">
+                                    <div class="settings-section-title" data-i18n="language">Language</div>
+                                    <p class="text-sm opacity-60" data-i18n="language-desc">Switch UI language instantly. Your choice is stored locally.</p>
+                                    <div id="settings-language-switcher" class="flex flex-wrap gap-2"></div>
+                                </section>
+                            </div>
+
+                            <section class="settings-card space-y-4">
+                                <div class="settings-section-title" data-i18n="theme">Theme</div>
+                                <p class="text-sm opacity-60" data-i18n="theme-desc">Choose the look and feel of the app. The selected theme is saved in your browser.</p>
+                                <div class="settings-theme-grid">
+                                    <script>themes.forEach(t=>document.write(`<label class="label cursor-pointer settings-theme-item btn btn-ghost border border-base-content/10 rounded-2xl px-4"><input type="radio" name="theme-settings" class="theme-controller sr-only" value="${t}" aria-label="${t}" /><span class="label-text font-semibold">${t}</span></label>`));</script>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+                </div>
             </main>
             <footer id="global-footer" class="p-4 md:p-6 bg-gradient-to-t from-base-100 via-base-100 to-transparent flex-none">
                 <div class="max-w-3xl mx-auto relative">
@@ -285,6 +383,7 @@
                 <button id="skills-btn" onclick="openSubPage('skills-page')" class="sidebar-icon" title="Skills"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" /></svg><span class="sidebar-icon-label" data-i18n="skills">Skills</span></button>
                 <button id="memory-btn" onclick="openSubPage('memory-page')" class="sidebar-icon" title="Memory"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" /></svg><span class="sidebar-icon-label" data-i18n="memory">Memory</span></button>
                 <button id="cli-btn" onclick="openSubPage('cli-page')" class="sidebar-icon" title="CLI Sessions"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" /></svg><span class="sidebar-icon-label" data-i18n="cli">CLI</span></button>
+                <button id="settings-btn" onclick="openSubPage('settings-page')" class="sidebar-icon" title="Settings"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 15 0m-15 0a7.5 7.5 0 0 0 15 0m-15 0H3m18 0h-1.5m-12.364 5.864-1.06 1.06m11.788-11.788-1.06 1.06m-11.788 0 1.06 1.06m11.788 11.788-1.06-1.06M12 6.75v-1.5m0 15v-1.5" /></svg><span class="sidebar-icon-label" data-i18n="settings">Settings</span></button>
             </div>
         </div>
     </div>
@@ -321,7 +420,6 @@
         function scrollToBottom() { const b=document.getElementById('chat-box'); if(b) b.scrollTop = b.scrollHeight; }
         function autoExpand(el) { el.style.height='auto'; el.style.height=(el.scrollHeight)+'px'; }
         function resetInputHeight() { const i=document.getElementById('chat-input'); if(i) i.style.height='44px'; }
-        (async () => { const r=await fetch('/api/auth/me'); if(r.ok){const d=await r.json(); document.getElementById('user-display-name').textContent=d.username; document.getElementById('user-avatar').textContent=d.username[0];} })();
     </script>
 </body>
 </html>
