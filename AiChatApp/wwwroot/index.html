@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title data-i18n="app-title">AI Chat Pro</title>
-    <script src="https://unpkg.com/htmx.org@2.0.0"><\/script>
-    <script src="https://cdn.tailwindcss.com"><\/script>
+    <script src="https://unpkg.com/htmx.org@2.0.0"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.0/dist/full.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="https://unpkg.com/swiper@11/swiper-bundle.min.css" />
-    <script src="https://unpkg.com/swiper@11/swiper-bundle.min.js"><\/script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
-    <script src="translations.js"><\/script>
+    <script src="https://unpkg.com/swiper@11/swiper-bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="translations.js"></script>
     <style>
         .htmx-indicator { display: none; }
         .htmx-request .htmx-indicator { display: inline-block; }
@@ -80,19 +80,43 @@
             transform: scale(1.1);
         }
         
+        /* Swiper Container */
+        .content-swiper {
+            width: 100%;
+            height: 100%;
+            --swiper-theme-color: hsl(var(--p));
+        }
+
+        .swiper-wrapper {
+            height: 100%;
+        }
+        
         /* Main layout */
         .main-with-tabs {
             display: flex;
             flex-direction: column;
             height: 100vh;
-            overflow: hidden;
+            overflow: hidden; min-height: 0;
             padding-bottom: calc(4.5rem + max(0.5rem, env(safe-area-inset-bottom)));
         }
         
         .swiper-slide {
+            flex-shrink: 0;
+            width: 100%;
+            height: 100%;
+            position: relative;
+            transition-property: transform;
             display: flex;
             flex-direction: column;
-            overflow: hidden;
+            overflow-y: auto;
+            min-height: 0;
+        }
+
+        .swiper-slide > div {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
         }
         
         .typing-dot { width: 4px; height: 4px; background: currentColor; border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite ease-in-out both; }
@@ -121,10 +145,11 @@
         function initTheme() { const s = localStorage.getItem('theme') || 'light'; setTheme(s); document.querySelectorAll('.theme-controller').forEach(c => { if(c.value===s) c.checked=true; c.addEventListener('change', e=>setTheme(e.target.value)); }); }
         function setLanguage(l) { currentLang = l; localStorage.setItem('lang', l); updateUI(); }
         function i18n(k) { return (translations[currentLang] && translations[currentLang][k]) || k; }
-        function updateUI() { document.querySelectorAll('[data-i18n]').forEach(el => { const k = el.getAttribute('data-i18n'); const t = i18n(k); if(el.tagName==='INPUT'||el.tagName==='TEXTAREA') el.placeholder=t; else el.innerHTML=t; }); document.title = i18n('app-title'); updateLanguageSwitcher(); updatePresetDropdown(); syncProviders(); renderUserProfile(); }
+        function updateUI() { document.querySelectorAll('[data-i18n]').forEach(el => { const k = el.getAttribute('data-i18n'); const t = i18n(k); if(el.tagName==='INPUT'||el.tagName==='TEXTAREA') el.placeholder=t; else el.innerHTML=t; }); document.title = i18n('app-title'); updateLanguageSwitcher(); updateThemeSwitcher(); updatePresetDropdown(); syncProviders(); renderUserProfile(); }
         
         function renderLanguageButtons(compact = false) { return Object.keys(translations).map(l => `<button onclick="setLanguage('${l}')" class="${compact ? 'btn btn-xs rounded-full ' : 'btn btn-sm rounded-xl '}font-bold ${currentLang===l ? 'btn-primary' : 'btn-ghost'}">${l.toUpperCase()}</button>`).join(compact ? '<span>|</span>' : ''); }
         function updateLanguageSwitcher() { const c = document.getElementById('language-switcher'); if (c) c.innerHTML = renderLanguageButtons(true); const s = document.getElementById('settings-language-switcher'); if (s) s.innerHTML = renderLanguageButtons(false); }
+        function updateThemeSwitcher() { const g = document.querySelector('.settings-theme-grid'); if (g) { g.innerHTML = themes.map(t => `<label class="label cursor-pointer settings-theme-item btn btn-ghost border border-base-content/10 rounded-2xl px-4"><input type="radio" name="theme-settings" class="theme-controller sr-only" value="${t}" aria-label="${t}" /><span class="label-text font-semibold">${t}</span></label>`).join(''); initTheme(); } }
         function updatePresetDropdown() { const d = document.getElementById('preset-dropdown'); if(!d) return; const p = translations[currentLang].presets || {}; d.innerHTML = Object.keys(p).map(n => `<li><a onclick="applyRolePreset('${n}')">${n}</a></li>`).join(''); }
         function syncProviders() { const m = document.querySelector('select[name="provider"]'); const a = document.getElementById('new-agent-provider'); if(m&&a) a.innerHTML = Array.from(m.options).map(o => `<option value="${o.value}">${o.textContent}</option>`).join(''); }
         window.showAgentModal = () => { syncProviders(); document.getElementById('agent_modal').showModal(); };
@@ -225,6 +250,8 @@
         function switchMainTab(index) {
             if (swiper) swiper.slideTo(index);
             updateTabBar(index);
+            const footer = document.getElementById('global-footer');
+            if (footer) footer.style.display = (index === 0) ? 'block' : 'none';
         }
         
         function updateTabBar(index) {
@@ -337,7 +364,7 @@
         
         async function sendCooperativeMessage(fd) {
             const id='progress-'+Date.now();
-            document.getElementById('chat-box').insertAdjacentHTML('beforeend',`<div id="${id}" class="chat chat-start message-bubble-container"><div class="chat-bubble bg-base-200 p-4"><span class="loading loading-dots loading-xs"><\/span><\/div><\/div>`);
+            document.getElementById('chat-box').insertAdjacentHTML('beforeend',`<div id="${id}" class="chat chat-start message-bubble-container"><div class="chat-bubble bg-base-200 p-4"><span class="loading loading-dots loading-xs"></span></div></div>`);
             scrollToBottom();
             try {
                 const r=await fetch('/api/chat/cooperate/stream',{method:'POST',body:fd});
@@ -353,8 +380,8 @@
                         else if(l.startsWith('data: ')){const d=l.slice(6).trim();
                             if(en==='session'){const p=JSON.parse(d.replace(/\\n/g,'\n'));
                                 document.getElementById('session-id-input').value=p.sessionId;
-                                document.getElementById(id).innerHTML=`<div class="chat-bubble bg-base-200 p-4"><div class="text-[10px] font-bold opacity-40 uppercase mb-2">Multi-Agent Flow<\/div><div id="${id}-steps" class="space-y-1"><\/div><\/div>`;
-                                p.agents.forEach(r=>document.getElementById(`${id}-steps`).insertAdjacentHTML('beforeend',`<div id="${id}-step-${r}" class="text-xs opacity-60">○ ${r}<\/div>`));
+                                document.getElementById(id).innerHTML=`<div class="chat-bubble bg-base-200 p-4"><div class="text-[10px] font-bold opacity-40 uppercase mb-2">Multi-Agent Flow</div><div id="${id}-steps" class="space-y-1"></div></div>`;
+                                p.agents.forEach(r=>document.getElementById(`${id}-steps`).insertAdjacentHTML('beforeend',`<div id="${id}-step-${r}" class="text-xs opacity-60">○ ${r}</div>`));
                             } else if(en==='step-complete'){const p=JSON.parse(d.replace(/\\n/g,'\n')),el=document.getElementById(`${id}-step-${p.role}`);
                                 if(el){el.classList.replace('opacity-60','text-success');
                                     el.innerHTML='✓ '+p.role;
@@ -365,20 +392,20 @@
                         }});
                 }
             } catch(err) {
-                document.getElementById(id).outerHTML=renderAiBubble(`<span class="text-error">${i18n('request-error')}<\/span>`);
+                document.getElementById(id).outerHTML=renderAiBubble(`<span class="text-error">${i18n('request-error')}</span>`);
             }
         }
         
         function addUserMessage(c) {
             const wb=document.getElementById('welcome-message');
             if(wb)wb.remove();
-            document.getElementById('chat-box').insertAdjacentHTML('beforeend',`<div class="chat chat-end message-bubble-container"><div class="chat-bubble bg-primary text-primary-content markdown p-4 rounded-[18px]">${marked.parse(c)}<\/div><\/div>`);
+            document.getElementById('chat-box').insertAdjacentHTML('beforeend',`<div class="chat chat-end message-bubble-container"><div class="chat-bubble bg-primary text-primary-content markdown p-4 rounded-[18px]">${marked.parse(c)}</div></div>`);
             scrollToBottom();
         }
         
-        function renderAiBubbleId(c,id) { return `<div id="${id}" class="chat chat-start group message-bubble-container"><div class="chat-bubble bg-base-200 text-base-content border border-base-300 markdown p-4 rounded-[18px]">${c||'<span class="typing-dot"><\/span>'}<\/div>${renderChatFooter()}<\/div>`; }
-        function renderAiBubble(c) { return `<div class="chat chat-start group message-bubble-container"><div class="chat-bubble bg-base-200 text-base-content border border-base-300 markdown p-4 rounded-[18px]">${c}<\/div>${renderChatFooter()}<\/div>`; }
-        function renderChatFooter() { return `<div class="chat-footer opacity-0 group-hover:opacity-50 transition-opacity flex gap-3 pt-2 px-1"><button onclick="copyText(this)" class="hover:text-primary"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5 1.5h6.375a1.125 1.125 0 0 1 1.125 1.125v9.375Zm3 3V6.75a1.125 1.125 0 0 0-1.125-1.125h-1.5a3.375 3.375 0 0 1-3.375-3.375V2.125c0-.621-.504-1.125-1.125-1.125H9.75a1.125 1.125 0 0 0-1.125 1.125V4.5a9.06 9.06 0 0 1 1.5 1.5h6.75a1.125 1.125 0 0 1 1.125 1.125v13.125a1.125 1.125 0 0 1-1.125 1.125H15" \/><\/svg><\/button><button onclick="forwardText(this)" class="hover:text-primary"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" \/><\/svg><\/button><button onclick="saveToMemory(this)" class="hover:text-primary"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" \/><\/svg><\/button><\/div>`; }
+        function renderAiBubbleId(c,id) { return `<div id="${id}" class="chat chat-start group message-bubble-container"><div class="chat-bubble bg-base-200 text-base-content border border-base-300 markdown p-4 rounded-[18px]">${c||'<span class="typing-dot"></span>'}</div>${renderChatFooter()}</div>`; }
+        function renderAiBubble(c) { return `<div class="chat chat-start group message-bubble-container"><div class="chat-bubble bg-base-200 text-base-content border border-base-300 markdown p-4 rounded-[18px]">${c}</div>${renderChatFooter()}</div>`; }
+        function renderChatFooter() { return `<div class="chat-footer opacity-0 group-hover:opacity-50 transition-opacity flex gap-3 pt-2 px-1"><button onclick="copyText(this)" class="hover:text-primary"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5 1.5h6.375a1.125 1.125 0 0 1 1.125 1.125v9.375Zm3 3V6.75a1.125 1.125 0 0 0-1.125-1.125h-1.5a3.375 3.375 0 0 1-3.375-3.375V2.125c0-.621-.504-1.125-1.125-1.125H9.75a1.125 1.125 0 0 0-1.125 1.125V4.5a9.06 9.06 0 0 1 1.5 1.5h6.75a1.125 1.125 0 0 1 1.125 1.125v13.125a1.125 1.125 0 0 1-1.125 1.125H15" /></svg></button><button onclick="forwardText(this)" class="hover:text-primary"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg></button><button onclick="saveToMemory(this)" class="hover:text-primary"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" /></svg></button></div>`; }
         
         function copyText(b) { navigator.clipboard.writeText(b.closest('.chat').querySelector('.markdown')?.innerText || b.closest('.chat').querySelector('.chat-bubble').innerText); }
         function forwardText(b) { const i=document.getElementById('chat-input'); i.value='> '+(b.closest('.chat').querySelector('.markdown')?.innerText || b.closest('.chat').querySelector('.chat-bubble').innerText)+'\n\n'; i.focus(); autoExpand(i); }
@@ -386,7 +413,7 @@
         
         function selectProject(id,n,p) { selectedProjectId=id; syncProjectContext(); document.getElementById('current-project-name').textContent=n; document.getElementById('current-project-path').textContent=p; document.getElementById('selected-project-info').classList.remove('hidden'); document.getElementById('project-context-banner').classList.remove('hidden'); document.getElementById('project-banner-name').textContent=n; document.getElementById('session-id-input').value=''; loadAgents(id); htmx.ajax('GET',`/api/chat/list?projectId=${id}`,'#project-chat-list'); }
         function deselectProject() { selectedProjectId=null; syncProjectContext(); document.getElementById('selected-project-info').classList.add('hidden'); document.getElementById('project-context-banner').classList.add('hidden'); document.getElementById('session-id-input').value=''; }
-        async function loadAgents(pid) { const r=await fetch('/api/projects'),p=await r.json(),x=p.find(v=>v.id===pid); if(!x)return; document.getElementById('agent-list').innerHTML=x.agents.map(a=>`<div class="flex items-center justify-between p-2 bg-base-300 rounded text-xs"><span>${a.roleName} (${a.aiProvider})<\/span><button onclick="deleteAgent(${pid},${a.id})" class="text-error">✕<\/button><\/div>`).join('')||'<p class="text-center opacity-40 py-4">No agents<\/p>'; }
+        async function loadAgents(pid) { const r=await fetch('/api/projects'),p=await r.json(),x=p.find(v=>v.id===pid); if(!x)return; document.getElementById('agent-list').innerHTML=x.agents.map(a=>`<div class="flex items-center justify-between p-2 bg-base-300 rounded text-xs"><span>${a.roleName} (${a.aiProvider})</span><button onclick="deleteAgent(${pid},${a.id})" class="text-error">✕</button></div>`).join('')||'<p class="text-center opacity-40 py-4">No agents</p>'; }
         async function deleteAgent(pid,aid) { if(await fetch(`/api/projects/${pid}/agents/${aid}`,{method:'DELETE'})) loadAgents(pid); }
         async function addNewAgent() { const f=new FormData(); f.append('roleName',document.getElementById('new-agent-role').value); f.append('systemPrompt',document.getElementById('new-agent-prompt').value); f.append('aiProvider',document.getElementById('new-agent-provider').value); f.append('color',document.getElementById('new-agent-color').value); if(await fetch(`/api/projects/${selectedProjectId}/agents`,{method:'POST',body:f})){loadAgents(selectedProjectId);document.getElementById('new-agent-role').value='';document.getElementById('new-agent-prompt').value='';} }
         function applyRolePreset(n) { const p=(translations[currentLang].presets||{})[n]; if(p){document.getElementById('new-agent-role').value=n;document.getElementById('new-agent-prompt').value=p.prompt;} }
@@ -405,6 +432,7 @@
             wirePanelNavigation();
             loadCurrentUser();
             loadPanelData('history-panel');
+            if (document.getElementById('global-footer')) document.getElementById('global-footer').style.display = 'block';
             
             // Initialize Swiper
             swiper = new Swiper('.content-swiper', {
@@ -430,68 +458,72 @@
         });
         
         marked.setOptions({ gfm: true, breaks: true });
-    <\/script>
+    </script>
 </head>
 <body class="bg-base-200">
     <div class="main-with-tabs">
         <div class="shell-header">
             <div class="shell-badge"><span data-i18n="app-title">AI Chat Pro</span></div>
+            <button onclick="document.getElementById('session-id-input').value=''; htmx.ajax('POST', '/api/chat/new', {target:'#chat-box', swap:'innerHTML', values:{projectId: selectedProjectId || ''}}); switchMainTab(0);" class="btn btn-ghost btn-xs text-primary font-bold">+ New Chat</button>
         </div>
         
         <div class="flex-1 flex flex-col overflow-hidden relative">
             <div class="swiper-container content-swiper">
                 <div class="swiper-wrapper">
                     <!-- Chat Panel -->
-                    <div class="swiper-slide"><div id="chat-panel" class="flex flex-col flex-1"><div id="chat-box" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-8 custom-scrollbar"><div id="welcome-message" class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4"><div class="w-16 h-16 border-4 border-dashed border-current rounded-full opacity-20"><\/div><p class="text-xl font-medium text-center" data-i18n="welcome-message">How can I help you today?<\/p><\/div><\/div><\/div><\/div>
+                    <div class="swiper-slide custom-scrollbar"><div id="chat-panel" class="flex flex-col flex-1"><div id="chat-box" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-8 custom-scrollbar"><div id="welcome-message" class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4"><div class="w-16 h-16 border-4 border-dashed border-current rounded-full opacity-20"></div><p class="text-xl font-medium text-center" data-i18n="welcome-message">How can I help you today?</p></div></div></div></div>
                     <!-- History Panel -->
-                    <div class="swiper-slide"><div id="history-panel" class="flex flex-col flex-1"><div id="history-list-container" hx-get="/api/chat/list" hx-trigger="load, loadHistory" hx-target="#chat-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="chat-list"><\/div><\/div><\/div><\/div>
+                    <div class="swiper-slide custom-scrollbar"><div id="history-panel" class="flex flex-col flex-1"><div id="history-list-container" hx-get="/api/chat/list" hx-trigger="load, loadHistory" hx-target="#chat-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="chat-list"></div></div></div></div>
                     <!-- Projects Panel -->
-                    <div class="swiper-slide"><div id="projects-panel" class="flex flex-col flex-1"><div id="projects-list-container" hx-get="/api/projects/list-html" hx-trigger="load, loadProjects" hx-target="#projects-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto w-full"><div id="selected-project-info" class="hidden mb-8 p-6 bg-primary/10 border border-primary/20 rounded-2xl"><div class="flex justify-between items-start"><div><span class="text-xl font-bold text-primary" id="current-project-name">No Project<\/span><p class="text-sm opacity-60 mt-1" id="current-project-path"><\/p><\/div><button onclick="deselectProject()" class="btn btn-ghost btn-sm text-error">✕ Deselect<\/button><\/div><div class="mt-4 flex gap-2"><button onclick="showAgentModal()" class="btn btn-primary">Manage Roles<\/button><\/div><div class="divider text-xs opacity-30 mt-8">Project History<\/div><div id="project-chat-list" class="flex flex-col gap-2"><\/div><\/div><div class="flex items-center justify-between mb-6"><h2 class="text-2xl font-bold" data-i18n="workspaces">Workspaces<\/h2><button onclick="project_modal.showModal()" class="btn btn-primary btn-sm">+ New Project<\/button><\/div><div id="projects-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"><\/div><\/div><\/div><\/div><\/div>
+                    <div class="swiper-slide custom-scrollbar"><div id="projects-panel" class="flex flex-col flex-1"><div id="projects-list-container" hx-get="/api/projects/list-html" hx-trigger="load, loadProjects" hx-target="#projects-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto w-full"><div id="selected-project-info" class="hidden mb-8 p-6 bg-primary/10 border border-primary/20 rounded-2xl"><div class="flex justify-between items-start"><div><span class="text-xl font-bold text-primary" id="current-project-name">No Project</span><p class="text-sm opacity-60 mt-1" id="current-project-path"></p></div><button onclick="deselectProject()" class="btn btn-ghost btn-sm text-error">✕ Deselect</button></div><div class="mt-4 flex gap-2"><button onclick="showAgentModal()" class="btn btn-primary">Manage Roles</button></div><div class="divider text-xs opacity-30 mt-8">Project History</div><div id="project-chat-list" class="flex flex-col gap-2"></div></div><div class="flex items-center justify-between mb-6"><h2 class="text-2xl font-bold" data-i18n="workspaces">Workspaces</h2><button onclick="project_modal.showModal()" class="btn btn-primary btn-sm">+ New Project</button></div><div id="projects-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div></div></div></div></div>
                     <!-- Skills Panel -->
-                    <div class="swiper-slide"><div id="skills-panel" class="flex flex-col flex-1"><div id="skills-list-container" hx-get="/api/skills" hx-trigger="load, loadSkills" hx-target="#skills-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6" id="skills-list"><\/div><\/div><\/div><\/div>
+                    <div class="swiper-slide custom-scrollbar"><div id="skills-panel" class="flex flex-col flex-1"><div id="skills-list-container" hx-get="/api/skills" hx-trigger="load, loadSkills" hx-target="#skills-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6" id="skills-list"></div></div></div></div>
                     <!-- Memory Panel -->
-                    <div class="swiper-slide"><div id="memory-panel" class="flex flex-col flex-1"><div id="memory-list-container" hx-get="/api/memories" hx-trigger="load, loadMemories" hx-target="#memory-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-4xl mx-auto space-y-4" id="memory-list"><\/div><\/div><\/div><\/div>
+                    <div class="swiper-slide custom-scrollbar"><div id="memory-panel" class="flex flex-col flex-1"><div id="memory-list-container" hx-get="/api/memories" hx-trigger="load, loadMemories" hx-target="#memory-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-4xl mx-auto space-y-4" id="memory-list"></div></div></div></div>
                     <!-- CLI Panel -->
-                    <div class="swiper-slide"><div id="cli-panel" class="flex flex-col flex-1"><div id="cli-list-container" hx-get="/api/cli/sessions" hx-trigger="load, loadCli" hx-target="#cli-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="cli-list"><\/div><\/div><\/div><\/div>
+                    <div class="swiper-slide custom-scrollbar"><div id="cli-panel" class="flex flex-col flex-1"><div id="cli-list-container" hx-get="/api/cli/sessions" hx-trigger="load, loadCli" hx-target="#cli-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="cli-list"></div></div></div></div>
                     <!-- Settings Panel -->
-                    <div class="swiper-slide"><div id="settings-panel" class="flex flex-col flex-1"><div class="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar"><div class="max-w-5xl mx-auto space-y-6"><div class="settings-card flex flex-col md:flex-row md:items-center md:justify-between gap-6"><div class="flex items-center gap-4"><div id="settings-avatar" class="w-16 h-16 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-2xl font-black shadow-lg">?<\/div><div><div class="text-xs font-black uppercase tracking-[0.24em] opacity-40" data-i18n="settings">Settings<\/div><h2 id="settings-hero-name" class="text-3xl font-black">...</h2><p class="text-sm opacity-60" data-i18n="settings-subtitle">Manage your account, language, theme, and session preferences.<\/p><\/div><\/div><form action="/api/auth/logout" method="POST"><button class="btn btn-error rounded-2xl px-6" data-i18n="logout">Logout<\/button><\/form><\/div><div class="grid grid-cols-1 xl:grid-cols-2 gap-6"><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="account">Account<\/div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="username">Username<\/span><strong id="settings-username" class="text-base">...</strong><\/div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="user-id">User ID<\/span><strong id="settings-user-id" class="text-base">--<\/strong><\/div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="auth-status">Status<\/span><strong id="settings-auth-status" class="text-base text-success">...<\/strong><\/div><\/section><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="language">Language<\/div><p class="text-sm opacity-60" data-i18n="language-desc">Switch UI language instantly. Your choice is stored locally.<\/p><div id="settings-language-switcher" class="flex flex-wrap gap-2"><\/div><\/section><\/div><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="theme">Theme<\/div><p class="text-sm opacity-60" data-i18n="theme-desc">Choose the look and feel of the app. The selected theme is saved in your browser.<\/p><div class="settings-theme-grid"><script>themes.forEach(t=>document.write(`<label class="label cursor-pointer settings-theme-item btn btn-ghost border border-base-content/10 rounded-2xl px-4"><input type="radio" name="theme-settings" class="theme-controller sr-only" value="${t}" aria-label="${t}" /><span class="label-text font-semibold">${t}<\/span><\/label>`));<\/script><\/div><\/section><\/div><\/div><\/div><\/div>
+                    <div class="swiper-slide custom-scrollbar"><div id="settings-panel" class="flex flex-col flex-1"><div class="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar"><div class="max-w-5xl mx-auto space-y-6"><div class="settings-card flex flex-col md:flex-row md:items-center md:justify-between gap-6"><div class="flex items-center gap-4"><div id="settings-avatar" class="w-16 h-16 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-2xl font-black shadow-lg">?</div><div><div class="text-xs font-black uppercase tracking-[0.24em] opacity-40" data-i18n="settings">Settings</div><h2 id="settings-hero-name" class="text-3xl font-black">...</h2><p class="text-sm opacity-60" data-i18n="settings-subtitle">Manage your account, language, theme, and session preferences.</p></div></div><form action="/api/auth/logout" method="POST"><button class="btn btn-error rounded-2xl px-6" data-i18n="logout">Logout</button></form></div><div class="grid grid-cols-1 xl:grid-cols-2 gap-6"><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="account">Account</div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="username">Username</span><strong id="settings-username" class="text-base">...</strong></div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="user-id">User ID</span><strong id="settings-user-id" class="text-base">--</strong></div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="auth-status">Status</span><strong id="settings-auth-status" class="text-base text-success">...</strong></div></section><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="language">Language</div><p class="text-sm opacity-60" data-i18n="language-desc">Switch UI language instantly. Your choice is stored locally.</p><div id="settings-language-switcher" class="flex flex-wrap gap-2"></div></section></div><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="theme">Theme</div><p class="text-sm opacity-60" data-i18n="theme-desc">Choose the look and feel of the app. The selected theme is saved in your browser.</p><div class="settings-theme-grid"></div></section></div></div></div></div>
                 </div>
             </div>
             
-            <!-- Chat Input Footer -->
-            <footer id="global-footer" class="p-4 md:p-6 bg-gradient-to-t from-base-100 via-base-100 to-transparent flex-none">
-                <div class="max-w-3xl mx-auto relative">
-                    <form id="chat-form" onsubmit="return handleFormSubmit(event)" class="input-container relative bg-base-200 rounded-[24px] shadow-2xl border border-base-300 transition-all focus-within:border-primary/50 flex flex-col p-2">
-                        <div id="project-context-banner" class="hidden flex items-center justify-between px-3 py-1.5 bg-secondary/10 border-b border-secondary/20 rounded-t-[20px] -mb-1 mx-0.5"><div class="flex items-center gap-1.5"><span class="text-[11px] font-semibold text-secondary opacity-80" id="project-banner-name"><\/span><\/div><button type="button" onclick="deselectProject()" class="text-[10px] opacity-40 hover:opacity-70 transition-opacity">✕ clear<\/button><\/div>
-                        <input type="hidden" name="sessionId" id="session-id-input" />
-                        <input type="hidden" name="projectId" id="project-id-input" />
-                        <div class="flex items-center justify-between px-3 pt-1 pb-1 border-b border-base-content/5 mb-1">
-                            <select name="provider" class="select select-ghost select-xs opacity-60 font-semibold"><option value="gemini" selected>Gemini<\/option><option value="gh-copilot">GitHub Copilot<\/option><option value="claude">Claude Code<\/option><\/select>
-                            <div class="flex items-center gap-1 bg-base-300/50 rounded-full p-0.5"><button type="button" id="mode-normal-btn" onclick="setMode('normal')" class="btn btn-xs rounded-full px-3 btn-primary">Normal<\/button><button type="button" id="mode-multi-btn" onclick="setMode('cooperative')" class="btn btn-xs rounded-full px-3 btn-ghost">Multi-Agent<\/button><input type="hidden" name="mode" id="mode-input" value="" /><\/div>
-                        </div>
-                        <div id="agent-selector" class="flex items-center gap-2 px-3 py-1.5 overflow-x-auto no-scrollbar border-b border-base-content/5 hidden"><span class="text-[9px] font-bold opacity-30 uppercase">Agents:<\/span><div id="agent-chips" class="flex items-center gap-1.5"><\/div><\/div>
-                        <div class="flex items-end gap-2 w-full"><textarea name="content" id="chat-input" data-i18n="input-placeholder" class="textarea textarea-ghost focus:bg-transparent focus:outline-none w-full py-3 leading-relaxed text-base min-h-[44px]" required autocomplete="off" oninput="autoExpand(this)" onkeydown="if(event.ctrlKey&&event.keyCode==13)handleFormSubmit(event)"><\/textarea><button type="submit" class="btn btn-circle btn-primary btn-sm md:btn-md shadow-lg" id="send-btn"><span id="loading-spinner" class="loading loading-spinner loading-xs hidden"><\/span><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" \/><\/svg><\/button><\/div>
-                    </form>
-                </div>
             </footer>
         </div>
-        
-        <!-- Bottom Tab Bar -->
+    </div>
+
+    <!-- Chat Input Footer (Outside Main for Layering) -->
+    <footer id="global-footer" class="fixed bottom-[calc(4.5rem+max(0.5rem,env(safe-area-inset-bottom)))] left-0 right-0 p-4 md:p-6 bg-gradient-to-t from-base-100 via-base-100 to-transparent z-[100] pointer-events-none" style="display:none">
+        <div class="max-w-3xl mx-auto relative pointer-events-auto">
+            <form id="chat-form" onsubmit="return handleFormSubmit(event)" class="input-container relative bg-base-200 rounded-[24px] shadow-2xl border border-base-300 transition-all focus-within:border-primary/50 flex flex-col p-2">
+                <div id="project-context-banner" class="hidden flex items-center justify-between px-3 py-1.5 bg-secondary/10 border-b border-secondary/20 rounded-t-[20px] -mb-1 mx-0.5"><div class="flex items-center gap-1.5"><span class="text-[11px] font-semibold text-secondary opacity-80" id="project-banner-name"></span></div><button type="button" onclick="deselectProject()" class="text-[10px] opacity-40 hover:opacity-70 transition-opacity">✕ clear</button></div>
+                <input type="hidden" name="sessionId" id="session-id-input" />
+                <input type="hidden" name="projectId" id="project-id-input" />
+                <div class="flex items-center justify-between px-3 pt-1 pb-1 border-b border-base-content/5 mb-1">
+                    <select name="provider" class="select select-ghost select-xs opacity-60 font-semibold"><option value="gemini" selected>Gemini</option><option value="gh-copilot">GitHub Copilot</option><option value="claude">Claude Code</option></select>
+                    <div class="flex items-center gap-1 bg-base-300/50 rounded-full p-0.5"><button type="button" id="mode-normal-btn" onclick="setMode('normal')" class="btn btn-xs rounded-full px-3 btn-primary">Normal</button><button type="button" id="mode-multi-btn" onclick="setMode('cooperative')" class="btn btn-xs rounded-full px-3 btn-ghost">Multi-Agent</button><input type="hidden" name="mode" id="mode-input" value="" /></div>
+                </div>
+                <div id="agent-selector" class="flex items-center gap-2 px-3 py-1.5 overflow-x-auto no-scrollbar border-b border-base-content/5 hidden"><span class="text-[9px] font-bold opacity-30 uppercase">Agents:</span><div id="agent-chips" class="flex items-center gap-1.5"></div></div>
+                <div class="flex items-end gap-2 w-full"><textarea name="content" id="chat-input" data-i18n="input-placeholder" class="textarea textarea-ghost focus:bg-transparent focus:outline-none w-full py-3 leading-relaxed text-base min-h-[44px]" required autocomplete="off" oninput="autoExpand(this)" onkeydown="if(event.ctrlKey&&event.keyCode==13)handleFormSubmit(event)"></textarea><button type="submit" class="btn btn-circle btn-primary btn-sm md:btn-md shadow-lg" id="send-btn"><span id="loading-spinner" class="loading loading-spinner loading-xs hidden"></span><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg></button></div>
+            </form>
+        </div>
+    </footer>
+    
+    <!-- Bottom Tab Bar -->
         <div class="bottom-tab-bar">
-            <div class="bottom-tab-item active" onclick="switchMainTab(0)" title="Chat"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.051-7.043.151-1.584.233-2.707 1.626-2.707 3.228V12.74Z" \/><\/svg><span data-i18n="chat">Chat<\/span><\/div>
-            <div class="bottom-tab-item" onclick="switchMainTab(1)" title="History"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" \/><\/svg><span data-i18n="history">History<\/span><\/div>
-            <div class="bottom-tab-item" onclick="switchMainTab(2)" title="Projects"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0A2.25 2.25 0 0 0 4.5 15h15a2.25 2.25 0 0 0 2.25-2.25m-19.5 0v.25A2.25 2.25 0 0 0 4.5 17.5h15a2.25 2.25 0 0 0 2.25-2.25v-.25" \/><\/svg><span data-i18n="projects">Projects<\/span><\/div>
-            <div class="bottom-tab-item" onclick="switchMainTab(3)" title="Skills"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" \/><\/svg><span data-i18n="skills">Skills<\/span><\/div>
-            <div class="bottom-tab-item" onclick="switchMainTab(4)" title="Memory"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" \/><\/svg><span data-i18n="memory">Memory<\/span><\/div>
-            <div class="bottom-tab-item" onclick="switchMainTab(5)" title="CLI"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" \/><\/svg><span data-i18n="cli">CLI<\/span><\/div>
-            <div class="bottom-tab-item" onclick="switchMainTab(6)" title="Settings"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 15 0m-15 0a7.5 7.5 0 0 0 15 0m-15 0H3m18 0h-1.5m-12.364 5.864-1.06 1.06m11.788-11.788-1.06 1.06m-11.788 0 1.06 1.06m11.788 11.788-1.06-1.06M12 6.75v-1.5m0 15v-1.5" \/><\/svg><span data-i18n="settings">Settings<\/span><\/div>
+            <div class="bottom-tab-item active" onclick="switchMainTab(0)" title="Chat"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.051-7.043.151-1.584.233-2.707 1.626-2.707 3.228V12.74Z" /></svg><span data-i18n="chat">Chat</span></div>
+            <div class="bottom-tab-item" onclick="switchMainTab(1)" title="History"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg><span data-i18n="history">History</span></div>
+            <div class="bottom-tab-item" onclick="switchMainTab(2)" title="Projects"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0A2.25 2.25 0 0 0 4.5 15h15a2.25 2.25 0 0 0 2.25-2.25m-19.5 0v.25A2.25 2.25 0 0 0 4.5 17.5h15a2.25 2.25 0 0 0 2.25-2.25v-.25" /></svg><span data-i18n="projects">Projects</span></div>
+            <div class="bottom-tab-item" onclick="switchMainTab(3)" title="Skills"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" /></svg><span data-i18n="skills">Skills</span></div>
+            <div class="bottom-tab-item" onclick="switchMainTab(4)" title="Memory"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" /></svg><span data-i18n="memory">Memory</span></div>
+            <div class="bottom-tab-item" onclick="switchMainTab(5)" title="CLI"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" /></svg><span data-i18n="cli">CLI</span></div>
+            <div class="bottom-tab-item" onclick="switchMainTab(6)" title="Settings"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 15 0m-15 0a7.5 7.5 0 0 0 15 0m-15 0H3m18 0h-1.5m-12.364 5.864-1.06 1.06m11.788-11.788-1.06 1.06m-11.788 0 1.06 1.06m11.788 11.788-1.06-1.06M12 6.75v-1.5m0 15v-1.5" /></svg><span data-i18n="settings">Settings</span></div>
         </div>
     </div>
 
     <!-- Modals -->
-    <dialog id="agent_modal" class="modal"><div class="modal-box w-11/12 max-w-2xl"><h3 class="font-bold text-lg" data-i18n="agent-roles-title">Project Agents<\/h3><div id="agent-list" class="mt-4 space-y-2 max-h-52 overflow-y-auto"><\/div><div class="mt-4 p-4 bg-base-200 rounded-lg space-y-3"><div class="flex items-center justify-between"><span class="text-xs font-bold uppercase opacity-40">Add Role<\/span><div class="dropdown dropdown-end"><div tabindex="0" role="button" class="btn btn-xs btn-outline">Presets<\/div><ul tabindex="0" id="preset-dropdown" class="dropdown-content z-[30] menu p-2 shadow bg-base-300 rounded-box w-64 text-xs"><\/ul><\/div><\/div><input type="text" id="new-agent-role" placeholder="Role Name" class="input input-sm input-bordered w-full" \/><textarea id="new-agent-prompt" placeholder="System Prompt" class="textarea textarea-sm textarea-bordered w-full h-28"><\/textarea><div class="flex gap-2"><select id="new-agent-provider" class="select select-sm select-bordered flex-1"><\/select><select id="new-agent-color" class="select select-sm select-bordered flex-1"><option value="primary">Blue<\/option><option value="secondary">Pink<\/option><option value="accent">Teal<\/option><option value="success">Green<\/option><\/select><button type="button" onclick="addNewAgent()" class="btn btn-sm btn-primary">Add<\/button><\/div><\/div><div class="modal-action"><button type="button" class="btn" onclick="agent_modal.close()">Done<\/button><\/div><\/div><\/dialog>
-    <dialog id="project_modal" class="modal"><div class="modal-box"><h3 class="font-bold text-lg" data-i18n="create-project-title">Create New Project<\/h3><form id="project-form" hx-post="/api/projects" hx-target="#projects-list" hx-swap="beforeend" class="mt-4 space-y-4" onsubmit="project_modal.close()"><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="project-name-label">Name<\/span><\/label><input type="text" name="name" class="input input-bordered w-full" required \/><\/div><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="root-path-label">Root Path<\/span><\/label><input type="text" name="rootPath" class="input input-bordered w-full" required \/><\/div><div class="modal-action"><button type="button" class="btn" onclick="project_modal.close()">Cancel<\/button><button type="submit" class="btn btn-primary" data-i18n="create-project-btn">Create<\/button><\/div><\/form><\/div><\/dialog>
-    <dialog id="memory_modal" class="modal"><div class="modal-box"><h3 class="font-bold text-lg" data-i18n="save-to-memory-title">Save Memory<\/h3><form id="memory-form" hx-post="/api/memories" hx-swap="none" class="mt-4 space-y-4" onsubmit="memory_modal.close()"><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="memory-tags-label">Tags<\/span><\/label><input type="text" name="tags" id="memory-tags" class="input input-bordered w-full" required \/><\/div><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="content-label">Content<\/span><\/label><textarea name="content" id="memory-content" class="textarea textarea-bordered w-full h-24" required><\/textarea><\/div><div class="modal-action"><button type="button" class="btn" onclick="memory_modal.close()">Cancel<\/button><button type="submit" class="btn btn-primary" data-i18n="save-memory-btn">Save<\/button><\/div><\/form><\/div><\/dialog>
+    <dialog id="agent_modal" class="modal"><div class="modal-box w-11/12 max-w-2xl"><h3 class="font-bold text-lg" data-i18n="agent-roles-title">Project Agents</h3><div id="agent-list" class="mt-4 space-y-2 max-h-52 overflow-y-auto"></div><div class="mt-4 p-4 bg-base-200 rounded-lg space-y-3"><div class="flex items-center justify-between"><span class="text-xs font-bold uppercase opacity-40">Add Role</span><div class="dropdown dropdown-end"><div tabindex="0" role="button" class="btn btn-xs btn-outline">Presets</div><ul tabindex="0" id="preset-dropdown" class="dropdown-content z-[100] menu p-2 shadow bg-base-300 rounded-box w-64 text-xs"></ul></div></div><input type="text" id="new-agent-role" placeholder="Role Name" class="input input-sm input-bordered w-full" /><textarea id="new-agent-prompt" placeholder="System Prompt" class="textarea textarea-sm textarea-bordered w-full h-28"></textarea><div class="flex gap-2"><select id="new-agent-provider" class="select select-sm select-bordered flex-1"></select><select id="new-agent-color" class="select select-sm select-bordered flex-1"><option value="primary">Blue</option><option value="secondary">Pink</option><option value="accent">Teal</option><option value="success">Green</option></select><button type="button" onclick="addNewAgent()" class="btn btn-sm btn-primary">Add</button></div></div><div class="modal-action"><button type="button" class="btn" onclick="agent_modal.close()">Done</button></div></div></dialog>
+    <dialog id="project_modal" class="modal"><div class="modal-box"><h3 class="font-bold text-lg" data-i18n="create-project-title">Create New Project</h3><form id="project-form" hx-post="/api/projects" hx-target="#projects-list" hx-swap="beforeend" class="mt-4 space-y-4" onsubmit="project_modal.close()"><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="project-name-label">Name</span></label><input type="text" name="name" class="input input-bordered w-full" required /></div><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="root-path-label">Root Path</span></label><input type="text" name="rootPath" class="input input-bordered w-full" required /></div><div class="modal-action"><button type="button" class="btn" onclick="project_modal.close()">Cancel</button><button type="submit" class="btn btn-primary" data-i18n="create-project-btn">Create</button></div></form></div></dialog>
+    <dialog id="memory_modal" class="modal"><div class="modal-box"><h3 class="font-bold text-lg" data-i18n="save-to-memory-title">Save Memory</h3><form id="memory-form" hx-post="/api/memories" hx-swap="none" class="mt-4 space-y-4" onsubmit="memory_modal.close()"><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="memory-tags-label">Tags</span></label><input type="text" name="tags" id="memory-tags" class="input input-bordered w-full" required /></div><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="content-label">Content</span></label><textarea name="content" id="memory-content" class="textarea textarea-bordered w-full h-24" required></textarea></div><div class="modal-action"><button type="button" class="btn" onclick="memory_modal.close()">Cancel</button><button type="submit" class="btn btn-primary" data-i18n="save-memory-btn">Save</button></div></form></div></dialog>
     
     <div id="user-avatar" class="w-12 h-12 bg-primary rounded-xl flex items-center justify-center text-primary-content font-bold uppercase cursor-pointer shadow-lg fixed top-2 right-2 z-50" style="display:none">?</div>
     <div id="user-display-name" style="display:none">...</div>
