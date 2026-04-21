@@ -31,7 +31,9 @@
             display: flex;
             justify-content: space-around;
             align-items: flex-end;
-            background: hsl(var(--b1));
+            background: hsl(var(--b1) / 0.95);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
             border-top: 1px solid hsl(var(--bc) / 0.1);
             z-index: 40;
             padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
@@ -210,6 +212,11 @@
             if (historyList && !historyList.dataset.wired) {
                 historyList.dataset.wired = 'true';
                 historyList.addEventListener('click', (event) => {
+                    // If the click is on an action button (edit/delete), don't intercept it
+                    if (event.target.closest('button[onclick*="editTitle"], button[onclick*="deleteChat"]')) {
+                        return;
+                    }
+
                     const trigger = event.target.closest('[onclick*="loadChatSession"], [hx-get^="/api/chat/load/"]');
                     if (!trigger) return;
                     event.preventDefault();
@@ -252,6 +259,33 @@
             updateTabBar(index);
             const footer = document.getElementById('global-footer');
             if (footer) footer.style.display = (index === 0) ? 'block' : 'none';
+        }
+
+        async function editTitle(id, oldTitle) {
+            const newTitle = prompt(i18n('rename-chat-prompt') || 'Enter new title:', oldTitle);
+            if (!newTitle || newTitle === oldTitle) return;
+            const fd = new FormData();
+            fd.append('id', id);
+            fd.append('title', newTitle);
+            try {
+                const r = await fetch('/api/chat/rename', { method: 'POST', body: fd });
+                if (r.ok) loadPanelData('history-panel');
+            } catch (e) { console.error(e); }
+        }
+
+        async function deleteChat(id) {
+            if (!confirm(i18n('delete-chat-confirm') || 'Are you sure you want to delete this chat?')) return;
+            try {
+                const r = await fetch(`/api/chat/${id}`, { method: 'DELETE' });
+                if (r.ok) {
+                    loadPanelData('history-panel');
+                    const activeChatBox = document.querySelector('#chat-box');
+                    if (activeChatBox && activeChatBox.dataset.sessionId == id) {
+                        document.getElementById('session-id-input').value = '';
+                        activeChatBox.innerHTML = '';
+                    }
+                }
+            } catch (e) { console.error(e); }
         }
         
         function updateTabBar(index) {
