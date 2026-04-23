@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using AiChatApp.Data;
 using AiChatApp.Models;
+using AiChatApp.Services.Harness;
 using Microsoft.EntityFrameworkCore;
 
 namespace AiChatApp.Services;
@@ -13,18 +14,29 @@ public class AiService
     private readonly SessionMemoryService _sessionMemory;
     private readonly IServiceProvider _serviceProvider;
     private readonly SkillManagerService _skillManager;
+    private readonly PipelineLoaderService _pipelineLoader;
+    private readonly SchemaValidationService _schemaValidator;
+    private readonly ToolExecutorService _toolExecutor;
+    private readonly EvalService _evalService;
     private SkillLearningService _skillLearning => _serviceProvider.GetRequiredService<SkillLearningService>();
 
     public record AgentDefinition(string Name, string DisplayName, string Description, string SystemPrompt);
 
     public AiService(AppDbContext db, MemorySearchService memorySearch, 
-        SessionMemoryService sessionMemory, IServiceProvider serviceProvider, SkillManagerService skillManager)
+        SessionMemoryService sessionMemory, IServiceProvider serviceProvider, 
+        SkillManagerService skillManager, PipelineLoaderService pipelineLoader, 
+        SchemaValidationService schemaValidator, ToolExecutorService toolExecutor,
+        EvalService evalService)
     {
         _db = db;
         _memorySearch = memorySearch;
         _sessionMemory = sessionMemory;
         _serviceProvider = serviceProvider;
         _skillManager = skillManager;
+        _pipelineLoader = pipelineLoader;
+        _schemaValidator = schemaValidator;
+        _toolExecutor = toolExecutor;
+        _evalService = evalService;
     }
 
     /// <summary>获取所有可用的代理定义（统一从 SkillManager 获取）</summary>
@@ -95,6 +107,7 @@ public class AiService
         var steps = new List<AgentStep>();
         List<AgentDefinition> agentsToRun = new();
 
+        // 1. 如果指定了特定 Agent 列表，按顺序运行 (Legacy/Custom 模式)
         if (selectedAgentNames != null && selectedAgentNames.Any())
         {
             var allAvailable = await GetAvailableAgentsAsync(userId);
@@ -106,7 +119,7 @@ public class AiService
         }
         else if (chatSessionId.HasValue)
         {
-            // 获取项目自定义角色 (原有逻辑)
+            // 获取项目自定义角色
             var session = await _db.ChatSessions
                 .Include(s => s.Project)
                     .ThenInclude(p => p!.Agents)
@@ -121,7 +134,6 @@ public class AiService
 
         if (agentsToRun.Any())
         {
-            // --- 统一多智能体流程 ---
             string lastOutput = "";
             foreach (var agent in agentsToRun)
             {
@@ -138,13 +150,21 @@ public class AiService
                     userId: userId,
                     chatSessionId: chatSessionId
                 );
+
+                // --- Tool Execution ---
+                var projectRoot = await GetProjectRootAsync(chatSessionId);
+                step.Output = await _toolExecutor.ExecuteToolsAsync(step.Output, projectRoot);
+                await _db.SaveChangesAsync();
+
+                // --- Evaluation ---
+                _ = Task.Run(() => _evalService.EvaluateStepAsync(step.Id, task, step.Output, provider));
+
                 steps.Add(step);
                 lastOutput = step.Output;
                 if (onStepComplete != null) await onStepComplete(step.Role, BuildStepHtml(step));
             }
             string html = BuildCooperativeHtml(steps, lastOutput);
 
-            // --- Post-Cooperation Tasks (Async) ---
             if (chatSessionId.HasValue)
             {
                 _ = Task.Run(async () => {
@@ -156,104 +176,104 @@ public class AiService
             return (html, steps);
         }
 
-        // --- 默认 3 阶段流程 ---
-        // ─── Step 1: Orchestrator ───
-        string orchestratorPersona = """
-            あなたはタスク分解の専門家（Orchestrator）です。
-            ユーザーのタスクを分析し、以下のJSON形式でのみ回答してください：
-            {
-              "plan": "全体方針の概要（1-2文）",
-              "subtasks": [
-                {"id": 1, "description": "サブタスクの説明", "expectedOutput": "期待される成果物"},
-                ...
-              ]
-            }
-            """;
+        // 2. 动态パイプライン模式 (Harness Engineering)
+        var pipeline = _pipelineLoader.Get("default") ?? throw new Exception("Default pipeline not found.");
+        string currentInput = task;
+        string contextFromPreviousStages = "";
 
-        var orchStep = await RunAgentStepAsync(
-            role: "Orchestrator",
-            persona: orchestratorPersona,
-            input: task,
-            messageId: messageId,
-            provider: provider,
-            userId: userId,
-            chatSessionId: chatSessionId
-        );
-        steps.Add(orchStep);
-        if (onStepComplete != null) await onStepComplete(orchStep.Role, BuildStepHtml(orchStep));
-
-        // JSONパース試行
-        string planSummary = orchStep.Output;
-        string subtaskBlock = task;
-        try
+        foreach (var stage in pipeline.Stages)
         {
-            var planDoc = System.Text.Json.JsonDocument.Parse(ExtractJson(orchStep.Output));
-            planSummary = planDoc.RootElement.GetProperty("plan").GetString() ?? orchStep.Output;
-            var subtasks = planDoc.RootElement.GetProperty("subtasks").EnumerateArray()
-                .Select(s => s.GetProperty("description").GetString() ?? "")
-                .Where(s => !string.IsNullOrEmpty(s));
-            subtaskBlock = string.Join("\n", subtasks.Select((s, i) => $"{i + 1}. {s}"));
-        }
-        catch { }
+            if (stage.IsOptional && string.IsNullOrEmpty(currentInput)) continue;
 
-        // ─── Step 2: Executor（最大2回）───
-        string executorPersona = "あなたは実装の専門家（Executor）です。Orchestratorの計画に基づいて成果物を作成してください。";
-        AgentStep execStep = null!;
-        for (int attempt = 1; attempt <= 2; attempt++)
-        {
-            string execInput = attempt == 1
-                ? $"計画:\n{subtaskBlock}\n\n原タスク:\n{task}"
-                : $"計画:\n{subtaskBlock}\n\n原タスク:\n{task}\n\n前回の実行結果:\n{execStep.Output}\n\n再実装してください。";
-
-            execStep = await RunAgentStepAsync(
-                role: "Executor",
-                persona: executorPersona,
-                input: execInput,
-                messageId: messageId,
-                provider: provider,
-                userId: userId,
-                chatSessionId: chatSessionId,
-                attemptNumber: attempt
-            );
-            steps.Add(execStep);
-            if (onStepComplete != null) await onStepComplete(execStep.Role, BuildStepHtml(execStep));
-
-            if (attempt < 2)
+            AgentStep stageStep = null!;
+            string stagePersona = !string.IsNullOrEmpty(stage.SystemPromptTemplate) 
+                ? await _pipelineLoader.GetPromptTemplateAsync(stage.SystemPromptTemplate)
+                : stage.SystemPromptInline ?? "You are a helpful AI assistant.";
+            
+            for (int attempt = 1; attempt <= stage.MaxAttempts; attempt++)
             {
-                bool qualityOk = await QuickQualityCheckAsync(task, execStep.Output, provider);
-                if (qualityOk) break;
-                execStep.WasAccepted = false;
+                string combinedInput = string.IsNullOrEmpty(contextFromPreviousStages)
+                    ? currentInput
+                    : $"Task: {task}\n\nContext from previous stages:\n{contextFromPreviousStages}\n\nCurrent stage input: {currentInput}";
+
+                stageStep = await RunAgentStepAsync(
+                    role: stage.Name,
+                    persona: stagePersona,
+                    input: combinedInput,
+                    messageId: messageId,
+                    provider: stage.Provider ?? provider,
+                    userId: userId,
+                    chatSessionId: chatSessionId,
+                    attemptNumber: attempt
+                );
+
+                // --- Tool Execution ---
+                var projectRoot = await GetProjectRootAsync(chatSessionId);
+                var toolOutput = await _toolExecutor.ExecuteToolsAsync(stageStep.Output, projectRoot);
+                if (toolOutput != stageStep.Output)
+                {
+                    stageStep.Output = toolOutput;
+                    await _db.SaveChangesAsync();
+                }
+
+                // --- Schema Validation ---
+                if (!string.IsNullOrEmpty(stage.OutputSchema))
+                {
+                    var validationResult = _schemaValidator.Validate($"{stage.OutputSchema}.json", stageStep.Output);
+                    if (!validationResult.IsValid)
+                    {
+                        stageStep.WasAccepted = false;
+                        await _db.SaveChangesAsync();
+
+                        if (attempt < stage.MaxAttempts)
+                        {
+                            currentInput = _schemaValidator.GenerateCorrectivePrompt(validationResult.Errors, stageStep.Output);
+                            continue; // Retry with corrective prompt
+                        }
+                    }
+                }
+
+                // --- Quality Check ---
+                if (stage.RetryOnQualityFail && attempt < stage.MaxAttempts)
+                {
+                    bool qualityOk = await QuickQualityCheckAsync(task, stageStep.Output, provider);
+                    if (!qualityOk)
+                    {
+                        stageStep.WasAccepted = false;
+                        await _db.SaveChangesAsync();
+                        continue; // Retry
+                    }
+                }
+
+                // Success
+                stageStep.WasAccepted = true;
                 await _db.SaveChangesAsync();
+
+                // --- Evaluation ---
+                _ = Task.Run(() => _evalService.EvaluateStepAsync(stageStep.Id, task, stageStep.Output, stage.Provider ?? provider));
+
+                break;
             }
+
+            steps.Add(stageStep);
+            if (onStepComplete != null) await onStepComplete(stageStep.Role, BuildStepHtml(stageStep));
+
+            contextFromPreviousStages += $"\n--- Stage: {stage.Name} ---\n{stageStep.Output}\n";
+            currentInput = stageStep.Output;
+
+            if (stage.IsFinalStage) break;
         }
 
-        // ─── Step 3: Reviewer ───
-        string reviewerPersona = "あなたは評審の専門家（Reviewer）です。最終的な回答をMarkdownで作成してください。";
-
-        var reviewStep = await RunAgentStepAsync(
-            role: "Reviewer",
-            persona: reviewerPersona,
-            input: $"元タスク:\n{task}\n\n計画:\n{planSummary}\n\n実行結果:\n{execStep.Output}",
-            messageId: messageId,
-            provider: provider,
-            userId: userId,
-            chatSessionId: chatSessionId
-        );
-        steps.Add(reviewStep);
-        reviewStep.WasAccepted = true;
-        await _db.SaveChangesAsync();
-        if (onStepComplete != null) await onStepComplete(reviewStep.Role, BuildStepHtml(reviewStep));
-
-        // --- Post-Cooperation Tasks (Async) ---
+        string finalResult = steps.Last().Output;
         if (chatSessionId.HasValue)
         {
             _ = Task.Run(async () => {
                 await _sessionMemory.PromoteToLongTermAsync(chatSessionId.Value, userId);
-                await _skillLearning.LearnFromInteractionAsync(task, reviewStep.Output, steps, userId);
+                await _skillLearning.LearnFromInteractionAsync(task, finalResult, steps, userId);
             });
         }
 
-        return (BuildCooperativeHtml(steps, reviewStep.Output), steps);
+        return (BuildCooperativeHtml(steps, finalResult), steps);
     }
 
     public async IAsyncEnumerable<string> CooperateStreamAsync(
@@ -323,7 +343,7 @@ public class AiService
             ? prompt
             : $"{history}\nUser: {prompt}";
 
-        var processInfo = SetupProcessInfo(fullPrompt, provider, systemPrompt, workingDir);
+        var processInfo = SetupProcessInfo(provider, workingDir);
 
         using var process = Process.Start(processInfo);
         if (process == null) 
@@ -331,6 +351,14 @@ public class AiService
             yield return "Error: Could not start CLI.";
             yield break;
         }
+
+        // Write full prompt to stdin
+        string inputToStdin = string.IsNullOrEmpty(systemPrompt)
+            ? fullPrompt
+            : $"System: {systemPrompt}\n\nUser: {fullPrompt}";
+        
+        await process.StandardInput.WriteAsync(inputToStdin);
+        process.StandardInput.Close();
 
         var buffer = new char[64];
         int read;
@@ -455,16 +483,17 @@ public class AiService
         string result = await ExecuteCliAsync(checkPrompt, provider, systemPrompt: null);
         return result.Contains("OK", StringComparison.OrdinalIgnoreCase);
     }
+private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int? chatSessionId, string? agentRole)
+{
+    var memories = await _memorySearch.SearchAsync(prompt, userId);
+    var skills = await _memorySearch.SearchSkillsAsync(prompt, userId, agentRole);
 
-    private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int? chatSessionId, string? agentRole)
-    {
-        var memories = await _memorySearch.SearchAsync(prompt, userId);
-        var skills = await _memorySearch.SearchSkillsAsync(prompt, userId, agentRole);
+    var sb = new StringBuilder("あなたは高度なAIアシスタントです。現在はソフトウェア開発プロジェクトのコンテキストで動作しています。");
+    sb.Append("\nユーザーから具体的な実装や修正の指示があった場合、単にコードを提示するだけでなく、プロジェクトのファイル構造を理解し、必要に応じてファイルを直接操作・更新する計画を立てて実行してください。");
+    sb.Append("\n出力には、実行すべき具体的なアクション（ファイルの読み込み、書き込み、置換など）を明確に含めてください。");
 
-        var sb = new StringBuilder("あなたは高度なAIアシスタントです。");
-
-        // Add Project Context if available
-        if (chatSessionId.HasValue)
+    // Add Project Context if available
+    if (chatSessionId.HasValue)
         {
             var session = await _db.ChatSessions
                 .Include(s => s.Project)
@@ -576,7 +605,7 @@ public class AiService
         return "{}";
     }
 
-    private ProcessStartInfo SetupProcessInfo(string prompt, string provider, string? systemPrompt = null, string? workingDirectory = null)
+    private ProcessStartInfo SetupProcessInfo(string provider, string? workingDirectory = null)
     {
         string fileName = provider switch
         {
@@ -586,13 +615,10 @@ public class AiService
             _ => "gemini"
         };
 
-        string fullPrompt = string.IsNullOrEmpty(systemPrompt)
-            ? prompt
-            : $"System: {systemPrompt}\n\nUser: {prompt}";
-
         var processInfo = new ProcessStartInfo
         {
             FileName = fileName,
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -603,7 +629,6 @@ public class AiService
         if (provider == "codex")
         {
             processInfo.ArgumentList.Add("exec");
-            processInfo.ArgumentList.Add(fullPrompt);
             processInfo.ArgumentList.Add("--dangerously-bypass-approvals-and-sandbox");
             processInfo.ArgumentList.Add("--color");
             processInfo.ArgumentList.Add("never");
@@ -611,7 +636,7 @@ public class AiService
         else
         {
             processInfo.ArgumentList.Add("-p");
-            processInfo.ArgumentList.Add(fullPrompt);
+            processInfo.ArgumentList.Add(""); // Headless mode, read from stdin
             if (provider == "claude")
                 processInfo.ArgumentList.Add("--dangerously-skip-permissions");
             else if (provider == "gh-copilot")
@@ -626,14 +651,36 @@ public class AiService
         return processInfo;
     }
 
+    public async Task<string> GenerateTitleAsync(string userPrompt, string aiResponse, string provider = "gemini")
+    {
+        string prompt = $"""
+            以下のやり取りに基づいて、チャットセッションの短いタイトルを生成してください。
+            タイトルは5語以内、または15文字程度で、装飾なしのプレーンテキストのみを返してください。
+            
+            ユーザー: {userPrompt}
+            AI: {(aiResponse.Length > 200 ? aiResponse[..200] + "..." : aiResponse)}
+            """;
+
+        string result = await ExecuteCliAsync(prompt, provider, systemPrompt: "あなたはチャットタイトルの命名者です。簡潔で適切なタイトルのみを返します。");
+        return result.Trim().Trim('"', '\'').Replace("\n", " ");
+    }
+
     private async Task<string> ExecuteCliAsync(string prompt, string provider, string? systemPrompt = null, string? workingDirectory = null)
     {
-        var processInfo = SetupProcessInfo(prompt, provider, systemPrompt, workingDirectory);
+        var processInfo = SetupProcessInfo(provider, workingDirectory);
 
         try
         {
             using var process = Process.Start(processInfo);
             if (process == null) return $"Error: Could not start {provider} CLI.";
+
+            // Write prompt to stdin
+            string inputToStdin = string.IsNullOrEmpty(systemPrompt)
+                ? prompt
+                : $"System: {systemPrompt}\n\nUser: {prompt}";
+            
+            await process.StandardInput.WriteAsync(inputToStdin);
+            process.StandardInput.Close();
 
             string output = await process.StandardOutput.ReadToEndAsync();
             string error = await process.StandardError.ReadToEndAsync();

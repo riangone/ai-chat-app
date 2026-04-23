@@ -1,0 +1,43 @@
+{
+  "name": "default",
+  "description": "標準3段階パイプライン: Orchestrator → Executor → Reviewer",
+  "maxRetries": 2,
+  "stages": [
+    {
+      "name": "Orchestrator",
+      "role": "orchestrator",
+      "provider": null,
+      "systemPromptTemplate": "stage_orchestrator.md",
+      "outputSchema": "orchestrator_output",
+      "isOptional": false,
+      "isFinalStage": false,
+      "retryOnQualityFail": false,
+      "maxAttempts": 1,
+      "tools": []
+    },
+    {
+      "name": "Executor",
+      "role": "executor",
+      "provider": null,
+      "systemPromptTemplate": "stage_executor.md",
+      "outputSchema": null,
+      "isOptional": false,
+      "isFinalStage": false,
+      "retryOnQualityFail": true,
+      "maxAttempts": 2,
+      "tools": []
+    },
+    {
+      "name": "Reviewer",
+      "role": "reviewer",
+      "provider": null,
+      "systemPromptTemplate": "stage_reviewer.md",
+      "outputSchema": "reviewer_output",
+      "isOptional": false,
+      "isFinalStage": true,
+      "retryOnQualityFail": false,
+      "maxAttempts": 1,
+      "tools": []
+    }
+  ]
+}

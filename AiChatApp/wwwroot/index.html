@@ -33,8 +33,9 @@
         .main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; z-index: 10; }
         .content-swiper { width: 100%; height: 100%; --swiper-theme-color: hsl(var(--p)); }
         .swiper-wrapper { height: 100%; }
-        .swiper-slide { flex-shrink: 0; width: 100%; height: 100%; position: relative; display: flex; flex-direction: column; overflow: hidden; }
+        .swiper-slide { flex-shrink: 0; width: 100%; height: 100%; position: relative; display: flex; flex-direction: column; overflow: hidden; touch-action: pan-y; }
         .swiper-slide > div:not(.shell-header) { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+        .textarea, .input { touch-action: pan-y; }
         .typing-dot { width: 4px; height: 4px; background: currentColor; border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite ease-in-out both; }
         @keyframes bounce { 0%, 80%, 100% { transform: scale(0); opacity: 0.3; } 40% { transform: scale(1); opacity: 1; } }
         .shell-header { display: flex; align-items: center; justify-content: center; padding: 0.75rem 1rem; border-bottom: 1px solid hsl(var(--bc) / 0.08); position: relative; min-height: 3.5rem; }
@@ -59,7 +60,19 @@
         function initTheme() { const s = localStorage.getItem('theme') || 'light'; setTheme(s); document.querySelectorAll('.theme-controller').forEach(c => { if(c.value===s) c.checked=true; c.addEventListener('change', e=>setTheme(e.target.value)); }); }
         function setLanguage(l) { currentLang = l; localStorage.setItem('lang', l); updateUI(); }
         function i18n(k) { return (translations[currentLang] && translations[currentLang][k]) || k; }
-        function updateUI() { document.querySelectorAll('[data-i18n]').forEach(el => { const k = el.getAttribute('data-i18n'), t = i18n(k); if(el.tagName==='INPUT'||el.tagName==='TEXTAREA') el.placeholder=t; else el.innerHTML=t; }); document.title = i18n('app-title'); updateLanguageSwitcher(); updateThemeSwitcher(); updatePresetDropdown(); syncProviders(); renderUserProfile(); }
+        function updateUI() { 
+            document.querySelectorAll('[data-i18n]').forEach(el => { 
+                const k = el.getAttribute('data-i18n'), t = i18n(k); 
+                if(el.tagName==='INPUT'||el.tagName==='TEXTAREA') el.placeholder=t; 
+                else el.innerHTML=t; 
+            });
+            document.querySelectorAll('[data-i18n-title]').forEach(el => {
+                const k = el.getAttribute('data-i18n-title'), t = i18n(k);
+                el.setAttribute('title', t);
+            });
+            document.title = i18n('app-title'); 
+            updateLanguageSwitcher(); updateThemeSwitcher(); updatePresetDropdown(); syncProviders(); renderUserProfile(); 
+        }
         function renderLanguageButtons(compact = false) { return Object.keys(translations).map(l => `<button onclick="setLanguage('${l}')" class="${compact ? 'btn btn-xs rounded-full ' : 'btn btn-sm rounded-xl '}font-bold ${currentLang===l ? 'btn-primary' : 'btn-ghost'}">${l.toUpperCase()}</button>`).join(compact ? '<span>|</span>' : ''); }
         function updateLanguageSwitcher() { const c = document.getElementById('language-switcher'); if (c) c.innerHTML = renderLanguageButtons(true); const s = document.getElementById('settings-language-switcher'); if (s) s.innerHTML = renderLanguageButtons(false); }
         function updateThemeSwitcher() { const g = document.querySelector('.settings-theme-grid'); if (g) { g.innerHTML = themes.map(t => `<label class="label cursor-pointer settings-theme-item btn btn-ghost border border-base-content/10 rounded-2xl px-4"><input type="radio" name="theme-settings" class="theme-controller sr-only" value="${t}" aria-label="${t}" /><span class="label-text font-semibold">${t}</span></label>`).join(''); initTheme(); } }
@@ -67,9 +80,24 @@
         function syncProviders() { const m = document.querySelector('select[name="provider"]'), a = document.getElementById('new-agent-provider'); if(m&&a) a.innerHTML = Array.from(m.options).map(o => `<option value="${o.value}">${o.textContent}</option>`).join(''); }
         window.showAgentModal = () => { syncProviders(); document.getElementById('agent_modal').showModal(); };
         function setRequestState(requesting) { isSending = requesting; const form = document.getElementById('chat-form'); if (!form) return; form.classList.toggle('requesting', requesting); document.getElementById('loading-spinner')?.classList.toggle('hidden', !requesting); document.getElementById('send-btn')?.toggleAttribute('disabled', requesting); document.getElementById('chat-input')?.toggleAttribute('disabled', requesting); }
-        function syncActiveSessionFromDom() { const activeChatBox = document.querySelector('#chat-box'), sessionInput = document.getElementById('session-id-input'); if (sessionInput) sessionInput.value = activeChatBox?.dataset.sessionId || ''; }
+        function syncActiveSessionFromDom() { 
+            const activeChatBox = document.querySelector('#chat-box'), sessionInput = document.getElementById('session-id-input'); 
+            const sid = activeChatBox?.dataset.sessionId || '';
+            if (sessionInput) sessionInput.value = sid;
+            const delBtn = document.getElementById('delete-current-chat-btn');
+            if (delBtn) delBtn.classList.toggle('hidden', !sid);
+        }
         function syncProjectContext() { const projectInput = document.getElementById('project-id-input'); if (projectInput) projectInput.value = selectedProjectId || ''; }
-        function renderMarkdown() { document.querySelectorAll('.markdown .content-body').forEach(el => { if (el.dataset.rendered === 'true') return; if (el.children.length === 0) { el.innerHTML = marked.parse(el.textContent || ''); } el.dataset.rendered = 'true'; }); }
+        function renderMarkdown() { 
+            document.querySelectorAll('.markdown .content-body').forEach(el => { 
+                if (el.dataset.rendered === 'true') return; 
+                const raw = el.textContent || '';
+                if (raw.trim().length > 0) {
+                    el.innerHTML = marked.parse(raw);
+                }
+                el.dataset.rendered = 'true'; 
+            }); 
+        }
         function emptyPanelMarkup(message) { return `<div class="flex items-center justify-center min-h-[12rem] text-sm opacity-40 text-center">${message}</div>`; }
         async function loadPanelData(id) {
             const routeMap = { 'history-panel': { url: '/api/chat/list', target: '#chat-list', emptyText: i18n('empty-history') }, 'projects-panel': { url: '/api/projects/list-html', target: '#projects-list', emptyText: i18n('empty-projects') }, 'skills-panel': { url: '/api/skills', target: '#skills-list', emptyText: i18n('empty-skills') }, 'memory-panel': { url: '/api/memories', target: '#memory-list', emptyText: i18n('empty-memories') }, 'cli-panel': { url: '/api/cli/sessions', target: '#cli-list', emptyText: i18n('empty-cli') } };
@@ -120,7 +148,27 @@
         function toggleDrawer() { document.querySelector('.app-container').classList.toggle('drawer-open'); }
         function closeDrawer() { document.querySelector('.app-container').classList.remove('drawer-open'); }
         async function editTitle(id, old) { const n = prompt(i18n('rename-chat-prompt') || 'New title:', old); if (!n || n === old) return; const fd = new FormData(); fd.append('id', id); fd.append('title', n); try { const r = await fetch('/api/chat/rename', { method: 'POST', body: fd }); if (r.ok) loadPanelData('history-panel'); } catch (e) { console.error(e); } }
-        async function deleteChat(id) { if (!confirm(i18n('delete-chat-confirm') || 'Delete?')) return; try { const r = await fetch(`/api/chat/${id}`, { method: 'DELETE' }); if (r.ok) { loadPanelData('history-panel'); const a = document.querySelector('#chat-box'); if (a && a.dataset.sessionId == id) { document.getElementById('session-id-input').value = ''; a.innerHTML = ''; } } } catch (e) { console.error(e); } }
+        async function deleteChat(id) { 
+            if (id === undefined) {
+                const activeChatBox = document.querySelector('#chat-box');
+                id = activeChatBox?.dataset.sessionId;
+            }
+            if (!id) return;
+            if (!confirm(i18n('delete-chat-confirm') || 'Delete?')) return; 
+            try { 
+                const r = await fetch(`/api/chat/${id}`, { method: 'DELETE' }); 
+                if (r.ok) { 
+                    loadPanelData('history-panel'); 
+                    const a = document.querySelector('#chat-box'); 
+                    if (a && a.dataset.sessionId == id) { 
+                        document.getElementById('session-id-input').value = ''; 
+                        a.innerHTML = `<div id="welcome-message" class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4"><div class="w-16 h-16 border-4 border-dashed border-current rounded-full opacity-20"></div><p class="text-xl font-medium text-center" data-i18n="welcome-message">${i18n('welcome-message')}</p></div>`;
+                        a.dataset.sessionId = '';
+                        syncActiveSessionFromDom();
+                    } 
+                } 
+            } catch (e) { console.error(e); } 
+        }
         
         function editSkillPrompt(name) {
             const textarea = document.getElementById(`prompt-${name}`);
@@ -176,6 +224,15 @@
             if (sa) sa.textContent = init; if (sun) sun.textContent = u; if (sn) sn.textContent = u; if (si) si.textContent = i; if (ss) ss.textContent = currentUser ? i18n('authenticated') : i18n('loading'); if (hn) hn.textContent = u; if (ha) ha.textContent = init;
         }
         async function loadCurrentUser() { try { const r = await fetch('/api/auth/me'); if (!r.ok) return; currentUser = await r.json(); renderUserProfile(); } catch {} }
+        async function handlePasswordChange(form) {
+            const fd = new FormData(form);
+            try {
+                const r = await fetch('/api/auth/change-password', { method: 'POST', body: fd });
+                const text = await r.text();
+                alert(text);
+                if (r.ok) form.reset();
+            } catch (e) { alert("Failed to update password."); }
+        }
         function setMode(m) {
             const mi=document.getElementById('mode-input'),nb=document.getElementById('mode-normal-btn'),mb=document.getElementById('mode-multi-btn'),s=document.getElementById('agent-selector');
             if(m==='cooperative'){mi.value='cooperative';nb.classList.replace('btn-primary','btn-ghost');mb.classList.replace('btn-ghost','btn-secondary');s.classList.remove('hidden');loadAvailableAgents();}
@@ -192,7 +249,8 @@
             return false;
         }
         async function sendMessageStream(fd) {
-            const id='ai-'+Date.now(); document.getElementById('chat-box').insertAdjacentHTML('beforeend',renderAiBubbleId('',id)); scrollToBottom();
+            const list = document.getElementById('message-list') || document.getElementById('chat-box');
+            const id='ai-'+Date.now(); list.insertAdjacentHTML('beforeend',renderAiBubbleId('',id)); scrollToBottom();
             const b=document.getElementById(id).querySelector('.chat-bubble'); let acc='';
             try {
                 const r=await fetch('/api/chat/stream',{method:'POST',body:fd}); if(!r.ok||!r.body) throw new Error('stream failed');
@@ -205,7 +263,8 @@
             } catch(err) { b.innerHTML=`<span class="text-error">${i18n('request-error')}</span>`; }
         }
         async function sendCooperativeMessage(fd) {
-            const id='progress-'+Date.now(); document.getElementById('chat-box').insertAdjacentHTML('beforeend',`<div id="${id}" class="chat chat-start message-bubble-container"><div class="chat-bubble bg-base-200 p-4"><span class="loading loading-dots loading-xs"></span></div></div>`); scrollToBottom();
+            const list = document.getElementById('message-list') || document.getElementById('chat-box');
+            const id='progress-'+Date.now(); list.insertAdjacentHTML('beforeend',`<div id="${id}" class="chat chat-start message-bubble-container"><div class="chat-bubble bg-base-200 p-4"><span class="loading loading-dots loading-xs"></span></div></div>`); scrollToBottom();
             try {
                 const r=await fetch('/api/chat/cooperate/stream',{method:'POST',body:fd}); if(!r.ok||!r.body) throw new Error('failed');
                 const headerSessionId=r.headers.get('X-Session-Id'); if(headerSessionId) document.getElementById('session-id-input').value=headerSessionId;
@@ -221,7 +280,12 @@
                 }
             } catch(err) { document.getElementById(id).outerHTML=renderAiBubble(`<span class="text-error">${i18n('request-error')}</span>`); }
         }
-        function addUserMessage(c) { const wb=document.getElementById('welcome-message'); if(wb)wb.remove(); document.getElementById('chat-box').insertAdjacentHTML('beforeend',`<div class="chat chat-end message-bubble-container"><div class="chat-bubble bg-primary text-primary-content markdown p-4 rounded-[18px]">${marked.parse(c)}</div></div>`); scrollToBottom(); }
+        function addUserMessage(c) { 
+            const wb=document.getElementById('welcome-message'); if(wb)wb.remove(); 
+            const list = document.getElementById('message-list') || document.getElementById('chat-box');
+            list.insertAdjacentHTML('beforeend',`<div class="chat chat-end message-bubble-container"><div class="chat-bubble bg-primary text-primary-content markdown p-4 rounded-[18px]">${marked.parse(c)}</div></div>`); 
+            scrollToBottom(); 
+        }
         function renderAiBubbleId(c,id) { return `<div id="${id}" class="chat chat-start group message-bubble-container"><div class="chat-bubble bg-base-200 text-base-content border border-base-300 markdown p-4 rounded-[18px]">${c||'<span class="typing-dot"></span>'}</div>${renderChatFooter()}</div>`; }
         function renderAiBubble(c) { return `<div class="chat chat-start group message-bubble-container"><div class="chat-bubble bg-base-200 text-base-content border border-base-300 markdown p-4 rounded-[18px]">${c}</div>${renderChatFooter()}</div>`; }
         function renderChatFooter() { return `<div class="chat-footer opacity-0 group-hover:opacity-50 transition-opacity flex gap-3 pt-2 px-1"><button onclick="copyText(this)" class="hover:text-primary"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5 1.5h6.375a1.125 1.125 0 0 1 1.125 1.125v9.375Zm3 3V6.75a1.125 1.125 0 0 0-1.125-1.125h-1.5a3.375 3.375 0 0 1-3.375-3.375V2.125c0-.621-.504-1.125-1.125-1.125H9.75a1.125 1.125 0 0 0-1.125 1.125V4.5a9.06 9.06 0 0 1 1.5 1.5h6.75a1.125 1.125 0 0 1 1.125 1.125v13.125a1.125 1.125 0 0 1-1.125 1.125H15" /></svg></button><button onclick="forwardText(this)" class="hover:text-primary"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg></button><button onclick="saveToMemory(this)" class="hover:text-primary"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" /></svg></button></div>`; }
@@ -230,17 +294,88 @@
         function saveToMemory(b) { document.getElementById('memory-content').value=b.closest('.chat').querySelector('.markdown')?.innerText || b.closest('.chat').querySelector('.chat-bubble').innerText; memory_modal.showModal(); }
         function selectProject(id,n,p) { selectedProjectId=id; syncProjectContext(); document.getElementById('current-project-name').textContent=n; document.getElementById('current-project-path').textContent=p; document.getElementById('selected-project-info').classList.remove('hidden'); document.getElementById('project-context-banner').classList.remove('hidden'); document.getElementById('project-banner-name').textContent=n; document.getElementById('session-id-input').value=''; loadAgents(id); htmx.ajax('GET',`/api/chat/list?projectId=${id}`,'#project-chat-list'); }
         function deselectProject() { selectedProjectId=null; syncProjectContext(); document.getElementById('selected-project-info').classList.add('hidden'); document.getElementById('project-context-banner').classList.add('hidden'); document.getElementById('session-id-input').value=''; }
-        async function loadAgents(pid) { const r=await fetch('/api/projects'),p=await r.json(),x=p.find(v=>v.id===pid); if(!x)return; document.getElementById('agent-list').innerHTML=x.agents.map(a=>`<div class="flex items-center justify-between p-2 bg-base-300 rounded text-xs"><span>${a.roleName} (${a.aiProvider})</span><button onclick="deleteAgent(${pid},${a.id})" class="text-error">✕</button></div>`).join('')||'<p class="text-center opacity-40 py-4">No agents</p>'; }
+        async function loadAgents(pid) { 
+            const r=await fetch('/api/projects'), p=await r.json(), x=p.find(v=>v.id===pid); 
+            if(!x) return; 
+            window.currentProjectAgents = x.agents;
+            document.getElementById('agent-list').innerHTML = x.agents.map(a => `
+                <div class="flex items-center justify-between p-2 bg-base-300 rounded text-xs group">
+                    <button onclick="viewAgentPrompt(${a.id})" class="flex-1 text-left hover:text-primary transition-colors truncate mr-2">
+                        <span class="font-bold">${a.roleName}</span>
+                        ${a.aiProvider ? `<span class="opacity-50 ml-1">(${a.aiProvider})</span>` : ''}
+                    </button>
+                    <button onclick="deleteAgent(${pid},${a.id})" class="text-error opacity-40 group-hover:opacity-100 transition-opacity flex-none px-1">✕</button>
+                </div>`).join('') || '<p class="text-center opacity-40 py-4">No agents</p>'; 
+        }
+        function viewAgentPrompt(aid) {
+            const a = (window.currentProjectAgents || []).find(a => a.id === aid);
+            if (a) {
+                document.getElementById('prompt-viewer-title').textContent = `${a.roleName} - System Prompt`;
+                document.getElementById('prompt-viewer-content').textContent = a.systemPrompt;
+                prompt_viewer_modal.showModal();
+            }
+        }
         async function deleteAgent(pid,aid) { if(await fetch(`/api/projects/${pid}/agents/${aid}`,{method:'DELETE'})) loadAgents(pid); }
         async function addNewAgent() { const f=new FormData(); f.append('roleName',document.getElementById('new-agent-role').value); f.append('systemPrompt',document.getElementById('new-agent-prompt').value); f.append('aiProvider',document.getElementById('new-agent-provider').value); f.append('color',document.getElementById('new-agent-color').value); if(await fetch(`/api/projects/${selectedProjectId}/agents`,{method:'POST',body:f})){loadAgents(selectedProjectId);document.getElementById('new-agent-role').value='';document.getElementById('new-agent-prompt').value='';} }
         function applyRolePreset(n) { const p=(translations[currentLang].presets||{})[n]; if(p){document.getElementById('new-agent-role').value=n;document.getElementById('new-agent-prompt').value=p.prompt;} }
         function scrollToBottom() { const b=document.getElementById('chat-box'); if(b) b.scrollTop = b.scrollHeight; }
         function autoExpand(el) { el.style.height='auto'; el.style.height=(el.scrollHeight)+'px'; }
         function resetInputHeight() { const i=document.getElementById('chat-input'); if(i) i.style.height='44px'; }
+
+        async function switchHarnessTab(tab) {
+            document.querySelectorAll('.tab-harness').forEach(t => t.classList.toggle('tab-active', t.dataset.harnessTab === tab));
+            const area = document.getElementById('harness-content-area');
+            area.innerHTML = '<div class="flex items-center justify-center h-64 opacity-30"><span class="loading loading-spinner loading-lg"></span></div>';
+            
+            try {
+                const response = await fetch(`/api/harness/${tab}/html`);
+                if (response.ok) {
+                    area.innerHTML = await response.text();
+                    if (window.htmx) htmx.process(area);
+                } else {
+                    area.innerHTML = `<div class="alert alert-error">Failed to load ${tab}</div>`;
+                }
+            } catch (e) {
+                area.innerHTML = '<div class="alert alert-error">Network error</div>';
+            }
+        }
+
+        async function editHarnessFile(type, name) {
+            const area = document.getElementById('harness-content-area');
+            area.innerHTML = '<div class="flex items-center justify-center h-64 opacity-30"><span class="loading loading-spinner loading-lg"></span></div>';
+            try {
+                const response = await fetch(`/api/harness/${type}/${name}`);
+                const content = await response.text();
+                area.innerHTML = `
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <h3 class="font-bold text-lg">Editing ${type}: ${name}</h3>
+                            <button onclick="switchHarnessTab('${type}')" class="btn btn-ghost btn-sm">Cancel</button>
+                        </div>
+                        <textarea id="harness-editor" class="textarea textarea-bordered w-full h-[500px] font-mono text-sm">${content}</textarea>
+                        <div class="flex justify-end">
+                            <button onclick="saveHarnessFile('${type}', '${name}')" class="btn btn-primary">Save Changes</button>
+                        </div>
+                    </div>`;
+            } catch (e) { area.innerHTML = '<div class="alert alert-error">Failed to load file</div>'; }
+        }
+
+        async function saveHarnessFile(type, name) {
+            const content = document.getElementById('harness-editor').value;
+            const fd = new FormData();
+            fd.append('name', name);
+            fd.append('content', content);
+            try {
+                const r = await fetch(`/api/harness/${type}`, { method: 'POST', body: fd });
+                if (r.ok) switchHarnessTab(type);
+                else alert('Save failed');
+            } catch (e) { alert('Error saving'); }
+        }
+
         window.addEventListener('DOMContentLoaded', () => {
             initTheme(); updateUI(); renderUserProfile(); renderMarkdown(); syncActiveSessionFromDom(); syncProjectContext(); wirePanelNavigation(); loadCurrentUser(); loadPanelData('history-panel');
             if (document.getElementById('global-footer')) document.getElementById('global-footer').style.display = 'block';
-            swiper = new Swiper('.content-swiper', { direction: 'horizontal', loop: false, slidesPerView: 1, allowTouchMove: true, speed: 300, on: { slideChange: function() { const index = this.activeIndex; updateTabBar(index); const footer = document.getElementById('global-footer'); if (footer) footer.style.display = (index === 0) ? 'block' : 'none'; } } });
+            swiper = new Swiper('.content-swiper', { direction: 'horizontal', loop: false, slidesPerView: 1, allowTouchMove: true, speed: 300, touchStartPreventDefault: false, on: { slideChange: function() { const index = this.activeIndex; updateTabBar(index); const footer = document.getElementById('global-footer'); if (footer) footer.style.display = (index === 0) ? 'block' : 'none'; } } });
             document.body.addEventListener('htmx:afterOnLoad', function(evt) { if (evt.detail.target.id === 'chat-panel' || evt.detail.target.id === 'chat-box') { renderMarkdown(); syncActiveSessionFromDom(); switchMainTab(0); } });
         });
         marked.setOptions({ gfm: true, breaks: true });
@@ -260,7 +395,8 @@
                 <div class="sidebar-item" onclick="switchMainTab(3)"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" /></svg><span data-i18n="skills">Skills</span></div>
                 <div class="sidebar-item" onclick="switchMainTab(4)"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" /></svg><span data-i18n="memory">Memory</span></div>
                 <div class="sidebar-item" onclick="switchMainTab(5)"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" /></svg><span data-i18n="cli">CLI</span></div>
-                <div class="sidebar-item" onclick="switchMainTab(6)"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 15 0m-15 0a7.5 7.5 0 0 0 15 0m-15 0H3m18 0h-1.5m-12.364 5.864-1.06 1.06m11.788-11.788-1.06 1.06m-11.788 0 1.06 1.06m11.788 11.788-1.06-1.06M12 6.75v-1.5m0 15v-1.5" /></svg><span data-i18n="settings">Settings</span></div>
+                <div class="sidebar-item" onclick="switchMainTab(6); switchHarnessTab('pipelines');"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 15 0m-15 0a7.5 7.5 0 0 0 15 0m-15 0H3m18 0h-1.5m-12.364 5.864-1.06 1.06m11.788-11.788-1.06 1.06m-11.788 0 1.06 1.06m11.788 11.788-1.06-1.06M12 6.75v-1.5m0 15v-1.5" /></svg><span data-i18n="harness">Harness</span></div>
+                <div class="sidebar-item" onclick="switchMainTab(7)"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0 1 15 0m-15 0a7.5 7.5 0 0 0 15 0m-15 0H3m18 0h-1.5m-12.364 5.864-1.06 1.06m11.788-11.788-1.06 1.06m-11.788 0 1.06 1.06m11.788 11.788-1.06-1.06M12 6.75v-1.5m0 15v-1.5" /></svg><span data-i18n="settings">Settings</span></div>
             </nav>
             <div class="p-4 mt-auto border-t border-base-content/5"><div class="flex items-center gap-3 px-3 py-2"><div id="sidebar-avatar" class="w-10 h-10 rounded-xl bg-primary text-primary-content flex items-center justify-center font-black shadow-md">?</div><div class="flex-1 overflow-hidden"><p id="sidebar-username" class="text-sm font-bold truncate">...</p><p class="text-[10px] opacity-40 uppercase font-bold tracking-wider" data-i18n="authenticated">Authenticated</p></div></div></div>
         </aside>
@@ -268,7 +404,27 @@
             <div class="swiper-container content-swiper">
                 <div class="swiper-wrapper">
                     <div class="swiper-slide">
-                        <div class="shell-header"><div class="shell-badge"><span data-i18n="chat-title">AI Chat Pro</span></div><div class="right-actions"><button onclick="document.getElementById('session-id-input').value=''; htmx.ajax('POST', '/api/chat/new', {target:'#chat-box', swap:'innerHTML', values:{projectId: selectedProjectId || ''}}); switchMainTab(0);" class="btn btn-ghost btn-xs text-primary font-bold">+ New Chat</button></div></div>
+                        <div class="shell-header">
+                            <div class="shell-badge"><span data-i18n="chat-title">AI Chat Pro</span></div>
+                            <div class="right-actions flex items-center gap-1">
+                                <button onclick="document.getElementById('session-id-input').value=''; htmx.ajax('POST', '/api/chat/new', {target:'#chat-box', swap:'innerHTML', values:{projectId: selectedProjectId || ''}}); switchMainTab(0);" 
+                                        class="btn btn-ghost btn-sm btn-circle text-primary" 
+                                        data-i18n-title="new-chat">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                </button>
+                                <div class="dropdown dropdown-end">
+                                    <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-circle">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" /></svg>
+                                    </div>
+                                    <ul tabindex="0" class="dropdown-content z-[110] menu p-2 shadow bg-base-300 rounded-box w-44 mt-1">
+                                        <li id="delete-current-chat-btn" class="hidden">
+                                            <a onclick="deleteChat()" class="text-error flex justify-center py-3" title="Delete Chat" data-i18n-title="delete-current-chat">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                                            </a>
+                                        </li>                                    </ul>
+                                </div>
+                            </div>
+                        </div>
                         <div id="chat-panel" class="flex flex-col flex-1"><div id="chat-box" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-8 custom-scrollbar"><div id="welcome-message" class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4"><div class="w-16 h-16 border-4 border-dashed border-current rounded-full opacity-20"></div><p class="text-xl font-medium text-center" data-i18n="welcome-message">How can I help you today?</p></div></div></div>
                     </div>
                     <div class="swiper-slide">
@@ -276,19 +432,11 @@
                         <div id="history-panel" class="flex flex-col flex-1"><div id="history-list-container" hx-get="/api/chat/list" hx-trigger="load, loadHistory" hx-target="#chat-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="chat-list"></div></div></div>
                     </div>
                     <div class="swiper-slide">
-                        <div class="shell-header"><div class="shell-badge"><span data-i18n="projects-title">Workspaces</span></div><div class="right-actions"><button onclick="project_modal.showModal()" class="btn btn-ghost btn-xs text-primary font-bold">+ New Project</button></div></div>
+                        <div class="shell-header"><div class="shell-badge"><span data-i18n="projects-title">Workspaces</span></div><div class="right-actions"><button onclick="project_modal.showModal()" class="btn btn-ghost btn-sm btn-circle text-primary" data-i18n-title="new-project"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button></div></div>
                         <div id="projects-panel" class="flex flex-col flex-1"><div id="projects-list-container" hx-get="/api/projects/list-html" hx-trigger="load, loadProjects" hx-target="#projects-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto w-full"><div id="selected-project-info" class="hidden mb-8 p-6 bg-primary/10 border border-primary/20 rounded-2xl"><div class="flex justify-between items-start"><div><span class="text-xl font-bold text-primary" id="current-project-name">No Project</span><p class="text-sm opacity-60 mt-1" id="current-project-path"></p></div><button onclick="deselectProject()" class="btn btn-ghost btn-sm text-error">✕ Deselect</button></div><div class="mt-4 flex gap-2"><button onclick="showAgentModal()" class="btn btn-primary">Manage Roles</button></div><div class="divider text-xs opacity-30 mt-8">Project History</div><div id="project-chat-list" class="flex flex-col gap-2"></div></div><div id="projects-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div></div></div></div>
                     </div>
                     <div class="swiper-slide">
-                        <div class="shell-header">
-                            <div class="flex items-center justify-between w-full px-4">
-                                <div class="shell-badge"><span data-i18n="skills-title">Skills</span></div>
-                                <button onclick="createSkill()" class="btn btn-ghost btn-xs text-primary flex items-center gap-1">
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-                                    Add Skill
-                                </button>
-                            </div>
-                        </div>
+                        <div class="shell-header"><div class="shell-badge"><span data-i18n="skills-title">Skills</span></div><div class="right-actions"><button onclick="createSkill()" class="btn btn-ghost btn-sm btn-circle text-primary" data-i18n-title="skills"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button></div></div>
                         <div id="skills-panel" class="flex flex-col flex-1"><div id="skills-list-container" hx-get="/api/skills" hx-trigger="load, loadSkills" hx-target="#skills-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6" id="skills-list"></div></div></div>
                     </div>
                     <div class="swiper-slide">
@@ -300,8 +448,28 @@
                         <div id="cli-panel" class="flex flex-col flex-1"><div id="cli-list-container" hx-get="/api/cli/sessions" hx-trigger="load, loadCli" hx-target="#cli-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="cli-list"></div></div></div>
                     </div>
                     <div class="swiper-slide">
+                        <div class="shell-header"><div class="shell-badge"><span data-i18n="harness-title">Harness Engineering</span></div></div>
+                        <div id="harness-panel" class="flex flex-col flex-1">
+                            <div class="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1">
+                                <div class="max-w-6xl mx-auto space-y-8">
+                                    <div class="tabs tabs-boxed bg-base-300 p-1 rounded-2xl w-fit mx-auto">
+                                        <a onclick="switchHarnessTab('pipelines')" class="tab tab-harness active font-bold px-6 h-10 rounded-xl transition-all" data-harness-tab="pipelines">Pipelines</a>
+                                        <a onclick="switchHarnessTab('prompts')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all" data-harness-tab="prompts">Prompts</a>
+                                        <a onclick="switchHarnessTab('schemas')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all" data-harness-tab="schemas">Schemas</a>
+                                        <a onclick="switchHarnessTab('evals')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all" data-harness-tab="evals">Evaluations</a>
+                                    </div>
+                                    <div id="harness-content-area" class="min-h-[400px]">
+                                        <div class="flex items-center justify-center h-64 opacity-30">
+                                            <span class="loading loading-spinner loading-lg"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="swiper-slide">
                         <div class="shell-header"><div class="shell-badge"><span data-i18n="settings-title">Settings</span></div></div>
-                        <div id="settings-panel" class="flex flex-col flex-1"><div class="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar"><div class="max-w-5xl mx-auto space-y-6"><div class="settings-card flex flex-col md:flex-row md:items-center md:justify-between gap-6"><div class="flex items-center gap-4"><div id="settings-hero-avatar" class="w-16 h-16 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-2xl font-black shadow-lg">?</div><div><div class="text-xs font-black uppercase tracking-[0.24em] opacity-40" data-i18n="settings">Settings</div><h2 id="settings-hero-name" class="text-3xl font-black">...</h2><p class="text-sm opacity-60" data-i18n="settings-subtitle">Manage your account, language, theme, and session preferences.</p></div></div><form action="/api/auth/logout" method="POST"><button class="btn btn-error rounded-2xl px-6" data-i18n="logout">Logout</button></form></div><div class="grid grid-cols-1 xl:grid-cols-2 gap-6"><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="account">Account</div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="username">Username</span><strong id="settings-user-display-name" class="text-base">...</strong></div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="user-id">User ID</span><strong id="settings-user-id" class="text-base">--</strong></div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="auth-status">Status</span><strong id="settings-auth-status" class="text-base text-success">...</strong></div></section><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="language">Language</div><p class="text-sm opacity-60" data-i18n="language-desc">Switch UI language instantly. Your choice is stored locally.</p><div id="settings-language-switcher" class="flex flex-wrap gap-2"></div></section></div><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="theme">Theme</div><p class="text-sm opacity-60" data-i18n="theme-desc">Select a theme from our diverse collection of colors and styles.</p><div class="settings-theme-grid max-h-[32rem] overflow-y-auto pr-2 no-scrollbar"></div></section></div></div></div>
+                        <div id="settings-panel" class="flex flex-col flex-1"><div class="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar"><div class="max-w-5xl mx-auto space-y-6"><div class="settings-card flex flex-col md:flex-row md:items-center md:justify-between gap-6"><div class="flex items-center gap-4"><div id="settings-hero-avatar" class="w-16 h-16 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-2xl font-black shadow-lg">?</div><div><div class="text-xs font-black uppercase tracking-[0.24em] opacity-40" data-i18n="settings">Settings</div><h2 id="settings-hero-name" class="text-3xl font-black">...</h2><p class="text-sm opacity-60" data-i18n="settings-subtitle">Manage your account, language, theme, and session preferences.</p></div></div><form action="/api/auth/logout" method="POST"><button class="btn btn-error rounded-2xl px-6" data-i18n="logout">Logout</button></form></div><div class="grid grid-cols-1 xl:grid-cols-2 gap-6"><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="account">Account</div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="username">Username</span><strong id="settings-user-display-name" class="text-base">...</strong></div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="user-id">User ID</span><strong id="settings-user-id" class="text-base">--</strong></div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="auth-status">Status</span><strong id="settings-auth-status" class="text-base text-success">...</strong></div></section><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="security">Security</div><form id="change-password-form" onsubmit="event.preventDefault(); handlePasswordChange(this);" class="space-y-3"><div class="form-control w-full"><label class="label"><span class="label-text text-xs opacity-60" data-i18n="current-password">Current Password</span></label><input type="password" name="oldPassword" class="input input-bordered input-sm w-full" required /></div><div class="form-control w-full"><label class="label"><span class="label-text text-xs opacity-60" data-i18n="new-password">New Password</span></label><input type="password" name="newPassword" class="input input-bordered input-sm w-full" required /></div><button type="submit" class="btn btn-primary btn-sm w-full mt-2" data-i18n="update-password-btn">Update Password</button></form></section><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="language">Language</div><p class="text-sm opacity-60" data-i18n="language-desc">Switch UI language instantly. Your choice is stored locally.</p><div id="settings-language-switcher" class="flex flex-wrap gap-2"></div></section></div><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="theme">Theme</div><p class="text-sm opacity-60" data-i18n="theme-desc">Select a theme from our diverse collection of colors and styles.</p><div class="settings-theme-grid max-h-[32rem] overflow-y-auto pr-2 no-scrollbar"></div></section></div></div></div>
                 </div>
             </div>
             <div onclick="closeDrawer()" class="fixed inset-0 bg-black/50 z-40 md:hidden opacity-0 pointer-events-none transition-opacity duration-300 drawer-overlay"></div>
@@ -313,7 +481,7 @@
                 <div id="project-context-banner" class="hidden flex items-center justify-between px-3 py-1.5 bg-secondary/10 border-b border-secondary/20 rounded-t-[20px] -mb-1 mx-0.5"><div class="flex items-center gap-1.5"><span class="text-[11px] font-semibold text-secondary opacity-80" id="project-banner-name"></span></div><button type="button" onclick="deselectProject()" class="text-[10px] opacity-40 hover:opacity-70 transition-opacity">✕ clear</button></div>
                 <input type="hidden" name="sessionId" id="session-id-input" /><input type="hidden" name="projectId" id="project-id-input" />
                 <div class="flex items-center justify-between px-3 pt-1 pb-1 border-b border-base-content/5 mb-1">
-                    <select name="provider" class="select select-ghost select-xs opacity-60 font-semibold"><option value="gemini" selected>Gemini</option><option value="gh-copilot">GitHub Copilot</option><option value="claude">Claude Code</option></select>
+                    <select name="provider" class="select select-ghost select-xs opacity-60 font-semibold"><option value="gemini" selected>Gemini</option><option value="gh-copilot">GitHub Copilot</option><option value="claude">Claude Code</option><option value="codex">Codex</option></select>
                     <div class="flex items-center gap-1 bg-base-300/50 rounded-full p-0.5"><button type="button" id="mode-normal-btn" onclick="setMode('normal')" class="btn btn-xs rounded-full px-3 btn-primary">Normal</button><button type="button" id="mode-multi-btn" onclick="setMode('cooperative')" class="btn btn-xs rounded-full px-3 btn-ghost">Multi-Agent</button><input type="hidden" name="mode" id="mode-input" value="" /></div>
                 </div>
                 <div id="agent-selector" class="flex items-center gap-2 px-3 py-1.5 overflow-x-auto no-scrollbar border-b border-base-content/5 hidden"><span class="text-[9px] font-bold opacity-30 uppercase">Agents:</span><div id="agent-chips" class="flex items-center gap-1.5"></div></div>
@@ -324,5 +492,6 @@
     <dialog id="agent_modal" class="modal"><div class="modal-box w-11/12 max-w-2xl"><h3 class="font-bold text-lg" data-i18n="agent-roles-title">Project Agents</h3><div id="agent-list" class="mt-4 space-y-2 max-h-52 overflow-y-auto"></div><div class="mt-4 p-4 bg-base-200 rounded-lg space-y-3"><div class="flex items-center justify-between"><span class="text-xs font-bold uppercase opacity-40">Add Role</span><div class="dropdown dropdown-end"><div tabindex="0" role="button" class="btn btn-xs btn-outline">Presets</div><ul tabindex="0" id="preset-dropdown" class="dropdown-content z-[100] menu p-2 shadow bg-base-300 rounded-box w-64 text-xs"></ul></div></div><input type="text" id="new-agent-role" placeholder="Role Name" class="input input-sm input-bordered w-full" /><textarea id="new-agent-prompt" placeholder="System Prompt" class="textarea textarea-sm textarea-bordered w-full h-28"></textarea><div class="flex gap-2"><select id="new-agent-provider" class="select select-sm select-bordered flex-1"></select><select id="new-agent-color" class="select select-sm select-bordered flex-1"><option value="primary">Blue</option><option value="secondary">Pink</option><option value="accent">Teal</option><option value="success">Green</option></select><button type="button" onclick="addNewAgent()" class="btn btn-sm btn-primary">Add</button></div></div><div class="modal-action"><button type="button" class="btn" onclick="agent_modal.close()">Done</button></div></div></dialog>
     <dialog id="project_modal" class="modal"><div class="modal-box"><h3 class="font-bold text-lg" data-i18n="create-project-title">Create New Project</h3><form id="project-form" hx-post="/api/projects" hx-target="#projects-list" hx-swap="beforeend" class="mt-4 space-y-4" onsubmit="project_modal.close()"><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="project-name-label">Name</span></label><input type="text" name="name" class="input input-bordered w-full" required /></div><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="root-path-label">Root Path</span></label><input type="text" name="rootPath" class="input input-bordered w-full" required /></div><div class="modal-action"><button type="button" class="btn" onclick="project_modal.close()">Cancel</button><button type="submit" class="btn btn-primary" data-i18n="create-project-btn">Create</button></div></form></div></dialog>
     <dialog id="memory_modal" class="modal"><div class="modal-box"><h3 class="font-bold text-lg" data-i18n="save-to-memory-title">Save Memory</h3><form id="memory-form" hx-post="/api/memories" hx-swap="none" class="mt-4 space-y-4" onsubmit="memory_modal.close()"><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="memory-tags-label">Tags</span></label><input type="text" name="tags" id="memory-tags" class="input input-bordered w-full" required /></div><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="content-label">Content</span></label><textarea name="content" id="memory-content" class="textarea textarea-bordered w-full h-24" required></textarea></div><div class="modal-action"><button type="button" class="btn" onclick="memory_modal.close()">Cancel</button><button type="submit" class="btn btn-primary" data-i18n="save-memory-btn">Save</button></div></form></div></dialog>
+    <dialog id="prompt_viewer_modal" class="modal"><div class="modal-box w-11/12 max-w-3xl"><h3 class="font-bold text-lg" id="prompt-viewer-title">Agent Prompt</h3><div class="mt-4"><pre id="prompt-viewer-content" class="p-4 bg-base-300 rounded-lg whitespace-pre-wrap break-words text-sm font-mono max-h-96 overflow-y-auto"></pre></div><div class="modal-action"><button type="button" class="btn" onclick="prompt_viewer_modal.close()">Close</button></div></div></dialog>
 </body>
 </html>

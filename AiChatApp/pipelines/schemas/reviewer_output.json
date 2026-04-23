@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft/2020-12/schema#",
+  "type": "object",
+  "properties": {
+    "feedback": {
+      "type": "string",
+      "description": "Detailed feedback on task execution"
+    },
+    "finalScore": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Final quality score (0-1)"
+    },
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Suggestions for improvement"
+    }
+  },
+  "required": ["feedback", "finalScore"]
+}

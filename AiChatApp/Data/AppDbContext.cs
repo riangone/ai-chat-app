@@ -1,4 +1,5 @@
 using AiChatApp.Models;
+using AiChatApp.Models.Harness;
 using Microsoft.EntityFrameworkCore;
 
 namespace AiChatApp.Data;
@@ -16,6 +17,7 @@ public class AppDbContext : DbContext
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<AgentProfile> AgentProfiles => Set<AgentProfile>();
     public DbSet<SessionMemory> SessionMemories => Set<SessionMemory>();
+    public DbSet<Evaluation> Evaluations => Set<Evaluation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

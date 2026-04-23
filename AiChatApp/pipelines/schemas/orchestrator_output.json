@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft/2020-12/schema#",
+  "type": "object",
+  "properties": {
+    "analysis": {
+      "type": "string",
+      "description": "Overall analysis of the task"
+    },
+    "subtasks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of subtasks to be executed"
+    },
+    "executionPlan": {
+      "type": "string",
+      "description": "Detailed execution plan for the task"
+    }
+  },
+  "required": ["analysis", "subtasks", "executionPlan"]
+}

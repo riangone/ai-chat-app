@@ -1,6 +1,7 @@
 using AiChatApp.Data;
 using AiChatApp.Models;
 using AiChatApp.Services;
+using AiChatApp.Services.Harness;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -8,6 +9,7 @@ using Microsoft.AspNetCore.Authentication;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using System.Net;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite("Data Source=chat.db"));
@@ -17,6 +19,10 @@ builder.Services.AddScoped<ProjectService>();
 builder.Services.AddScoped<SessionMemoryService>();
 builder.Services.AddScoped<SkillLearningService>();
 builder.Services.AddSingleton<SkillManagerService>();
+builder.Services.AddSingleton<PipelineLoaderService>();
+builder.Services.AddScoped<SchemaValidationService>();
+builder.Services.AddScoped<ToolExecutorService>();
+builder.Services.AddScoped<EvalService>();
 builder.Services.AddScoped<AiService>();
 builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options => {
     options.SerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
@@ -39,6 +45,14 @@ app.MapProjectEndpoints();
 using (var scope = app.Services.CreateScope())
 {
     scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.EnsureCreated();
+    
+    // Initialize PipelineLoaderService
+    var pipelineLoader = scope.ServiceProvider.GetRequiredService<PipelineLoaderService>();
+    pipelineLoader.LoadAllAsync().Wait();
+    pipelineLoader.WatchForChanges(async fileName =>
+    {
+        await pipelineLoader.ReloadPipelineAsync(fileName);
+    });
 }
 app.UseStaticFiles();
 
@@ -47,54 +61,40 @@ app.MapGet("/login", () => Results.File(Path.Combine(Directory.GetCurrentDirecto
 app.MapGet("/register", () => Results.File(Path.Combine(Directory.GetCurrentDirectory(), "wwwroot/register.html"), "text/html"));
 
 app.MapPost("/api/auth/register", async ([FromForm] string username, [FromForm] string password, AppDbContext db) => {
-    if (await db.Users.AnyAsync(u => u.Username == username)) return Results.BadRequest("User already exists");
+    // Registration disabled but code remains
+    if (true) return Results.Redirect("/register?error=disabled");
+
+    if (await db.Users.AnyAsync(u => u.Username == username)) return Results.Redirect("/register?error=exists");
     var user = new User { Username = username, PasswordHash = BCrypt.Net.BCrypt.HashPassword(password) };
     db.Users.Add(user);
     await db.SaveChangesAsync();
+    // ...
+});
 
-    // ユーザー固有のデフォルトスキルを作成
-    db.Skills.AddRange(
-        new Skill
-        {
-            UserId = user.Id,
-            Name = "CodeOptimizer",
-            Description = "あなたはコード最適化の専門家です。パフォーマンス・可読性・安全性を分析して改善提案を行ってください。",
-            ExampleInput = "このコードを最適化して",
-            TriggerKeywords = "code,コード,最適化,optimize,refactor",
-            BoundAgentRole = "Executor"
-        },
-        new Skill
-        {
-            UserId = user.Id,
-            Name = "CreativeWriter",
-            Description = "あなたは創造的なライターです。生き生きとした表現と文学的な言語を使って文章を作成してください。",
-            ExampleInput = "夕焼けについて書いて",
-            TriggerKeywords = "write,書いて,creative,文章,story"
-        },
-        new Skill
-        {
-            UserId = user.Id,
-            Name = "Translator",
-            Description = "あなたは多言語の翻訳専門家です。正確で自然な翻訳を提供してください。",
-            ExampleInput = "翻訳して",
-            TriggerKeywords = "翻訳,translate,translation"
-        }
-    );
+app.MapPost("/api/auth/change-password", async ([FromForm] string oldPassword, [FromForm] string newPassword, AppDbContext db, ClaimsPrincipal user) => {
+    var userIdStr = user.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (userIdStr == null) return Results.Unauthorized();
+    
+    var userId = int.Parse(userIdStr);
+    var dbUser = await db.Users.FindAsync(userId);
+    if (dbUser == null || !BCrypt.Net.BCrypt.Verify(oldPassword, dbUser.PasswordHash)) {
+        return Results.BadRequest("Incorrect current password.");
+    }
+
+    dbUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
     await db.SaveChangesAsync();
-
-    return Results.Redirect("/login");
-}).DisableAntiforgery();
+    return Results.Ok("Password updated successfully.");
+}).RequireAuthorization().DisableAntiforgery();
 
 app.MapPost("/api/auth/login", async ([FromForm] string username, [FromForm] string password, AppDbContext db, HttpContext context) => {
     var user = await db.Users.FirstOrDefaultAsync(u => u.Username == username);
-    if (user == null || !BCrypt.Net.BCrypt.Verify(password, user.PasswordHash)) return Results.Unauthorized();
-    
+    if (user == null || !BCrypt.Net.BCrypt.Verify(password, user.PasswordHash)) return Results.Redirect("/login?error=invalid");
+
     var claims = new List<Claim> { new Claim(ClaimTypes.Name, user.Username), new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()) };
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
     await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
     return Results.Redirect("/");
 }).DisableAntiforgery();
-
 app.MapPost("/api/auth/logout", async (HttpContext context) => {
     await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
     return Results.Redirect("/login");
@@ -121,14 +121,8 @@ app.MapGet("/api/agents/list", async (AiService ai, ClaimsPrincipal user) => {
 }).RequireAuthorization();
 
 // Chat Management
-app.MapPost("/api/chat/new", async (HttpContext context, AppDbContext db, ClaimsPrincipal user) => {
-    var form = await context.Request.ReadFormAsync();
-    int? projectId = int.TryParse(form["projectId"].ToString(), out var pid) ? pid : null;
-    var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-    var session = new ChatSession { UserId = userId, ProjectId = projectId, Title = "New Chat " + DateTime.Now.ToString("HH:mm") };
-    db.ChatSessions.Add(session);
-    await db.SaveChangesAsync();
-    return Results.Content($@"<div id='chat-box' data-session-id='{session.Id}' class='flex-1 overflow-y-auto p-4 md:p-6 space-y-8'>
+app.MapPost("/api/chat/new", (ClaimsPrincipal user) => {
+    return Results.Content($@"<div id='chat-box' data-session-id='' class='flex-1 overflow-y-auto p-4 md:p-6 space-y-8'>
         <div class='flex flex-col items-center justify-center h-full text-base-content/30 space-y-4'>
             <div class='w-16 h-16 border-4 border-dashed border-current rounded-full opacity-20'></div>
             <p class='text-xl font-medium text-center'>Ready for your questions.</p>
@@ -138,16 +132,21 @@ app.MapPost("/api/chat/new", async (HttpContext context, AppDbContext db, Claims
 
 app.MapGet("/api/chat/list", async (int? projectId, AppDbContext db, ClaimsPrincipal user) => {
     var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-    var query = db.ChatSessions.Where(s => s.UserId == userId);
+    var query = db.ChatSessions.Where(s => s.UserId == userId && db.Messages.Any(m => m.ChatSessionId == s.Id));
     if (projectId.HasValue)
         query = query.Where(s => s.ProjectId == projectId);
     else
         query = query.Where(s => s.ProjectId == null);
         
-    var sessions = await query.OrderByDescending(s => s.CreatedAt).ToListAsync();
+    var sessions = await query.OrderByDescending(s => s.UpdatedAt).ToListAsync();
     return Results.Content(string.Concat(sessions.Select(s => $@"
         <div class='flex items-center group w-full mb-1 border-b border-base-200 pb-1'>
-            <button onclick='loadChatSession({s.Id})' class='btn btn-ghost btn-sm flex-1 justify-start overflow-hidden text-ellipsis whitespace-nowrap font-normal'>{s.Title}</button>
+            <button onclick='loadChatSession({s.Id})' class='btn btn-ghost btn-sm flex-1 justify-start overflow-hidden text-ellipsis whitespace-nowrap font-normal'>
+                <div class='flex flex-col items-start overflow-hidden'>
+                    <span class='w-full text-ellipsis overflow-hidden text-left'>{s.Title}</span>
+                    <span class='text-[10px] opacity-40 uppercase'>{GetRelativeTime(s.UpdatedAt)}</span>
+                </div>
+            </button>
             <div class='flex flex-none gap-0.5 ml-1'>
                 <button onclick='editTitle({s.Id}, ""{s.Title}"")' class='btn btn-ghost btn-xs px-1 text-primary' title='Rename'>
                     <svg xmlns=""http://www.w3.org/2000/svg"" fill=""none"" viewBox=""0 0 24 24"" stroke-width=""1.5"" stroke=""currentColor"" class=""w-4 h-4""><path stroke-linecap=""round"" stroke-linejoin=""round"" d=""m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"" /></svg>
@@ -172,24 +171,104 @@ app.MapDelete("/api/chat/{id}", async (int id, AppDbContext db, ClaimsPrincipal 
 app.MapGet("/api/chat/load/{id}", async (int id, AppDbContext db, ClaimsPrincipal user) => {
     var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
     var session = await db.ChatSessions
-        .Include(s => s.Messages)
         .FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
     if (session == null) return Results.NotFound();
 
-    var messageIds = session.Messages.Select(m => m.Id).ToList();
+    const int pageSize = 20;
+    var messages = await db.Messages
+        .Where(m => m.ChatSessionId == id)
+        .OrderByDescending(m => m.Timestamp)
+        .Take(pageSize)
+        .ToListAsync();
+    
+    // Reverse back to chronological order for display
+    messages = messages.OrderBy(m => m.Timestamp).ToList();
+
+    var messageIds = messages.Select(m => m.Id).ToList();
     var allSteps = await db.AgentSteps
         .Where(s => messageIds.Contains(s.MessageId))
         .ToListAsync();
 
-    var messagesHtml = string.Concat(session.Messages.OrderBy(m => m.Timestamp).Select(m => {
+    var messagesHtml = string.Concat(messages.Select(m => {
         var steps = allSteps.Where(s => s.MessageId == m.Id).ToList();
         return RenderMessage(m, steps.Any() ? steps : null);
     }));
 
+    var loadMoreBtn = "";
+    if (messages.Count == pageSize) {
+        var oldestId = messages.First().Id;
+        var hasMore = await db.Messages.AnyAsync(m => m.ChatSessionId == id && m.Id < oldestId);
+        if (hasMore) {
+            loadMoreBtn = $@"
+            <div id='load-more-container' class='flex justify-center py-4'>
+                <button class='btn btn-ghost btn-xs opacity-50 hover:opacity-100' 
+                        hx-get='/api/chat/{id}/older-messages?beforeId={oldestId}' 
+                        hx-target='#load-more-container' 
+                        hx-swap='outerHTML'>
+                    Load Older Messages...
+                </button>
+            </div>";
+        }
+    }
+
     return Results.Content($@"<div id='chat-box' data-session-id='{id}' class='flex-1 overflow-y-auto p-4 md:p-6 space-y-8 custom-scrollbar'>
-        {messagesHtml}
+        {loadMoreBtn}
+        <div id='message-list' class='space-y-8'>
+            {messagesHtml}
+        </div>
         <script>renderMarkdown(); syncActiveSessionFromDom(); scrollToBottom();</script>
     </div>", "text/html");
+}).RequireAuthorization();
+
+app.MapGet("/api/chat/{id}/older-messages", async (int id, int beforeId, AppDbContext db, ClaimsPrincipal user) => {
+    var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+    var session = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
+    if (session == null) return Results.NotFound();
+
+    const int pageSize = 20;
+    var messages = await db.Messages
+        .Where(m => m.ChatSessionId == id && m.Id < beforeId)
+        .OrderByDescending(m => m.Timestamp)
+        .Take(pageSize)
+        .ToListAsync();
+
+    messages = messages.OrderBy(m => m.Timestamp).ToList();
+
+    var messageIds = messages.Select(m => m.Id).ToList();
+    var allSteps = await db.AgentSteps
+        .Where(s => messageIds.Contains(s.MessageId))
+        .ToListAsync();
+
+    var messagesHtml = string.Concat(messages.Select(m => {
+        var steps = allSteps.Where(s => s.MessageId == m.Id).ToList();
+        return RenderMessage(m, steps.Any() ? steps : null);
+    }));
+
+    var loadMoreBtn = "";
+    if (messages.Count == pageSize) {
+        var oldestId = messages.First().Id;
+        var hasMore = await db.Messages.AnyAsync(m => m.ChatSessionId == id && m.Id < oldestId);
+        if (hasMore) {
+            loadMoreBtn = $@"
+            <div id='load-more-container' class='flex justify-center py-4'>
+                <button class='btn btn-ghost btn-xs opacity-50 hover:opacity-100' 
+                        hx-get='/api/chat/{id}/older-messages?beforeId={oldestId}' 
+                        hx-target='#load-more-container' 
+                        hx-swap='outerHTML'>
+                    Load Older Messages...
+                </button>
+            </div>";
+        }
+    }
+
+    // Return the new load-more button (replaces old one) AND prepend messages to message-list
+    return Results.Content($@"
+        {loadMoreBtn}
+        <div hx-swap-oob='afterbegin:#message-list'>
+            {messagesHtml}
+        </div>
+        <script>renderMarkdown();</script>
+    ", "text/html");
 }).RequireAuthorization();
 
 app.MapPost("/api/chat/rename", async (HttpContext context, AppDbContext db, ClaimsPrincipal user) => {
@@ -251,6 +330,14 @@ app.MapPost("/api/chat", async (HttpContext context, AppDbContext db, AiService 
         aiResponse = html;
 
         _ = Task.Run(() => consolidation.TryConsolidateAsync(content, html, userId));
+
+        // Update session metadata
+        session.UpdatedAt = DateTime.UtcNow;
+        if (session.Title.StartsWith("New Chat")) {
+            session.Title = await ai.GenerateTitleAsync(content, html, provider);
+        }
+        await db.SaveChangesAsync();
+
         return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg), "text/html");
     } else {
         aiResponse = await ai.GetResponseAsync(content, userId, session.Id, provider);
@@ -259,6 +346,14 @@ app.MapPost("/api/chat", async (HttpContext context, AppDbContext db, AiService 
         await db.SaveChangesAsync();
 
         _ = Task.Run(() => consolidation.TryConsolidateAsync(content, aiResponse, userId));
+
+        // Update session metadata
+        session.UpdatedAt = DateTime.UtcNow;
+        if (session.Title.StartsWith("New Chat")) {
+            session.Title = await ai.GenerateTitleAsync(content, aiResponse, provider);
+        }
+        await db.SaveChangesAsync();
+
         return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg), "text/html");
     }
 }).DisableAntiforgery().RequireAuthorization();
@@ -274,14 +369,9 @@ app.MapPost("/api/chat/stream", async (HttpContext context, AppDbContext db, AiS
     var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
     // Get or create session
-    ChatSession? session;
+    ChatSession? session = null;
     if (sessionId.HasValue) {
         session = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId);
-    } else {
-        session = await db.ChatSessions
-            .Where(s => s.UserId == userId && s.ProjectId == projectId)
-            .OrderByDescending(s => s.CreatedAt)
-            .FirstOrDefaultAsync();
     }
     
     if (session == null) {
@@ -312,6 +402,13 @@ app.MapPost("/api/chat/stream", async (HttpContext context, AppDbContext db, AiS
     // Save AI response to DB
     var aMsg = new Message { ChatSessionId = session.Id, Content = fullResponse.ToString(), IsAi = true };
     db.Messages.Add(aMsg);
+    
+    // Update session metadata
+    session.UpdatedAt = DateTime.UtcNow;
+    if (session.Title.StartsWith("New Chat")) {
+        session.Title = await ai.GenerateTitleAsync(content, fullResponse.ToString(), provider);
+    }
+    
     await db.SaveChangesAsync();
 
     await context.Response.WriteAsync("data: [DONE]\n\n");
@@ -390,6 +487,13 @@ app.MapPost("/api/chat/cooperate/stream", async (
         });
 
     aMsg.Content = html;
+    
+    // Update session metadata
+    session.UpdatedAt = DateTime.UtcNow;
+    if (session.Title.StartsWith("New Chat")) {
+        session.Title = await ai.GenerateTitleAsync(content, html, provider);
+    }
+    
     await db.SaveChangesAsync();
 
     await SendEvent("final", html);
@@ -575,7 +679,7 @@ app.MapGet("/api/cli/load", (string source, string path) => {
 static string RenderCliMessage(string content, bool isAi) => $@"
     <div class='chat {(isAi ? "chat-start" : "chat-end")} group message-bubble-container'>
         <div class='chat-bubble shadow-sm {(isAi ? "bg-base-200 text-base-content border border-base-300" : "bg-primary text-primary-content")} markdown leading-relaxed p-3 md:p-4 rounded-[18px] {(isAi ? "rounded-bl-none" : "rounded-tr-none")}'>
-            <div class='content-body'>{content}</div>
+            <div class='content-body'>{WebUtility.HtmlEncode(content)}</div>
         </div>
     </div>";
 
@@ -593,6 +697,213 @@ app.MapDelete("/api/skills/{name}", (string name, SkillManagerService skillManag
     return Results.Ok();
 }).RequireAuthorization();
 
+// --- Harness Engineering API ---
+
+app.MapGet("/api/harness/pipelines", () => {
+    var path = Path.Combine(AppContext.BaseDirectory, "pipelines");
+    if (!Directory.Exists(path)) return Results.Ok(new List<string>());
+    var files = Directory.GetFiles(path, "*.json")
+        .Select(f => Path.GetFileNameWithoutExtension(f))
+        .ToList();
+    return Results.Ok(files);
+}).RequireAuthorization();
+
+app.MapGet("/api/harness/pipelines/{name}", (string name) => {
+    var path = Path.Combine(AppContext.BaseDirectory, "pipelines", $"{name}.json");
+    if (!File.Exists(path)) return Results.NotFound();
+    return Results.Text(File.ReadAllText(path), "application/json");
+}).RequireAuthorization();
+
+app.MapPost("/api/harness/pipelines", async (HttpContext context) => {
+    var form = await context.Request.ReadFormAsync();
+    var name = form["name"].ToString();
+    var content = form["content"].ToString();
+    if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(content)) return Results.BadRequest();
+    
+    var path = Path.Combine(AppContext.BaseDirectory, "pipelines", $"{name}.json");
+    await File.WriteAllTextAsync(path, content);
+    return Results.Ok();
+}).DisableAntiforgery().RequireAuthorization();
+
+app.MapGet("/api/harness/schemas", () => {
+    var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "schemas");
+    if (!Directory.Exists(path)) return Results.Ok(new List<string>());
+    var files = Directory.GetFiles(path, "*.json")
+        .Select(f => Path.GetFileNameWithoutExtension(f))
+        .ToList();
+    return Results.Ok(files);
+}).RequireAuthorization();
+
+app.MapGet("/api/harness/schemas/{name}", (string name) => {
+    var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "schemas", $"{name}.json");
+    if (!File.Exists(path)) return Results.NotFound();
+    return Results.Text(File.ReadAllText(path), "application/json");
+}).RequireAuthorization();
+
+app.MapPost("/api/harness/schemas", async (HttpContext context) => {
+    var form = await context.Request.ReadFormAsync();
+    var name = form["name"].ToString();
+    var content = form["content"].ToString();
+    var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "schemas", $"{name}.json");
+    await File.WriteAllTextAsync(path, content);
+    return Results.Ok();
+}).DisableAntiforgery().RequireAuthorization();
+
+app.MapGet("/api/harness/prompts", () => {
+    var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "prompts");
+    if (!Directory.Exists(path)) return Results.Ok(new List<string>());
+    var files = Directory.GetFiles(path, "*.md")
+        .Select(f => Path.GetFileNameWithoutExtension(f))
+        .ToList();
+    return Results.Ok(files);
+}).RequireAuthorization();
+
+app.MapGet("/api/harness/prompts/{name}", (string name) => {
+    var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "prompts", $"{name}.md");
+    if (!File.Exists(path)) return Results.NotFound();
+    return Results.Text(File.ReadAllText(path), "text/markdown");
+}).RequireAuthorization();
+
+app.MapPost("/api/harness/prompts", async (HttpContext context) => {
+    var form = await context.Request.ReadFormAsync();
+    var name = form["name"].ToString();
+    var content = form["content"].ToString();
+    var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "prompts", $"{name}.md");
+    await File.WriteAllTextAsync(path, content);
+    return Results.Ok();
+}).DisableAntiforgery().RequireAuthorization();
+
+app.MapGet("/api/harness/pipelines/html", () => {
+    var path = Path.Combine(AppContext.BaseDirectory, "pipelines");
+    var files = Directory.Exists(path) ? Directory.GetFiles(path, "*.json").Select(Path.GetFileNameWithoutExtension).ToList() : new List<string?>();
+    var html = $@"
+        <div class='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
+            {string.Concat(files.Select(f => $@"
+                <div class='card bg-base-100 shadow-sm border border-base-300'>
+                    <div class='card-body p-4'>
+                        <h3 class='card-title text-sm font-bold'>{f}</h3>
+                        <div class='card-actions justify-end mt-2'>
+                            <button onclick=""editHarnessFile('pipelines', '{f}')"" class='btn btn-ghost btn-xs'>Edit JSON</button>
+                        </div>
+                    </div>
+                </div>"))}
+            <button onclick=""const n=prompt('Pipeline Name:'); if(n) editHarnessFile('pipelines', n)"" class='btn btn-dashed border-2 border-base-300 h-24 flex flex-col gap-2'>
+                <svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='currentColor' class='w-6 h-6'><path stroke-linecap='round' stroke-linejoin='round' d='M12 4.5v15m7.5-7.5h-15' /></svg>
+                <span class='text-xs opacity-50 uppercase font-black'>New Pipeline</span>
+            </button>
+        </div>";
+    return Results.Content(html, "text/html");
+}).RequireAuthorization();
+
+app.MapGet("/api/harness/prompts/html", () => {
+    var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "prompts");
+    var files = Directory.Exists(path) ? Directory.GetFiles(path, "*.md").Select(Path.GetFileNameWithoutExtension).ToList() : new List<string?>();
+    var html = $@"
+        <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
+            {string.Concat(files.Select(f => $@"
+                <div class='card bg-base-100 shadow-sm border border-base-300'>
+                    <div class='card-body p-4'>
+                        <h3 class='card-title text-sm font-bold'>{f}.md</h3>
+                        <div class='card-actions justify-end mt-2'>
+                            <button onclick=""editHarnessFile('prompts', '{f}')"" class='btn btn-ghost btn-xs'>Edit Markdown</button>
+                        </div>
+                    </div>
+                </div>"))}
+        </div>";
+    return Results.Content(html, "text/html");
+}).RequireAuthorization();
+
+app.MapGet("/api/harness/schemas/html", () => {
+    var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "schemas");
+    var files = Directory.Exists(path) ? Directory.GetFiles(path, "*.json").Select(Path.GetFileNameWithoutExtension).ToList() : new List<string?>();
+    var html = $@"
+        <div class='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
+            {string.Concat(files.Select(f => $@"
+                <div class='card bg-base-100 shadow-sm border border-base-300'>
+                    <div class='card-body p-4'>
+                        <h3 class='card-title text-sm font-bold'>{f}.json</h3>
+                        <div class='card-actions justify-end mt-2'>
+                            <button onclick=""editHarnessFile('schemas', '{f}')"" class='btn btn-ghost btn-xs'>Edit Schema</button>
+                        </div>
+                    </div>
+                </div>"))}
+        </div>";
+    return Results.Content(html, "text/html");
+}).RequireAuthorization();
+
+app.MapGet("/api/harness/evals/html", async (AppDbContext db) => {
+    var all = await db.Evaluations.OrderByDescending(e => e.CreatedAt).Take(20).ToListAsync();
+    var summary = all.Any() ? new { count = all.Count, avg = (double)all.Average(e => e.Score) } : new { count = 0, avg = 0.0 };
+    
+    var html = $@"
+        <div class='space-y-6'>
+            <div class='stats shadow w-full bg-base-100 border border-base-300'>
+                <div class='stat'>
+                    <div class='stat-title text-[10px] font-black uppercase opacity-40'>Total Evaluations</div>
+                    <div class='stat-value text-primary'>{summary.count}</div>
+                </div>
+                <div class='stat'>
+                    <div class='stat-title text-[10px] font-black uppercase opacity-40'>Avg Score</div>
+                    <div class='stat-value text-secondary'>{summary.avg:F2}</div>
+                </div>
+            </div>
+            <div class='overflow-x-auto bg-base-100 rounded-2xl border border-base-300'>
+                <table class='table table-zebra table-sm'>
+                    <thead>
+                        <tr class='bg-base-200'>
+                            <th class='text-[10px] font-black uppercase opacity-40'>Criteria</th>
+                            <th class='text-[10px] font-black uppercase opacity-40'>Score</th>
+                            <th class='text-[10px] font-black uppercase opacity-40'>Reasoning</th>
+                            <th class='text-[10px] font-black uppercase opacity-40'>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {string.Concat(all.Select(e => $@"
+                            <tr>
+                                <td class='font-bold'>{e.Criteria}</td>
+                                <td>
+                                    <div class='badge {(e.Score > 0.7 ? "badge-success" : e.Score > 0.4 ? "badge-warning" : "badge-error")} badge-outline font-black font-mono text-[10px]'>{e.Score:P0}</div>
+                                </td>
+                                <td class='text-xs italic opacity-70 max-w-xs truncate' title='{WebUtility.HtmlEncode(e.Reasoning)}'>{WebUtility.HtmlEncode(e.Reasoning)}</td>
+                                <td class='text-[10px] opacity-40'>{e.CreatedAt:MMM dd HH:mm}</td>
+                            </tr>"))}
+                    </tbody>
+                </table>
+            </div>
+        </div>";
+    return Results.Content(html, "text/html");
+}).RequireAuthorization();
+
+app.MapGet("/api/harness/evaluations/recent", async (AppDbContext db) => {
+    var evals = await db.Evaluations
+        .Include(e => e.AgentStep)
+        .OrderByDescending(e => e.CreatedAt)
+        .Take(50)
+        .ToListAsync();
+    
+    return Results.Ok(evals.Select(e => new {
+        e.Id,
+        e.Criteria,
+        e.Score,
+        e.Reasoning,
+        e.CreatedAt,
+        Role = e.AgentStep?.Role ?? "Unknown",
+        StepId = e.AgentStepId
+    }));
+}).RequireAuthorization();
+
+app.MapGet("/api/harness/evaluations/summary", async (AppDbContext db) => {
+    var all = await db.Evaluations.ToListAsync();
+    if (!all.Any()) return Results.Ok(new { count = 0, avgScore = 0 });
+    
+    return Results.Ok(new {
+        count = all.Count,
+        avgScore = all.Average(e => e.Score),
+        byCriteria = all.GroupBy(e => e.Criteria)
+            .Select(g => new { Criteria = g.Key, Avg = g.Average(e => e.Score) })
+    });
+}).RequireAuthorization();
+
 string RenderMessage(Message m, List<AgentStep>? steps = null) => $@"
 <div class='chat {(m.IsAi ? "chat-start" : "chat-end")} group message-bubble-container'>
     <div class='chat-bubble shadow-sm {(m.IsAi ? "bg-base-200 text-base-content border border-base-300" : "bg-primary text-primary-content")} markdown leading-relaxed p-3 md:p-4 rounded-[18px] {(m.IsAi ? "rounded-bl-none" : "rounded-tr-none")}'>
@@ -606,7 +917,7 @@ string RenderMessage(Message m, List<AgentStep>? steps = null) => $@"
                     </div>"))}
                 </div>
             </div>" : "")}
-        <div class='content-body'>{m.Content}</div>
+        <div class='content-body'>{WebUtility.HtmlEncode(m.Content)}</div>
     </div>
     <div class='chat-footer opacity-0 group-hover:opacity-50 transition-opacity flex gap-3 pt-2 px-1'>
         <button class='hover:text-primary transition-colors' onclick='copyText(this)' title='Copy'>
@@ -623,3 +934,13 @@ string RenderMessage(Message m, List<AgentStep>? steps = null) => $@"
 </div>";
 
 app.Run("http://0.0.0.0:5000");
+
+static string GetRelativeTime(DateTime dateTime)
+{
+    var span = DateTime.UtcNow - dateTime;
+    if (span.TotalMinutes < 1) return "just now";
+    if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m ago";
+    if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
+    if (span.TotalDays < 7) return $"{(int)span.TotalDays}d ago";
+    return dateTime.ToString("MMM dd");
+}

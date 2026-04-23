@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft/2020-12/schema#",
+  "type": "object",
+  "properties": {
+    "subtasks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of subtasks to execute"
+    },
+    "executionPlan": {
+      "type": "string",
+      "description": "Detailed plan for executing the subtasks"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Execution constraints and limitations"
+    }
+  },
+  "required": ["subtasks", "executionPlan"]
+}

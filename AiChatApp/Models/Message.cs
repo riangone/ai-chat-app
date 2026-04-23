@@ -17,6 +17,7 @@ public class ChatSession
     public int? ProjectId { get; set; } // Added link to project
     public string Title { get; set; } = "New Chat";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public List<Message> Messages { get; set; } = new();
     public Project? Project { get; set; } // Navigation property
 }

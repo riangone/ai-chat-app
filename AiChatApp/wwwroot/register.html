@@ -11,6 +11,12 @@
     <div class="card w-96 bg-base-100 shadow-xl">
         <div class="card-body">
             <h2 class="card-title justify-center text-2xl font-bold mb-4">Register</h2>
+
+            <div id="error-alert" class="alert alert-error mb-4 hidden">
+                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                <span id="error-message">Registration is currently disabled.</span>
+            </div>
+
             <form action="/api/auth/register" method="POST">
                 <div class="form-control w-full">
                     <label class="label"><span class="label-text">Username</span></label>
@@ -21,11 +27,25 @@
                     <input name="password" type="password" placeholder="password" class="input input-bordered w-full" required />
                 </div>
                 <div class="card-actions justify-end mt-6 flex-col gap-2">
-                    <button class="btn btn-primary w-full">Register</button>
+                    <button class="btn btn-primary w-full btn-disabled" disabled>Register Disabled</button>
                     <a href="/login" class="link link-hover text-sm text-center w-full">Already have an account? Login</a>
                 </div>
             </form>
         </div>
     </div>
+
+    <script>
+        const error = new URLSearchParams(window.location.search).get('error');
+        if (error) {
+            const alert = document.getElementById('error-alert');
+            const message = document.getElementById('error-message');
+            alert.classList.remove('hidden');
+            if (error === 'exists') {
+                message.innerText = 'User already exists.';
+            } else if (error === 'disabled') {
+                message.innerText = 'User registration is currently disabled.';
+            }
+        }
+    </script>
 </body>
 </html>
