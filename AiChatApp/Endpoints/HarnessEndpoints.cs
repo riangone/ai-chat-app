@@ -214,5 +214,28 @@ public static class HarnessEndpoints
                     .Select(g => new { Criteria = g.Key, Avg = g.Average(e => e.Score) })
             });
         });
+
+        // Add advanced visualizer and A/B test endpoints
+        group.MapGet("/visualizer/stats", async (AppDbContext db) => {
+            var steps = await db.AgentSteps.Include(s => s.Evaluations).ToListAsync();
+            var stats = steps.GroupBy(s => s.Role)
+                .Select(g => new {
+                    Role = g.Key,
+                    Count = g.Count(),
+                    AvgScore = g.SelectMany(s => s.Evaluations).Any() ? g.SelectMany(s => s.Evaluations).Average(e => e.Score) : 0,
+                    AvgDuration = 0 // Future: tracking duration
+                }).ToList();
+            
+            return Results.Ok(stats);
+        });
+
+        group.MapGet("/compare", async (string promptA, string promptB, AppDbContext db) => {
+            // Placeholder: In a real scenario, this would compare specific runs linked to different prompts
+            var all = await db.Evaluations.OrderByDescending(e => e.CreatedAt).Take(20).ToListAsync();
+            return Results.Ok(new {
+                A = all.Where((e, i) => i % 2 == 0),
+                B = all.Where((e, i) => i % 2 != 0)
+            });
+        });
     }
 }

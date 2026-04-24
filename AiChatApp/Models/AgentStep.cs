@@ -14,4 +14,5 @@ public class AgentStep
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public Message? Message { get; set; }
+    public List<AiChatApp.Models.Harness.Evaluation> Evaluations { get; set; } = new();
 }
