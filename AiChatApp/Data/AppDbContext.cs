@@ -18,6 +18,7 @@ public class AppDbContext : DbContext
     public DbSet<AgentProfile> AgentProfiles => Set<AgentProfile>();
     public DbSet<SessionMemory> SessionMemories => Set<SessionMemory>();
     public DbSet<Evaluation> Evaluations => Set<Evaluation>();
+    public DbSet<Note> Notes => Set<Note>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
