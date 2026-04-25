@@ -1,6 +1,9 @@
 import os
+import html
 import uuid
+import logging
 import shutil
+from pathlib import Path
 from fastapi import FastAPI, Request, Depends, File, UploadFile, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -9,92 +12,207 @@ from sqlalchemy.orm import Session
 from database import engine, SessionLocal, get_db
 import models
 
-# Initialize database
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+BASE_DIR = Path(__file__).parent
+STATIC_DIR = BASE_DIR / "static"
+UPLOAD_DIR = STATIC_DIR / "uploads"
+THUMBNAIL_DIR = STATIC_DIR / "thumbnails"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
 
-# Templates
-templates = Jinja2Templates(directory="templates")
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+ALLOWED_MIME_PREFIXES = ("image/jpeg", "image/png", "image/gif", "image/webp", "image/")
 
-# Upload directory
-UPLOAD_DIR = "static/uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+def create_thumbnail(source_path: Path, thumb_path: Path, size: int = 400):
+    from PIL import Image, ImageOps
+    with Image.open(source_path) as img:
+        img = ImageOps.exif_transpose(img)
+        img = img.convert("RGB")
+        img = ImageOps.fit(img, (size, size), Image.LANCZOS)
+        img.save(thumb_path, "JPEG", quality=82, optimize=True)
+
+
+def get_thumbnail_path(photo_id: int, original_path: str) -> Path:
+    thumb_path = THUMBNAIL_DIR / f"{photo_id}.jpg"
+    if not thumb_path.exists():
+        create_thumbnail(Path(original_path), thumb_path)
+    return thumb_path
+
+
+def query_photos_ordered(db: Session):
+    return db.query(models.Photo).order_by(models.Photo.uploaded_at.desc()).all()
+
+
+def render_card(photo) -> str:
+    safe_title = html.escape(photo.title)
+    uploaded = photo.uploaded_at.strftime("%Y-%m-%d %H:%M") if photo.uploaded_at else ""
+    return f"""<div class="photo-card group cursor-pointer select-none"
+     data-photo-id="{photo.id}"
+     data-photo-title="{safe_title}"
+     data-photo-date="{uploaded}"
+     onclick="openPreview(this)">
+    <div class="aspect-square overflow-hidden rounded-xl bg-base-300 shadow-sm relative">
+        <img src="/pm/thumbnail/{photo.id}"
+             alt="{safe_title}"
+             class="object-cover w-full h-full transition-transform duration-300 group-hover:scale-105"
+             loading="lazy" />
+        <div class="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-200 flex items-center justify-center">
+            <span class="text-white text-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 click-hint">🔍</span>
+        </div>
+    </div>
+    <p class="text-xs mt-1 truncate text-base-content/60 px-0.5">{safe_title}</p>
+</div>"""
+
 
 @app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+async def read_root(request: Request, db: Session = Depends(get_db)):
+    photos = query_photos_ordered(db)
+    cards_html = "".join(render_card(p) for p in photos)
+    count = len(photos)
+    return templates.TemplateResponse(
+        request=request, name="index.html",
+        context={"initial_cards": cards_html, "initial_count": count}
+    )
+
 
 @app.get("/photos", response_class=HTMLResponse)
 async def list_photos(request: Request, db: Session = Depends(get_db)):
-    photos = db.query(models.Photo).order_by(models.Photo.uploaded_at.desc()).all()
-    html_content = ""
-    for photo in photos:
-        html_content += f"""
-        <div class="card bg-base-100 shadow-xl overflow-hidden group">
-            <figure class="relative aspect-square">
-                <img src="/download/{photo.id}" alt="{photo.title}" class="object-cover w-full h-full" />
-                <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
-                    <button class="btn btn-error btn-sm" hx-delete="/delete/{photo.id}" hx-target="closest .card" hx-swap="outerHTML" hx-confirm="Are you sure?">Delete</button>
-                </div>
-            </figure>
-            <div class="card-body p-4">
-                <h2 class="card-title text-sm truncate">{photo.title}</h2>
-            </div>
-        </div>
-        """
-    return HTMLResponse(content=html_content)
+    photos = query_photos_ordered(db)
+    content = "".join(render_card(p) for p in photos)
+    count = len(photos)
+    count_label = "张照片" if count else ""
+    oob = f'<span id="photo-count" hx-swap-oob="true">{count} {count_label}</span>'
+    return HTMLResponse(content=content + oob)
+
 
 @app.post("/upload", response_class=HTMLResponse)
 async def upload_photo(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
-    
-    filename = f"{uuid.uuid4()}_{file.filename}"
-    file_path = os.path.join(UPLOAD_DIR, filename)
-    
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    
-    db_photo = models.Photo(title=file.filename, filename=filename, file_path=file_path)
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="画像ファイルのみアップロード可能です")
+
+    data = await file.read()
+    if len(data) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail=f"ファイルサイズが上限（50MB）を超えています")
+    if len(data) == 0:
+        raise HTTPException(status_code=400, detail="空のファイルはアップロードできません")
+
+    ext = os.path.splitext(file.filename or "photo")[1].lower() or ".jpg"
+    filename = f"{uuid.uuid4()}{ext}"
+    file_path = UPLOAD_DIR / filename
+
+    try:
+        with open(file_path, "wb") as buffer:
+            buffer.write(data)
+    except OSError as e:
+        logger.error("ファイル保存失敗: %s", e)
+        raise HTTPException(status_code=500, detail="ファイルの保存に失敗しました")
+
+    db_photo = models.Photo(title=file.filename or filename, filename=filename, file_path=str(file_path))
     db.add(db_photo)
-    db.commit()
-    db.refresh(db_photo)
-    
-    # Return the HTMX snippet for the new photo
-    return HTMLResponse(content=f"""
-    <div class="card bg-base-100 shadow-xl overflow-hidden group">
-        <figure class="relative aspect-square">
-            <img src="/download/{db_photo.id}" alt="{db_photo.title}" class="object-cover w-full h-full" />
-            <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
-                <button class="btn btn-error btn-sm" hx-delete="/delete/{db_photo.id}" hx-target="closest .card" hx-swap="outerHTML" hx-confirm="Are you sure?">Delete</button>
-            </div>
-        </figure>
-        <div class="card-body p-4">
-            <h2 class="card-title text-sm truncate">{db_photo.title}</h2>
-        </div>
-    </div>
-    """)
+    try:
+        db.commit()
+        db.refresh(db_photo)
+    except Exception as e:
+        logger.error("DB保存失敗: %s", e)
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="データベースへの保存に失敗しました")
+
+    try:
+        get_thumbnail_path(db_photo.id, str(file_path))
+    except Exception as e:
+        logger.warning("サムネイル生成失敗 photo_id=%d: %s", db_photo.id, e)
+
+    logger.info("アップロード完了: %s (id=%d)", file.filename, db_photo.id)
+    return HTMLResponse(content=render_card(db_photo))
+
+
+@app.get("/thumbnail/{photo_id}")
+async def get_thumbnail(photo_id: int, db: Session = Depends(get_db)):
+    photo = db.query(models.Photo).filter(models.Photo.id == photo_id).first()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    try:
+        thumb = get_thumbnail_path(photo_id, photo.file_path)
+        return FileResponse(str(thumb), media_type="image/jpeg")
+    except Exception as e:
+        logger.warning("サムネイル取得失敗 photo_id=%d: %s", photo_id, e)
+        if Path(photo.file_path).exists():
+            return FileResponse(photo.file_path)
+        raise HTTPException(status_code=404, detail="画像ファイルが見つかりません")
+
+
+@app.get("/photo/{photo_id}")
+async def get_photo_detail(photo_id: int, db: Session = Depends(get_db)):
+    photo = db.query(models.Photo).filter(models.Photo.id == photo_id).first()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    file_path = Path(photo.file_path)
+    file_size = None
+    width = None
+    height = None
+    fmt = None
+
+    if file_path.exists():
+        file_size = file_path.stat().st_size
+        try:
+            from PIL import Image
+            with Image.open(file_path) as img:
+                width, height = img.size
+                fmt = img.format
+        except Exception as e:
+            logger.warning("画像情報取得失敗 photo_id=%d: %s", photo_id, e)
+
+    return {
+        "id": photo.id,
+        "title": photo.title,
+        "filename": photo.filename,
+        "uploaded_at": photo.uploaded_at.strftime("%Y-%m-%d %H:%M:%S") if photo.uploaded_at else None,
+        "file_size": file_size,
+        "width": width,
+        "height": height,
+        "format": fmt,
+    }
+
 
 @app.get("/download/{photo_id}")
 async def download_photo(photo_id: int, db: Session = Depends(get_db)):
     photo = db.query(models.Photo).filter(models.Photo.id == photo_id).first()
     if not photo:
         raise HTTPException(status_code=404, detail="Photo not found")
-    return FileResponse(photo.file_path)
+    if not Path(photo.file_path).exists():
+        raise HTTPException(status_code=404, detail="画像ファイルが見つかりません")
+    return FileResponse(photo.file_path, filename=photo.title)
+
 
 @app.delete("/delete/{photo_id}")
 async def delete_photo(photo_id: int, db: Session = Depends(get_db)):
     photo = db.query(models.Photo).filter(models.Photo.id == photo_id).first()
     if not photo:
         raise HTTPException(status_code=404, detail="Photo not found")
-    
-    if os.path.exists(photo.file_path):
-        os.remove(photo.file_path)
-    
+
+    for path_str in [photo.file_path, str(THUMBNAIL_DIR / f"{photo_id}.jpg")]:
+        p = Path(path_str)
+        if p.exists():
+            try:
+                p.unlink()
+            except OSError as e:
+                logger.warning("ファイル削除失敗 %s: %s", path_str, e)
+
     db.delete(photo)
     db.commit()
+    logger.info("削除完了: photo_id=%d", photo_id)
     return HTMLResponse(content="")

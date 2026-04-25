@@ -93,7 +93,41 @@ public class AiService
             : $"{history}\nUser: {prompt}";
 
         var targetProvider = agent?.PreferredProvider ?? provider;
-        return await ExecuteCliDirectAsync(fullPrompt, targetProvider, systemPrompt, workingDir);
+
+        // 获取当前会话最新的 MessageId (刚才保存的 User 消息)
+        int messageId = 0;
+        if (chatSessionId.HasValue)
+        {
+            var lastMsg = await _db.Messages
+                .Where(m => m.ChatSessionId == chatSessionId.Value && !m.IsAi)
+                .OrderByDescending(m => m.Id)
+                .FirstOrDefaultAsync();
+            messageId = lastMsg?.Id ?? 0;
+        }
+
+        var sw = Stopwatch.StartNew();
+        string response = await ExecuteCliDirectAsync(fullPrompt, targetProvider, systemPrompt, workingDir);
+        sw.Stop();
+
+        // ログを記録
+        if (messageId > 0)
+        {
+            var step = new AgentStep
+            {
+                MessageId = messageId,
+                Role = agent?.RoleName ?? "Assistant",
+                Persona = systemPrompt ?? "Default Assistant",
+                Input = fullPrompt,
+                Output = response,
+                DurationMs = (int)sw.ElapsedMilliseconds,
+                WasAccepted = true,
+                CreatedAt = DateTime.UtcNow
+            };
+            _db.AgentSteps.Add(step);
+            await _db.SaveChangesAsync();
+        }
+
+        return response;
     }
 
     /// <summary>
@@ -349,6 +383,18 @@ public class AiService
         var targetProvider = agent?.PreferredProvider ?? provider;
         var processInfo = SetupProcessInfo(targetProvider, workingDir);
 
+        // 获取 MessageId 用于记录日志
+        int messageId = 0;
+        if (chatSessionId.HasValue)
+        {
+            var lastMsg = await _db.Messages
+                .Where(m => m.ChatSessionId == chatSessionId.Value && !m.IsAi)
+                .OrderByDescending(m => m.Id)
+                .FirstOrDefaultAsync();
+            messageId = lastMsg?.Id ?? 0;
+        }
+
+        var sw = Stopwatch.StartNew();
         using var process = Process.Start(processInfo);
         if (process == null) 
         {
@@ -364,13 +410,35 @@ public class AiService
         await process.StandardInput.WriteAsync(inputToStdin);
         process.StandardInput.Close();
 
+        var fullResponse = new StringBuilder();
         var buffer = new char[64];
         int read;
         while ((read = await process.StandardOutput.ReadAsync(buffer, 0, buffer.Length)) > 0)
         {
-            yield return new string(buffer, 0, read);
+            var chunk = new string(buffer, 0, read);
+            fullResponse.Append(chunk);
+            yield return chunk;
         }
         await process.WaitForExitAsync();
+        sw.Stop();
+
+        // ストリーム完了後にログを保存
+        if (messageId > 0)
+        {
+            var step = new AgentStep
+            {
+                MessageId = messageId,
+                Role = agent?.RoleName ?? "Assistant",
+                Persona = systemPrompt ?? "Default Assistant",
+                Input = fullPrompt,
+                Output = fullResponse.ToString(),
+                DurationMs = (int)sw.ElapsedMilliseconds,
+                WasAccepted = true,
+                CreatedAt = DateTime.UtcNow
+            };
+            _db.AgentSteps.Add(step);
+            await _db.SaveChangesAsync();
+        }
     }
 
     public Task<string> ExecuteCliDirectAsync(string prompt, string provider, string? systemPrompt = null, string? workingDir = null)

@@ -95,5 +95,53 @@ public static class ProjectApiController
                 </div>"));
             return Results.Content(html, "text/html");
         });
+
+        group.MapGet("/{projectId}/pipeline-logs", async (int projectId, AppDbContext db, ClaimsPrincipal user) =>
+        {
+            var userIdStr = user.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdStr)) return Results.Unauthorized();
+            var userId = int.Parse(userIdStr);
+            
+            var sessions = await db.ChatSessions
+                .Where(s => s.ProjectId == projectId && s.UserId == userId)
+                .OrderByDescending(s => s.UpdatedAt)
+                .Select(s => new {
+                    sessionId = s.Id,
+                    firstMessage = db.Messages.Where(m => m.ChatSessionId == s.Id && !m.IsAi).OrderBy(m => m.Timestamp).Select(m => m.Content).FirstOrDefault(),
+                    stepCount = db.Messages.Where(m => m.ChatSessionId == s.Id).SelectMany(m => db.AgentSteps.Where(as2 => as2.MessageId == m.Id)).Count(),
+                    createdAt = s.CreatedAt
+                })
+                .Where(s => s.stepCount > 0)
+                .ToListAsync();
+
+            return Results.Ok(sessions);
+        });
+
+        app.MapGet("/api/pipeline-logs/session/{sessionId}", async (int sessionId, AppDbContext db, ClaimsPrincipal user) =>
+        {
+            var userIdStr = user.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdStr)) return Results.Unauthorized();
+            var userId = int.Parse(userIdStr);
+
+            var session = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId);
+            if (session == null) return Results.NotFound();
+
+            var steps = await db.AgentSteps
+                .Where(as1 => db.Messages.Any(m => m.ChatSessionId == sessionId && m.Id == as1.MessageId))
+                .OrderBy(as1 => as1.CreatedAt)
+                .ToListAsync();
+
+            return Results.Ok(new {
+                createdAt = session.CreatedAt,
+                steps = steps.Select(s => new {
+                    role = s.Role,
+                    output = s.Output,
+                    durationMs = s.DurationMs,
+                    createdAt = s.CreatedAt,
+                    wasAccepted = s.WasAccepted
+                })
+            });
+        }).RequireAuthorization();
     }
 }
+

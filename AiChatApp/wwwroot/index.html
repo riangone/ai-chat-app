@@ -721,6 +721,93 @@
             finally { if (btn) { btn.disabled = false; btn.classList.remove('loading'); } }
         }
 
+        async function initPipelinePanel() {
+            const sel = document.getElementById('pipeline-project-select');
+            if (!sel || sel.options.length > 1) return;
+            try {
+                const res = await fetch('/api/projects');
+                if (!res.ok) return;
+                const projects = await res.json();
+                projects.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id; opt.textContent = p.name;
+                    sel.appendChild(opt);
+                });
+            } catch(e) { console.error(e); }
+        }
+
+        async function loadPipelineSessions(projectId) {
+            const container = document.getElementById('pipeline-sessions');
+            if (!projectId) { container.innerHTML = '<div class="flex flex-col items-center justify-center h-full opacity-30 py-12"><p class="text-xs font-semibold">Select a project</p></div>'; return; }
+            container.innerHTML = '<div class="flex justify-center py-8"><span class="loading loading-spinner loading-sm opacity-40"></span></div>';
+            try {
+                const res = await fetch(`/api/projects/${projectId}/pipeline-logs`);
+                if (!res.ok) throw new Error('Failed');
+                const sessions = await res.json();
+                if (!sessions.length) {
+                    container.innerHTML = '<div class="flex flex-col items-center justify-center h-full opacity-30 py-12"><p class="text-xs font-semibold">No pipeline sessions found</p></div>';
+                    return;
+                }
+                container.innerHTML = sessions.map(s => `
+                    <div onclick="loadPipelineDetail('${s.sessionId}')" class="pipeline-session-item cursor-pointer rounded-xl p-3 hover:bg-base-200 transition-colors border border-transparent hover:border-base-content/10">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="badge badge-primary badge-xs font-bold">${s.stepCount} steps</span>
+                            <span class="text-[10px] opacity-40 font-mono">${new Date(s.createdAt).toLocaleDateString()}</span>
+                        </div>
+                        <p class="text-xs font-semibold truncate opacity-70">${s.firstMessage || 'No message'}</p>
+                        <p class="text-[10px] opacity-30 mt-1">${new Date(s.createdAt).toLocaleTimeString()}</p>
+                    </div>`).join('');
+            } catch(e) { container.innerHTML = '<div class="p-4 text-xs text-error">Failed to load sessions</div>'; }
+        }
+
+        async function loadPipelineDetail(sessionId) {
+            document.querySelectorAll('.pipeline-session-item').forEach(el => el.classList.remove('bg-base-200', 'border-primary/30'));
+            event?.currentTarget?.classList.add('bg-base-200', 'border-primary/30');
+            const detail = document.getElementById('pipeline-detail');
+            detail.innerHTML = '<div class="flex justify-center py-12"><span class="loading loading-spinner loading-md opacity-40"></span></div>';
+            try {
+                const res = await fetch(`/api/pipeline-logs/session/${sessionId}`);
+                if (!res.ok) throw new Error('Failed');
+                const data = await res.json();
+                const roleColors = { Orchestrator: 'badge-primary', Executor: 'badge-secondary', Reviewer: 'badge-accent' };
+                const steps = data.steps || [];
+                detail.innerHTML = `
+                    <div class="max-w-3xl mx-auto space-y-4">
+                        <div class="flex items-center gap-3 mb-6">
+                            <h2 class="text-lg font-black">Pipeline Execution</h2>
+                            <span class="badge badge-neutral badge-sm">${steps.length} steps</span>
+                            <span class="text-xs opacity-40 font-mono">${new Date(data.createdAt).toLocaleString()}</span>
+                        </div>
+                        ${steps.map((step, i) => `
+                            <div class="relative">
+                                ${i < steps.length - 1 ? '<div class="absolute left-5 top-14 bottom-0 w-0.5 bg-base-content/10 -mb-4"></div>' : ''}
+                                <div class="settings-card">
+                                    <div class="flex items-center gap-3 mb-3">
+                                        <div class="w-10 h-10 rounded-xl bg-base-200 flex items-center justify-center font-black text-sm opacity-60">${i + 1}</div>
+                                        <div class="flex-1">
+                                            <div class="flex items-center gap-2 flex-wrap">
+                                                <span class="badge ${roleColors[step.role] || 'badge-ghost'} badge-sm font-bold">${step.role}</span>
+                                                ${step.attemptNumber > 1 ? `<span class="badge badge-warning badge-xs">Retry #${step.attemptNumber}</span>` : ''}
+                                                ${!step.wasAccepted ? '<span class="badge badge-error badge-xs">Rejected</span>' : ''}
+                                                <span class="text-[10px] opacity-40 font-mono ml-auto">${step.durationMs}ms</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <details class="group">
+                                        <summary class="cursor-pointer text-xs font-bold opacity-50 hover:opacity-80 transition-opacity list-none flex items-center gap-1">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3 h-3 group-open:rotate-90 transition-transform"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+                                            View output
+                                        </summary>
+                                        <pre class="mt-3 p-3 bg-base-200 rounded-xl text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-96 overflow-y-auto">${escapeHtml(step.output || '')}</pre>
+                                    </details>
+                                </div>
+                            </div>`).join('')}
+                    </div>`;
+            } catch(e) { detail.innerHTML = '<div class="p-8 text-sm text-error text-center">Failed to load pipeline details</div>'; }
+        }
+
+        function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
         function toggleNoteMode(mode) {
             const editorView = document.getElementById('note-editor-view');
             const previewView = document.getElementById('note-preview-view');
@@ -848,6 +935,42 @@
                                         <div class="flex items-center justify-center h-64 opacity-30">
                                             <span class="loading loading-spinner loading-lg"></span>
                                         </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="swiper-slide" id="pipeline-slide">
+                        <div class="shell-header">
+                            <div class="shell-badge">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" /></svg>
+                                <span>Pipeline Logs</span>
+                            </div>
+                            <div class="right-actions">
+                                <select id="pipeline-project-select" onchange="loadPipelineSessions(this.value)" class="select select-bordered select-xs rounded-xl text-xs font-bold">
+                                    <option value="">Select project...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div id="pipeline-panel" class="flex flex-col flex-1">
+                            <div class="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden">
+                                <!-- Session List -->
+                                <div id="pipeline-session-list" class="w-full lg:w-72 h-48 lg:h-auto border-b lg:border-b-0 lg:border-r border-base-content/8 flex flex-col overflow-hidden">
+                                    <div class="p-3 border-b border-base-content/8">
+                                        <p class="text-xs font-bold uppercase tracking-widest opacity-40">Sessions</p>
+                                    </div>
+                                    <div id="pipeline-sessions" class="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-1">
+                                        <div class="flex flex-col items-center justify-center h-full opacity-30 py-12">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-10 h-10 mb-2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5" /></svg>
+                                            <p class="text-xs font-semibold">Select a project</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- Step Detail -->
+                                <div id="pipeline-detail" class="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar bg-base-100/30">
+                                    <div class="flex flex-col items-center justify-center h-full opacity-20 text-center">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-16 h-16 mb-4"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" /></svg>
+                                        <p class="text-lg font-bold">Select a session to view pipeline</p>
                                     </div>
                                 </div>
                             </div>

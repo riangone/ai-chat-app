@@ -11,8 +11,7 @@ public static class TodoEndpoints
     public static void MapTodoEndpoints(this IEndpointRouteBuilder app)
     {
         // GET /todo → serve the SPA page
-        app.MapGet("/todo", () => Results.File(
-            Path.Combine("wwwroot", "todo", "index.html"), "text/html"));
+        app.MapGet("/todo", () => Results.File("todo/index.html", "text/html"));
 
         var group = app.MapGroup("/api/todos");
 
