@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TODO App</title>
+  <link rel="manifest" href="/todo/manifest.json" />
+  <meta name="theme-color" content="#661AE6" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="TODO" />
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/todo/sw.js', { scope: '/todo/' });
+    }
+  </script>
+</head>
+<body class="min-h-screen bg-base-100 flex items-start justify-center pt-16 px-4">
+  <div class="w-full max-w-lg">
+
+    <!-- Header -->
+    <div class="mb-8 text-center">
+      <h1 class="text-4xl font-bold text-primary mb-1">TODO</h1>
+      <p class="text-sm opacity-50">Simple task tracker</p>
+    </div>
+
+    <!-- Add form -->
+    <form
+      hx-post="/api/todos"
+      hx-target="#todo-list"
+      hx-swap="afterbegin"
+      hx-on::after-request="this.reset()"
+      class="flex gap-2 mb-6"
+    >
+      <input
+        type="text"
+        name="title"
+        placeholder="What needs to be done?"
+        required
+        class="input input-bordered flex-1"
+        autocomplete="off"
+      />
+      <button type="submit" class="btn btn-primary">Add</button>
+    </form>
+
+    <!-- Todo list -->
+    <ul
+      id="todo-list"
+      class="flex flex-col gap-2"
+      hx-get="/api/todos"
+      hx-trigger="load"
+      hx-swap="innerHTML"
+    ></ul>
+
+  </div>
+</body>
+</html>

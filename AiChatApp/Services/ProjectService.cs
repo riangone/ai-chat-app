@@ -94,4 +94,21 @@ public class ProjectService
             await _db.SaveChangesAsync();
         }
     }
+
+    public async Task<AgentProfile?> UpdateAgentAsync(int agentId, string roleName, string systemPrompt, string color, string? preferredProvider, int userId)
+    {
+        var agent = await _db.AgentProfiles
+            .Include(a => a.Project)
+            .FirstOrDefaultAsync(a => a.Id == agentId && a.Project!.UserId == userId);
+            
+        if (agent == null) return null;
+
+        agent.RoleName = roleName;
+        agent.SystemPrompt = systemPrompt;
+        agent.Color = color;
+        agent.PreferredProvider = preferredProvider;
+
+        await _db.SaveChangesAsync();
+        return agent;
+    }
 }

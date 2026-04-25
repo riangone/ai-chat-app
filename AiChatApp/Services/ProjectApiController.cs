@@ -65,6 +65,16 @@ public static class ProjectApiController
             await projectService.DeleteAgentAsync(agentId, userId);
             return Results.Ok();
         });
+
+        group.MapPut("/{projectId}/agents/{agentId}", async (
+            int projectId, int agentId, 
+            [FromForm] string roleName, [FromForm] string systemPrompt, [FromForm] string color, [FromForm] string? preferredProvider,
+            ProjectService projectService, ClaimsPrincipal user) =>
+        {
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var agent = await projectService.UpdateAgentAsync(agentId, roleName, systemPrompt, color, preferredProvider, userId);
+            return agent != null ? Results.Ok(agent) : Results.NotFound();
+        }).DisableAntiforgery();
         
         // HTMX components for UI
         group.MapGet("/list-html", async (ProjectService projectService, ClaimsPrincipal user) => 

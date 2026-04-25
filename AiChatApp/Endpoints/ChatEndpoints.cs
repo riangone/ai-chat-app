@@ -114,7 +114,7 @@ public static class ChatEndpoints
                 }
             }
 
-            return Results.Content($@"<div id='chat-box' data-session-id='{id}' class='flex-1 overflow-y-auto p-4 md:p-6 space-y-8 custom-scrollbar'>
+            return Results.Content($@"<div id='chat-box' data-session-id='{id}' data-provider='{session.PreferredProvider}' class='flex-1 overflow-y-auto p-4 md:p-6 space-y-8 custom-scrollbar'>
                 {loadMoreBtn}
                 <div id='message-list' class='space-y-8'>
                     {messagesHtml}
@@ -188,16 +188,45 @@ public static class ChatEndpoints
             return Results.Ok();
         }).DisableAntiforgery();
 
+        group.MapPost("/user/settings/provider", async (HttpContext context, AppDbContext db, ClaimsPrincipal user) => {
+            var form = await context.Request.ReadFormAsync();
+            var provider = form["provider"].ToString();
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var u = await db.Users.FindAsync(userId);
+            if (u != null) {
+                u.DefaultProvider = provider;
+                await db.SaveChangesAsync();
+            }
+            return Results.Ok();
+        }).DisableAntiforgery();
+
+        group.MapPost("/chat/settings/provider", async (HttpContext context, AppDbContext db, ClaimsPrincipal user) => {
+            var form = await context.Request.ReadFormAsync();
+            var id = int.Parse(form["id"]!);
+            var provider = form["provider"].ToString();
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var session = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
+            if (session != null) {
+                session.PreferredProvider = provider;
+                await db.SaveChangesAsync();
+            }
+            return Results.Ok();
+        }).DisableAntiforgery();
+
         group.MapPost("/chat", async (HttpContext context, AppDbContext db, AiService ai, 
             MemoryConsolidationService consolidation, ClaimsPrincipal user) => {
             var form = await context.Request.ReadFormAsync();
             var content = form["content"].ToString();
             var sessionIdStr = form["sessionId"].ToString();
             int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
-            var provider = form["provider"].ToString() is { Length: > 0 } p ? p : "gemini";
+            var provider = form["provider"].ToString();
             var selectedAgents = form["selectedAgents"].ToString().Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+            var agentIdStr = form["agentId"].ToString();
+            int? agentId = int.TryParse(agentIdStr, out var aid) ? aid : null;
             int? sessionId = int.TryParse(sessionIdStr, out var id) ? id : null;
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+            var u = await db.Users.FindAsync(userId);
             var isCooperative = form["mode"] == "cooperative";
 
             ChatSession? session;
@@ -211,9 +240,18 @@ public static class ChatEndpoints
             }
 
             if (session == null) {
-                session = new ChatSession { UserId = userId, ProjectId = projectId, Title = content.Length > 20 ? content[..20] + "..." : content };
+                session = new ChatSession { 
+                    UserId = userId, 
+                    ProjectId = projectId, 
+                    Title = content.Length > 20 ? content[..20] + "..." : content,
+                    PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? "gemini") : provider
+                };
                 db.ChatSessions.Add(session);
                 await db.SaveChangesAsync();
+            }
+
+            if (string.IsNullOrEmpty(provider)) {
+                provider = session.PreferredProvider ?? u?.DefaultProvider ?? "gemini";
             }
 
             var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
@@ -234,14 +272,14 @@ public static class ChatEndpoints
                 _ = Task.Run(() => consolidation.TryConsolidateAsync(content, html, userId));
 
                 session.UpdatedAt = DateTime.UtcNow;
-                if (session.Title.StartsWith("New Chat")) {
+                if (session.Title.StartsWith("New Chat") || session.Title == content[..Math.Min(content.Length, 20)] + (content.Length > 20 ? "..." : "")) {
                     session.Title = await ai.GenerateTitleAsync(content, html, provider);
                 }
                 await db.SaveChangesAsync();
 
                 return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg), "text/html");
             } else {
-                aiResponse = await ai.GetResponseAsync(content, userId, session.Id, provider);
+                aiResponse = await ai.GetResponseAsync(content, userId, session.Id, provider, agentId);
                 var aMsg = new Message { ChatSessionId = session.Id, Content = aiResponse, IsAi = true };
                 db.Messages.Add(aMsg);
                 await db.SaveChangesAsync();
@@ -249,7 +287,7 @@ public static class ChatEndpoints
                 _ = Task.Run(() => consolidation.TryConsolidateAsync(content, aiResponse, userId));
 
                 session.UpdatedAt = DateTime.UtcNow;
-                if (session.Title.StartsWith("New Chat")) {
+                if (session.Title.StartsWith("New Chat") || session.Title == content[..Math.Min(content.Length, 20)] + (content.Length > 20 ? "..." : "")) {
                     session.Title = await ai.GenerateTitleAsync(content, aiResponse, provider);
                 }
                 await db.SaveChangesAsync();
@@ -261,20 +299,33 @@ public static class ChatEndpoints
         group.MapPost("/chat/stream", async (HttpContext context, AppDbContext db, AiService ai, ClaimsPrincipal user) => {
             var form = await context.Request.ReadFormAsync();
             var content = form["content"].ToString();
-            var provider = form["provider"].ToString() is { Length: > 0 } p ? p : "gemini";
+            var provider = form["provider"].ToString();
             var sessionIdStr = form["sessionId"].ToString();
+            var agentIdStr = form["agentId"].ToString();
+            int? agentId = int.TryParse(agentIdStr, out var aid) ? aid : null;
             int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
             int? sessionId = int.TryParse(sessionIdStr, out var id) ? id : null;
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
+            var u = await db.Users.FindAsync(userId);
+
             ChatSession? session = sessionId.HasValue
                 ? await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId)
                 : null;
-            
+
             if (session == null) {
-                session = new ChatSession { UserId = userId, ProjectId = projectId, Title = content.Length > 20 ? content[..20] + "..." : content };
+                session = new ChatSession { 
+                    UserId = userId, 
+                    ProjectId = projectId, 
+                    Title = content.Length > 20 ? content[..20] + "..." : content,
+                    PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? "gemini") : provider
+                };
                 db.ChatSessions.Add(session);
                 await db.SaveChangesAsync();
+            }
+
+            if (string.IsNullOrEmpty(provider)) {
+                provider = session.PreferredProvider ?? u?.DefaultProvider ?? "gemini";
             }
 
             var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
@@ -287,7 +338,7 @@ public static class ChatEndpoints
             context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
 
             var fullResponse = new StringBuilder();
-            await foreach (var chunk in ai.GetResponseStreamAsync(content, userId, session.Id, provider))
+            await foreach (var chunk in ai.GetResponseStreamAsync(content, userId, session.Id, provider, agentId))
             {
                 fullResponse.Append(chunk);
                 var data = chunk.Replace("\n", "\\n").Replace("\r", "\\r");
@@ -313,10 +364,13 @@ public static class ChatEndpoints
         {
             var form = await context.Request.ReadFormAsync();
             var content = form["content"].ToString();
-            var provider = form["provider"].ToString() is { Length: > 0 } p ? p : "gemini";
+            var provider = form["provider"].ToString();
             int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
-            int? sessionId = int.TryParse(form["sessionId"].ToString(), out var sid) ? sid : null;
+            var sessionIdStr = form["sessionId"].ToString();
+            int? sessionId = int.TryParse(sessionIdStr, out var sid) ? sid : null;
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+            var u = await db.Users.FindAsync(userId);
 
             context.Response.Headers.Append("Content-Type", "text/event-stream");
             context.Response.Headers.Append("Cache-Control", "no-cache");
@@ -333,9 +387,18 @@ public static class ChatEndpoints
                 : null;
             if (session == null)
             {
-                session = new ChatSession { UserId = userId, ProjectId = projectId, Title = content.Length > 20 ? content[..20] + "..." : content };
+                session = new ChatSession { 
+                    UserId = userId, 
+                    ProjectId = projectId, 
+                    Title = content.Length > 20 ? content[..20] + "..." : content,
+                    PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? "gemini") : provider
+                };
                 db.ChatSessions.Add(session);
                 await db.SaveChangesAsync();
+            }
+
+            if (string.IsNullOrEmpty(provider)) {
+                provider = session.PreferredProvider ?? u?.DefaultProvider ?? "gemini";
             }
 
             context.Response.Headers.Append("X-Session-Id", session.Id.ToString());

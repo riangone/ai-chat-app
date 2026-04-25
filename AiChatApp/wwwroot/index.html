@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title data-i18n="app-title">AI Chat Pro</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#6366f1">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="AI Chat">
+    <meta name="mobile-web-app-capable" content="yes">
     <script src="https://unpkg.com/htmx.org@2.0.0"></script>
     <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.0/dist/full.min.css" rel="stylesheet" />
@@ -19,6 +25,11 @@
         .chat { animation: fadeIn 0.3s ease-out forwards; }
         #chat-box { scroll-behavior: smooth; }
         .markdown pre { overflow-x: auto; max-width: 100%; border-radius: 8px; margin: 0.5rem 0; background: rgba(0,0,0,0.05); padding: 1rem; }
+        .markdown table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; border: 1px solid hsl(var(--bc) / 0.1); border-radius: 0.5rem; overflow: hidden; display: block; overflow-x: auto; }
+        .markdown th { background: hsl(var(--b2)); color: hsl(var(--bc)); font-weight: bold; text-align: left; padding: 0.75rem; border-bottom: 2px solid hsl(var(--bc) / 0.1); }
+        .markdown td { padding: 0.75rem; border-bottom: 1px solid hsl(var(--bc) / 0.05); }
+        .markdown tr:last-child td { border-bottom: none; }
+        .markdown tr:nth-child(even) { background: hsl(var(--bc) / 0.02); }
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: hsl(var(--bc) / 0.1); border-radius: 10px; }
         
@@ -55,7 +66,7 @@
     </style>
     <script>
         const themes = ["light", "dark", "cupcake", "bumblebee", "emerald", "corporate", "synthwave", "retro", "cyberpunk", "valentine", "halloween", "garden", "forest", "aqua", "lofi", "pastel", "fantasy", "wireframe", "black", "luxury", "dracula", "cmyk", "autumn", "business", "acid", "lemonade", "night", "coffee", "winter"];
-        let currentUser = null, swiper = null, selectedAgents = [], selectedProjectId = null, isSending = false, currentLang = localStorage.getItem('lang') || 'en';
+        let currentUser = null, swiper = null, selectedProjectId = null, selectedAgentId = null, isSending = false, currentLang = localStorage.getItem('lang') || 'en';
         function setTheme(t) { document.documentElement.setAttribute('data-theme', t); localStorage.setItem('theme', t); }
         function initTheme() { const s = localStorage.getItem('theme') || 'light'; setTheme(s); document.querySelectorAll('.theme-controller').forEach(c => { if(c.value===s) c.checked=true; c.addEventListener('change', e=>setTheme(e.target.value)); }); }
         function setLanguage(l) { currentLang = l; localStorage.setItem('lang', l); updateUI(); }
@@ -83,11 +94,45 @@
         function syncActiveSessionFromDom() { 
             const activeChatBox = document.querySelector('#chat-box'), sessionInput = document.getElementById('session-id-input'); 
             const sid = activeChatBox?.dataset.sessionId || '';
+            const prov = activeChatBox?.dataset.provider || '';
             if (sessionInput) sessionInput.value = sid;
             const delBtn = document.getElementById('delete-current-chat-btn');
             if (delBtn) delBtn.classList.toggle('hidden', !sid);
+            
+            if (prov) {
+                const sel = document.querySelector('select[name="provider"]');
+                if (sel) sel.value = prov;
+            } else if (!sid) {
+                // If no session, use user default
+                const sel = document.querySelector('select[name="provider"]');
+                if (sel && currentUser?.defaultProvider) sel.value = currentUser.defaultProvider;
+            }
         }
-        function syncProjectContext() { const projectInput = document.getElementById('project-id-input'); if (projectInput) projectInput.value = selectedProjectId || ''; }
+        async function changeSessionProvider(provider) {
+            const sid = document.getElementById('session-id-input').value;
+            if (!sid) {
+                // If no active session, we might want to change user default instead
+                return changeDefaultProvider(provider);
+            }
+            const fd = new FormData();
+            fd.append('id', sid);
+            fd.append('provider', provider);
+            try { await fetch('/api/chat/settings/provider', { method: 'POST', body: fd }); } catch(e) { console.error(e); }
+        }
+        async function changeDefaultProvider(provider) {
+            const fd = new FormData();
+            fd.append('provider', provider);
+            try { 
+                await fetch('/api/user/settings/provider', { method: 'POST', body: fd }); 
+                if (currentUser) currentUser.defaultProvider = provider;
+            } catch(e) { console.error(e); }
+        }
+        function syncProjectContext() { 
+            const projectInput = document.getElementById('project-id-input'); 
+            if (projectInput) projectInput.value = selectedProjectId || ''; 
+            const agentInput = document.getElementById('selected-agent-id-input');
+            if (agentInput) agentInput.value = selectedAgentId || '';
+        }
         function renderMarkdown() { 
             document.querySelectorAll('.markdown .content-body').forEach(el => { 
                 if (el.dataset.rendered === 'true') return; 
@@ -222,6 +267,9 @@
             const u = currentUser?.username || '...', i = currentUser?.id ?? '--', init = u && u !== '...' ? u[0].toUpperCase() : '?';
             const sn = document.getElementById('settings-user-display-name'), si = document.getElementById('settings-user-id'), ss = document.getElementById('settings-auth-status'), hn = document.getElementById('settings-hero-name'), ha = document.getElementById('settings-hero-avatar'), sa = document.getElementById('sidebar-avatar'), sun = document.getElementById('sidebar-username');
             if (sa) sa.textContent = init; if (sun) sun.textContent = u; if (sn) sn.textContent = u; if (si) si.textContent = i; if (ss) ss.textContent = currentUser ? i18n('authenticated') : i18n('loading'); if (hn) hn.textContent = u; if (ha) ha.textContent = init;
+            
+            const dp = document.getElementById('default-provider-select');
+            if (dp && currentUser?.defaultProvider) dp.value = currentUser.defaultProvider;
         }
         async function loadCurrentUser() { try { const r = await fetch('/api/auth/me'); if (!r.ok) return; currentUser = await r.json(); renderUserProfile(); } catch {} }
         async function handlePasswordChange(form) {
@@ -233,19 +281,19 @@
                 if (r.ok) form.reset();
             } catch (e) { alert("Failed to update password."); }
         }
-        function setMode(m) {
-            const mi=document.getElementById('mode-input'),nb=document.getElementById('mode-normal-btn'),mb=document.getElementById('mode-multi-btn'),s=document.getElementById('agent-selector');
-            if(m==='cooperative'){mi.value='cooperative';nb.classList.replace('btn-primary','btn-ghost');mb.classList.replace('btn-ghost','btn-secondary');s.classList.remove('hidden');loadAvailableAgents();}
-            else{mi.value='';selectedAgents=[];nb.classList.replace('btn-ghost','btn-primary');mb.classList.replace('btn-secondary','btn-ghost');s.classList.add('hidden');document.getElementById('agent-chips').innerHTML='';}
-        }
-        async function loadAvailableAgents() { try { const r=await fetch('/api/agents/list'), a=await r.json(), c=document.getElementById('agent-chips'); c.innerHTML=(a.length ? a.map(x=>`<button type="button" onclick="toggleAgent('${x.name}')" id="chip-${x.name}" class="btn btn-xs rounded-full px-3 ${selectedAgents.includes(x.name)?'btn-primary':'btn-ghost border border-base-content/10'}">${x.displayName||x.name}</button>`).join('') : `<span class="text-xs opacity-40">${i18n('no-agents')}</span>`); } catch(e) { document.getElementById('agent-chips').innerHTML=`<span class="text-xs text-error">${i18n('loading-failed')}</span>`; } }
-        function toggleAgent(n) { const c=document.getElementById(`chip-${n}`),i=selectedAgents.indexOf(n); if(!c) return; if(i>-1){selectedAgents.splice(i,1);c.classList.replace('btn-primary','btn-ghost');}else{selectedAgents.push(n);c.classList.replace('btn-ghost','btn-primary');} }
         async function handleFormSubmit(e) {
             if(e)e.preventDefault(); if(isSending) return false;
             const f=document.getElementById('chat-form'),fd=new FormData(f),c=(fd.get('content')||'').trim(); if(!c)return false;
-            if(selectedProjectId) fd.set('projectId', selectedProjectId); if(selectedAgents.length>0)fd.set('selectedAgents',selectedAgents.push(','));
+            
+            // Save to input history
+            const hfd = new FormData();
+            hfd.append('content', c);
+            fetch('/api/input-history', { method: 'POST', body: hfd }).catch(console.error);
+
+            if(selectedProjectId) fd.set('projectId', selectedProjectId); 
+            if(selectedAgentId) fd.set('agentId', selectedAgentId);
             addUserMessage(c); document.getElementById('chat-input').value=''; resetInputHeight(); setRequestState(true);
-            try { if(fd.get('mode')==='cooperative'||selectedAgents.length>0)await sendCooperativeMessage(fd); else await sendMessageStream(fd); } finally { setRequestState(false); loadPanelData('history-panel'); if(selectedProjectId) htmx.ajax('GET',`/api/chat/list?projectId=${selectedProjectId}`,'#project-chat-list'); }
+            try { await sendMessageStream(fd); } finally { setRequestState(false); loadPanelData('history-panel'); if(selectedProjectId) htmx.ajax('GET',`/api/chat/list?projectId=${selectedProjectId}`,'#project-chat-list'); }
             return false;
         }
         async function sendMessageStream(fd) {
@@ -262,24 +310,6 @@
                 }
             } catch(err) { b.innerHTML=`<span class="text-error">${i18n('request-error')}</span>`; }
         }
-        async function sendCooperativeMessage(fd) {
-            const list = document.getElementById('message-list') || document.getElementById('chat-box');
-            const id='progress-'+Date.now(); list.insertAdjacentHTML('beforeend',`<div id="${id}" class="chat chat-start message-bubble-container"><div class="chat-bubble bg-base-200 p-4"><span class="loading loading-dots loading-xs"></span></div></div>`); scrollToBottom();
-            try {
-                const r=await fetch('/api/chat/cooperate/stream',{method:'POST',body:fd}); if(!r.ok||!r.body) throw new Error('failed');
-                const headerSessionId=r.headers.get('X-Session-Id'); if(headerSessionId) document.getElementById('session-id-input').value=headerSessionId;
-                const re=r.body.getReader(),de=new TextDecoder(); let en='';
-                while(true){const{done,value}=await re.read(); if(done)break;
-                    const t=de.decode(value);
-                    t.split('\n').forEach(l=>{if(l.startsWith('event: '))en=l.slice(7).trim();
-                        else if(l.startsWith('data: ')){const d=l.slice(6).trim();
-                            if(en==='session'){const p=JSON.parse(d.replace(/\\n/g,'\n')); document.getElementById('session-id-input').value=p.sessionId; document.getElementById(id).innerHTML=`<div class="chat-bubble bg-base-200 p-4"><div class="text-[10px] font-bold opacity-40 uppercase mb-2">Multi-Agent Flow</div><div id="${id}-steps" class="space-y-1"></div></div>`; p.agents.forEach(r=>document.getElementById(`${id}-steps`).insertAdjacentHTML('beforeend',`<div id="${id}-step-${r}" class="text-xs opacity-60">○ ${r}</div>`)); }
-                            else if(en==='step-complete'){const p=JSON.parse(d.replace(/\\n/g,'\n')),el=document.getElementById(`${id}-step-${p.role}`); if(el){el.classList.replace('opacity-60','text-success'); el.innerHTML='✓ '+p.role; }}
-                            else if(en==='final'){document.getElementById(id).outerHTML=renderAiBubble(marked.parse(d.replace(/\\n/g,'\n'))); scrollToBottom(); }
-                        }});
-                }
-            } catch(err) { document.getElementById(id).outerHTML=renderAiBubble(`<span class="text-error">${i18n('request-error')}</span>`); }
-        }
         function addUserMessage(c) { 
             const wb=document.getElementById('welcome-message'); if(wb)wb.remove(); 
             const list = document.getElementById('message-list') || document.getElementById('chat-box');
@@ -292,20 +322,78 @@
         function copyText(b) { navigator.clipboard.writeText(b.closest('.chat').querySelector('.markdown')?.innerText || b.closest('.chat').querySelector('.chat-bubble').innerText); }
         function forwardText(b) { const i=document.getElementById('chat-input'); i.value='> '+(b.closest('.chat').querySelector('.markdown')?.innerText || b.closest('.chat').querySelector('.chat-bubble').innerText)+'\n\n'; i.focus(); autoExpand(i); }
         function saveToMemory(b) { document.getElementById('memory-content').value=b.closest('.chat').querySelector('.markdown')?.innerText || b.closest('.chat').querySelector('.chat-bubble').innerText; memory_modal.showModal(); }
-        function selectProject(id,n,p) { selectedProjectId=id; syncProjectContext(); document.getElementById('current-project-name').textContent=n; document.getElementById('current-project-path').textContent=p; document.getElementById('selected-project-info').classList.remove('hidden'); document.getElementById('project-context-banner').classList.remove('hidden'); document.getElementById('project-banner-name').textContent=n; document.getElementById('session-id-input').value=''; loadAgents(id); htmx.ajax('GET',`/api/chat/list?projectId=${id}`,'#project-chat-list'); }
-        function deselectProject() { selectedProjectId=null; syncProjectContext(); document.getElementById('selected-project-info').classList.add('hidden'); document.getElementById('project-context-banner').classList.add('hidden'); document.getElementById('session-id-input').value=''; }
+        function selectProject(id,n,p) { 
+            selectedProjectId=id; 
+            selectedAgentId=null;
+            syncProjectContext(); 
+            document.getElementById('current-project-name').textContent=n; 
+            document.getElementById('current-project-path').textContent=p; 
+            document.getElementById('selected-project-info').classList.remove('hidden'); 
+            document.getElementById('project-context-banner').classList.remove('hidden'); 
+            document.getElementById('project-banner-name').textContent=n; 
+            document.getElementById('session-id-input').value=''; 
+            const providerSelector = document.getElementById('provider-selector-container');
+            if (providerSelector) providerSelector.classList.add('hidden');
+            loadAgents(id); 
+            htmx.ajax('GET',`/api/chat/list?projectId=${id}`,'#project-chat-list'); 
+        }
+        function deselectProject() { 
+            let selectedProjectId = null;
+            let selectedAgentId = null;
+            let editingAgentId = null;
+            syncProjectContext(); 
+            document.getElementById('selected-project-info').classList.add('hidden'); 
+            document.getElementById('project-context-banner').classList.add('hidden'); 
+            document.getElementById('project-agent-selector').classList.add('hidden');
+            document.getElementById('session-id-input').value=''; 
+            const providerSelector = document.getElementById('provider-selector-container');
+            if (providerSelector) providerSelector.classList.remove('hidden');
+        }
         async function loadAgents(pid) { 
             const r=await fetch('/api/projects'), p=await r.json(), x=p.find(v=>v.id===pid); 
             if(!x) return; 
             window.currentProjectAgents = x.agents;
+            
+            // Render for project settings
             document.getElementById('agent-list').innerHTML = x.agents.map(a => `
                 <div class="flex items-center justify-between p-2 bg-base-300 rounded text-xs group">
                     <button onclick="viewAgentPrompt(${a.id})" class="flex-1 text-left hover:text-primary transition-colors truncate mr-2">
                         <span class="font-bold">${a.roleName}</span>
-                        ${a.aiProvider ? `<span class="opacity-50 ml-1">(${a.aiProvider})</span>` : ''}
+                        ${a.preferredProvider ? `<span class="opacity-50 ml-1">(${a.preferredProvider})</span>` : ''}
                     </button>
-                    <button onclick="deleteAgent(${pid},${a.id})" class="text-error opacity-40 group-hover:opacity-100 transition-opacity flex-none px-1">✕</button>
-                </div>`).join('') || '<p class="text-center opacity-40 py-4">No agents</p>'; 
+                    <div class="flex items-center gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
+                        <button onclick="startEditAgent(${a.id})" class="btn btn-ghost btn-xs px-1 hover:text-primary">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" /></svg>
+                        </button>
+                        <button onclick="deleteAgent(${pid},${a.id})" class="btn btn-ghost btn-xs px-1 hover:text-error text-error">✕</button>
+                    </div>
+                </div>`).join('') || '<p class="text-center opacity-40 py-4">No agents</p>';
+            
+            // Render for chat selector
+            const selector = document.getElementById('project-agent-selector');
+            const chips = document.getElementById('project-agent-chips');
+            if (x.agents.length > 0) {
+                selector.classList.remove('hidden');
+                chips.innerHTML = x.agents.map(a => `
+                    <button type="button" onclick="selectAgent(${a.id})" id="agent-chip-${a.id}" class="btn btn-xs rounded-full px-3 ${selectedAgentId === a.id ? 'btn-secondary' : 'btn-ghost border border-base-content/10'}">${a.roleName}</button>
+                `).join('');
+                if (!selectedAgentId) selectAgent(x.agents[0].id);
+            } else {
+                selector.classList.add('hidden');
+                selectedAgentId = null;
+            }
+        }
+        function selectAgent(aid) {
+            if (selectedAgentId) {
+                const prev = document.getElementById(`agent-chip-${selectedAgentId}`);
+                if (prev) prev.classList.replace('btn-secondary', 'btn-ghost');
+                if (prev) prev.classList.add('border', 'border-base-content/10');
+            }
+            selectedAgentId = aid;
+            const curr = document.getElementById(`agent-chip-${aid}`);
+            if (curr) curr.classList.replace('btn-ghost', 'btn-secondary');
+            if (curr) curr.classList.remove('border', 'border-base-content/10');
+            syncProjectContext();
         }
         function viewAgentPrompt(aid) {
             const a = (window.currentProjectAgents || []).find(a => a.id === aid);
@@ -316,7 +404,58 @@
             }
         }
         async function deleteAgent(pid,aid) { if(await fetch(`/api/projects/${pid}/agents/${aid}`,{method:'DELETE'})) loadAgents(pid); }
-        async function addNewAgent() { const f=new FormData(); f.append('roleName',document.getElementById('new-agent-role').value); f.append('systemPrompt',document.getElementById('new-agent-prompt').value); f.append('aiProvider',document.getElementById('new-agent-provider').value); f.append('color',document.getElementById('new-agent-color').value); if(await fetch(`/api/projects/${selectedProjectId}/agents`,{method:'POST',body:f})){loadAgents(selectedProjectId);document.getElementById('new-agent-role').value='';document.getElementById('new-agent-prompt').value='';} }
+        function startEditAgent(aid) {
+            const a = (window.currentProjectAgents || []).find(a => a.id === aid);
+            if (!a) return;
+            
+            editingAgentId = aid;
+            document.getElementById('new-agent-role').value = a.roleName;
+            document.getElementById('new-agent-prompt').value = a.systemPrompt;
+            document.getElementById('new-agent-provider').value = a.preferredProvider || 'gemini';
+            document.getElementById('new-agent-color').value = a.color || 'primary';
+            
+            const btn = document.getElementById('add-agent-btn');
+            if (btn) {
+                btn.textContent = 'Update';
+                btn.classList.replace('btn-primary', 'btn-warning');
+            }
+        }
+
+        function cancelEditAgent() {
+            editingAgentId = null;
+            document.getElementById('new-agent-role').value = '';
+            document.getElementById('new-agent-prompt').value = '';
+            const btn = document.getElementById('add-agent-btn');
+            if (btn) {
+                btn.textContent = 'Add';
+                btn.classList.replace('btn-warning', 'btn-primary');
+            }
+        }
+
+        async function addNewAgent() { 
+            const f=new FormData(); 
+            f.append('roleName',document.getElementById('new-agent-role').value); 
+            f.append('systemPrompt',document.getElementById('new-agent-prompt').value); 
+            f.append('preferredProvider',document.getElementById('new-agent-provider').value); 
+            f.append('color',document.getElementById('new-agent-color').value); 
+            
+            const url = editingAgentId 
+                ? `/api/projects/${selectedProjectId}/agents/${editingAgentId}`
+                : `/api/projects/${selectedProjectId}/agents`;
+            const method = editingAgentId ? 'PUT' : 'POST';
+
+            try {
+                const res = await fetch(url, { method, body: f });
+                if(res.ok){
+                    loadAgents(selectedProjectId);
+                    cancelEditAgent();
+                } else {
+                    alert("Failed to save agent: " + await res.text());
+                }
+            } catch (err) {
+                alert("Network error while saving agent.");
+            }
+        }
         function applyRolePreset(n) { const p=(translations[currentLang].presets||{})[n]; if(p){document.getElementById('new-agent-role').value=n;document.getElementById('new-agent-prompt').value=p.prompt;} }
         function scrollToBottom() { const b=document.getElementById('chat-box'); if(b) b.scrollTop = b.scrollHeight; }
         function autoExpand(el) { el.style.height='auto'; el.style.height=(el.scrollHeight)+'px'; }
@@ -489,8 +628,52 @@
 
         window.addEventListener('DOMContentLoaded', () => {
             initTheme(); updateUI(); renderUserProfile(); renderMarkdown(); syncActiveSessionFromDom(); syncProjectContext(); wirePanelNavigation(); loadCurrentUser(); loadPanelData('history-panel');
+            
+            document.body.addEventListener('htmx:afterSwap', (e) => {
+                if (e.detail.pathInfo.requestPath.includes('modals.html')) {
+                    updatePresetDropdown();
+                    syncProviders();
+                }
+            });
+
             if (document.getElementById('global-footer')) document.getElementById('global-footer').style.display = 'block';
-            swiper = new Swiper('.content-swiper', { direction: 'horizontal', loop: false, slidesPerView: 1, allowTouchMove: true, speed: 300, touchStartPreventDefault: false, on: { slideChange: function() { const index = this.activeIndex; updateTabBar(index); const footer = document.getElementById('global-footer'); if (footer) footer.style.display = (index === 0) ? 'block' : 'none'; } } });
+            swiper = new Swiper('.content-swiper', {
+                direction: 'horizontal',
+                loop: false,
+                slidesPerView: 1,
+                allowTouchMove: true,
+                speed: 300,
+                touchStartPreventDefault: false,
+                on: {
+                    slideChange: function() {
+                        const index = this.activeIndex;
+                        updateTabBar(index);
+                        const footer = document.getElementById('global-footer');
+                        if (footer) footer.style.display = (index === 0) ? 'block' : 'none';
+                    }
+                }
+            });
+
+            // 入力中・横スクロール可能要素内はスワイプを無効化
+            document.addEventListener('touchstart', function(e) {
+                if (!swiper) return;
+                const activeEl = document.activeElement;
+                const isInputFocused = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+
+                // タッチ開始点から親要素を辿り、横スクロール可能な要素があればSwiper無効
+                let el = e.target;
+                let isInHScrollable = false;
+                while (el && el !== document.body) {
+                    const ox = window.getComputedStyle(el).overflowX;
+                    if ((ox === 'auto' || ox === 'scroll') && el.scrollWidth > el.clientWidth + 2) {
+                        isInHScrollable = true;
+                        break;
+                    }
+                    el = el.parentElement;
+                }
+
+                swiper.allowTouchMove = !isInputFocused && !isInHScrollable;
+            }, { passive: true, capture: true });
             document.body.addEventListener('htmx:afterOnLoad', function(evt) { if (evt.detail.target.id === 'chat-panel' || evt.detail.target.id === 'chat-box') { renderMarkdown(); syncActiveSessionFromDom(); switchMainTab(0); } });
         });
         marked.setOptions({ gfm: true, breaks: true });
@@ -672,7 +855,7 @@
                     </div>
                     <div class="swiper-slide">
                         <div class="shell-header"><div class="shell-badge"><span data-i18n="settings-title">Settings</span></div></div>
-                        <div id="settings-panel" class="flex flex-col flex-1"><div class="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar"><div class="max-w-5xl mx-auto space-y-6"><div class="settings-card flex flex-col md:flex-row md:items-center md:justify-between gap-6"><div class="flex items-center gap-4"><div id="settings-hero-avatar" class="w-16 h-16 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-2xl font-black shadow-lg">?</div><div><div class="text-xs font-black uppercase tracking-[0.24em] opacity-40" data-i18n="settings">Settings</div><h2 id="settings-hero-name" class="text-3xl font-black">...</h2><p class="text-sm opacity-60" data-i18n="settings-subtitle">Manage your account, language, theme, and session preferences.</p></div></div><form action="/api/auth/logout" method="POST"><button class="btn btn-error rounded-2xl px-6" data-i18n="logout">Logout</button></form></div><div class="grid grid-cols-1 xl:grid-cols-2 gap-6"><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="account">Account</div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="username">Username</span><strong id="settings-user-display-name" class="text-base">...</strong></div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="user-id">User ID</span><strong id="settings-user-id" class="text-base">--</strong></div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="auth-status">Status</span><strong id="settings-auth-status" class="text-base text-success">...</strong></div></section><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="security">Security</div><form id="change-password-form" onsubmit="event.preventDefault(); handlePasswordChange(this);" class="space-y-3"><div class="form-control w-full"><label class="label"><span class="label-text text-xs opacity-60" data-i18n="current-password">Current Password</span></label><input type="password" name="currentPassword" class="input input-bordered w-full" required /></div><div class="form-control w-full"><label class="label"><span class="label-text text-xs opacity-60" data-i18n="new-password">New Password</span></label><input type="password" name="newPassword" class="input input-bordered w-full" required /></div><button type="submit" class="btn btn-primary w-full rounded-xl" data-i18n="update-password">Update Password</button></form></section></div><section class="settings-card space-y-6"><div class="settings-section-title" data-i18n="appearance">Appearance</div><div class="space-y-2"><label class="label"><span class="label-text font-bold" data-i18n="select-theme">Select Theme</span></label><div class="settings-theme-grid no-scrollbar"></div></div><div class="divider opacity-5"></div><div class="space-y-4"><label class="label"><span class="label-text font-bold" data-i18n="language">Language</span></label><div id="settings-language-switcher" class="flex flex-wrap gap-2"></div></div></section></div></div></div>
+                        <div id="settings-panel" class="flex flex-col flex-1"><div class="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar"><div class="max-w-5xl mx-auto space-y-6"><div class="settings-card flex flex-col md:flex-row md:items-center md:justify-between gap-6"><div class="flex items-center gap-4"><div id="settings-hero-avatar" class="w-16 h-16 rounded-2xl bg-primary text-primary-content flex items-center justify-center text-2xl font-black shadow-lg">?</div><div><div class="text-xs font-black uppercase tracking-[0.24em] opacity-40" data-i18n="settings">Settings</div><h2 id="settings-hero-name" class="text-3xl font-black">...</h2><p class="text-sm opacity-60" data-i18n="settings-subtitle">Manage your account, language, theme, and session preferences.</p></div></div><form action="/api/auth/logout" method="POST"><button class="btn btn-error rounded-2xl px-6" data-i18n="logout">Logout</button></form></div><div class="grid grid-cols-1 xl:grid-cols-2 gap-6"><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="account">Account</div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="username">Username</span><strong id="settings-user-display-name" class="text-base">...</strong></div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="user-id">User ID</span><strong id="settings-user-id" class="text-base">--</strong></div><div class="settings-kv"><span class="text-sm opacity-60">Default AI Model</span><select id="default-provider-select" onchange="changeDefaultProvider(this.value)" class="select select-bordered select-sm rounded-xl"><option value="gemini">Gemini</option><option value="gh-copilot">GitHub Copilot</option><option value="claude">Claude Code</option><option value="codex">Codex</option></select></div><div class="settings-kv"><span class="text-sm opacity-60" data-i18n="auth-status">Status</span><strong id="settings-auth-status" class="text-base text-success">...</strong></div></section><section class="settings-card space-y-4"><div class="settings-section-title" data-i18n="security">Security</div><form id="change-password-form" onsubmit="event.preventDefault(); handlePasswordChange(this);" class="space-y-3"><div class="form-control w-full"><label class="label"><span class="label-text text-xs opacity-60" data-i18n="current-password">Current Password</span></label><input type="password" name="currentPassword" class="input input-bordered w-full" required /></div><div class="form-control w-full"><label class="label"><span class="label-text text-xs opacity-60" data-i18n="new-password">New Password</span></label><input type="password" name="newPassword" class="input input-bordered w-full" required /></div><button type="submit" class="btn btn-primary w-full rounded-xl" data-i18n="update-password">Update Password</button></form></section></div><section class="settings-card space-y-6"><div class="settings-section-title" data-i18n="appearance">Appearance</div><div class="space-y-2"><label class="label"><span class="label-text font-bold" data-i18n="select-theme">Select Theme</span></label><div class="settings-theme-grid no-scrollbar"></div></div><div class="divider opacity-5"></div><div class="space-y-4"><label class="label"><span class="label-text font-bold" data-i18n="language">Language</span></label><div id="settings-language-switcher" class="flex flex-wrap gap-2"></div></div></section></div></div></div>
                     </div>
                 </div>
             </div>
@@ -686,5 +869,12 @@
     <!-- Modals component loaded via HTMX -->
     <div hx-get="/components/modals.html" hx-trigger="load" hx-swap="outerHTML"></div>
 
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        });
+      }
+    </script>
 </body>
 </html>

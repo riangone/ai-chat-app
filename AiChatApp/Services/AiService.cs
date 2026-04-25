@@ -82,16 +82,18 @@ public class AiService
 
     /// <summary>通常チャット。会話履歴・記憶・スキルを注入してAIを呼び出す。</summary>
     public async Task<string> GetResponseAsync(
-        string prompt, int userId, int? chatSessionId, string provider = "gemini")
+        string prompt, int userId, int? chatSessionId, string provider = "gemini", int? agentId = null)
     {
-        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agentRole: null);
+        AgentProfile? agent = agentId.HasValue ? await _db.AgentProfiles.FindAsync(agentId.Value) : null;
+        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agent?.RoleName, agent);
         var workingDir = await GetProjectRootAsync(chatSessionId);
         var history = await BuildHistoryBlockAsync(chatSessionId, limit: 10);
         string fullPrompt = string.IsNullOrEmpty(history)
             ? prompt
             : $"{history}\nUser: {prompt}";
 
-        return await ExecuteCliDirectAsync(fullPrompt, provider, systemPrompt, workingDir);
+        var targetProvider = agent?.PreferredProvider ?? provider;
+        return await ExecuteCliDirectAsync(fullPrompt, targetProvider, systemPrompt, workingDir);
     }
 
     /// <summary>
@@ -334,16 +336,18 @@ public class AiService
     }
 
     public async IAsyncEnumerable<string> GetResponseStreamAsync(
-        string prompt, int userId, int? chatSessionId, string provider = "gemini")
+        string prompt, int userId, int? chatSessionId, string provider = "gemini", int? agentId = null)
     {
-        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agentRole: null);
+        AgentProfile? agent = agentId.HasValue ? await _db.AgentProfiles.FindAsync(agentId.Value) : null;
+        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agent?.RoleName, agent);
         var workingDir = await GetProjectRootAsync(chatSessionId);
         var history = await BuildHistoryBlockAsync(chatSessionId, limit: 10);
         string fullPrompt = string.IsNullOrEmpty(history)
             ? prompt
             : $"{history}\nUser: {prompt}";
 
-        var processInfo = SetupProcessInfo(provider, workingDir);
+        var targetProvider = agent?.PreferredProvider ?? provider;
+        var processInfo = SetupProcessInfo(targetProvider, workingDir);
 
         using var process = Process.Start(processInfo);
         if (process == null) 
@@ -483,17 +487,22 @@ public class AiService
         string result = await ExecuteCliAsync(checkPrompt, provider, systemPrompt: null);
         return result.Contains("OK", StringComparison.OrdinalIgnoreCase);
     }
-private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int? chatSessionId, string? agentRole)
-{
-    var memories = await _memorySearch.SearchAsync(prompt, userId);
-    var skills = await _memorySearch.SearchSkillsAsync(prompt, userId, agentRole);
+    private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int? chatSessionId, string? agentRole, AgentProfile? selectedAgent = null)
+    {
+        var memories = await _memorySearch.SearchAsync(prompt, userId);
+        var skills = await _memorySearch.SearchSkillsAsync(prompt, userId, agentRole);
 
-    var sb = new StringBuilder("あなたは高度なAIアシスタントです。現在はソフトウェア開発プロジェクトのコンテキストで動作しています。");
-    sb.Append("\nユーザーから具体的な実装や修正の指示があった場合、単にコードを提示するだけでなく、プロジェクトのファイル構造を理解し、必要に応じてファイルを直接操作・更新する計画を立てて実行してください。");
-    sb.Append("\n出力には、実行すべき具体的なアクション（ファイルの読み込み、書き込み、置換など）を明確に含めてください。");
+        var sb = new StringBuilder("あなたは高度なAIアシスタントです。現在はソフトウェア開発プロジェクトのコンテキストで動作しています。");
+        sb.Append("\nユーザーから具体的な実装や修正の指示があった場合、単にコードを提示するだけでなく、プロジェクトのファイル構造を理解し、必要に応じてファイルを直接操作・更新する計画を立てて実行してください。");
+        sb.Append("\n出力には、実行すべき具体的なアクション（ファイルの読み込み、書き込み、置換など）を明確に含めてください。");
 
-    // Add Project Context if available
-    if (chatSessionId.HasValue)
+        if (selectedAgent != null)
+        {
+            sb.Append($"\n\n[現在のアクティブエージェント]:\n役割: {selectedAgent.RoleName}\n指示: {selectedAgent.SystemPrompt}");
+        }
+
+        // Add Project Context if available
+        if (chatSessionId.HasValue)
         {
             var session = await _db.ChatSessions
                 .Include(s => s.Project)
@@ -509,6 +518,7 @@ private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int
                     sb.Append("\n\n[利用可能なエージェント役割]:\n");
                     foreach (var agent in session.Project.Agents)
                     {
+                        if (selectedAgent != null && agent.Id == selectedAgent.Id) continue;
                         sb.Append($"- {agent.RoleName}: {agent.SystemPrompt}\n");
                     }
                 }
@@ -687,13 +697,13 @@ private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int
             await process.WaitForExitAsync();
 
             if (process.ExitCode != 0 && !string.IsNullOrWhiteSpace(error))
-                return $"Error from {provider}: {error}";
+                return $"[Error from {provider}]: {error}";
 
-            return string.IsNullOrWhiteSpace(output) ? "No response received." : output;
+            return string.IsNullOrWhiteSpace(output) ? "No response received from AI." : output;
         }
         catch (Exception ex)
         {
-            return $"Exception: {ex.Message}";
+            return $"[Exception]: {ex.Message}";
         }
     }
 }
