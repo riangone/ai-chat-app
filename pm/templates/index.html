@@ -28,7 +28,7 @@
     <div class="flex-1">
         <span class="text-lg font-bold">📷 Photo Manager</span>
     </div>
-    <div class="flex-none gap-2">
+    <div class="flex-none gap-2 items-center">
         <span id="photo-count" class="text-sm text-base-content/50 hidden sm:inline">{% if initial_count %}{{ initial_count }} 张照片{% endif %}</span>
         <button class="btn btn-primary btn-sm gap-1"
                 onclick="document.getElementById('upload-modal').showModal()">
@@ -37,6 +37,22 @@
             </svg>
             上传
         </button>
+        <div class="dropdown dropdown-end">
+            <label tabindex="0" class="btn btn-ghost btn-sm gap-1">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                </svg>
+                <span class="hidden sm:inline text-sm">{{ username }}</span>
+            </label>
+            <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-50 w-40 p-2 shadow">
+                <li class="menu-title text-xs px-2">{{ username }}</li>
+                <li>
+                    <form method="post" action="/logout">
+                        <button type="submit" class="w-full text-left text-error">退出登录</button>
+                    </form>
+                </li>
+            </ul>
+        </div>
     </div>
 </div>
 
