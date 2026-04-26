@@ -25,7 +25,6 @@ app.MapMemoryEndpoints();
 app.MapSkillEndpoints();
 app.MapCliEndpoints();
 app.MapHarnessEndpoints();
-app.MapNoteEndpoints();
 app.MapProjectEndpoints();
 app.MapInputHistoryEndpoints();
 app.MapTodoEndpoints();
