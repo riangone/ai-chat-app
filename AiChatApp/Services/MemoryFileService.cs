@@ -12,9 +12,18 @@ public class MemoryFileService
 
     public MemoryFileService(IConfiguration config)
     {
-        var dir = config["MemoryDir"] ??
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        var dir = config["MemoryDir"];
+        if (string.IsNullOrEmpty(dir))
+        {
+            dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 ".claude", "projects", "-home-ubuntu-ws-ai-chat-app", "memory");
+        }
+
+        if (!Path.IsPathRooted(dir))
+        {
+            dir = Path.GetFullPath(dir, Directory.GetCurrentDirectory());
+        }
+
         _memoryDir = dir.Replace("~/", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + "/");
         Directory.CreateDirectory(_memoryDir);
     }
