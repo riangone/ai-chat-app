@@ -76,6 +76,17 @@ public class MemoryFileService
         .Take(maxResults)
         .ToList();
 
+        // キーワードマッチが0件の場合、関連度スコード上位のメモリをフォールバックとして使用
+        if (scored.Count == 0)
+        {
+            var fallback = all
+                .OrderByDescending(m => m.RelevanceScore)
+                .Take(maxResults)
+                .Select(m => (Memory: m, Score: 0))
+                .ToList();
+            scored = fallback;
+        }
+
         // アクセス数をファイルに更新
         var updateTasks = scored.Select(x =>
         {

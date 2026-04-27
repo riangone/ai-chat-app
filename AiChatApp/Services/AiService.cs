@@ -659,20 +659,7 @@ public class AiService
 
     private static string BuildCooperativeHtml(List<AgentStep> steps, string finalOutput)
     {
-        var sb = new StringBuilder("<div class='space-y-4'>");
-
-        foreach (var step in steps.Where(s => s.Role != "Reviewer"))
-        {
-            sb.Append(BuildStepHtml(step));
-        }
-
-        sb.Append($"""
-            <div class='divider text-xs opacity-30'>FINAL OUTPUT</div>
-            <div class='prose prose-sm max-w-none'>{System.Net.WebUtility.HtmlEncode(finalOutput)}</div>
-            </div>
-            """);
-
-        return sb.ToString();
+        return System.Net.WebUtility.HtmlEncode(finalOutput);
     }
 
     private static string ExtractJson(string text)

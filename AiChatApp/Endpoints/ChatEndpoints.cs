@@ -296,7 +296,8 @@ public static class ChatEndpoints
             }
         }).DisableAntiforgery();
 
-        group.MapPost("/chat/stream", async (HttpContext context, AppDbContext db, AiService ai, ClaimsPrincipal user) => {
+        group.MapPost("/chat/stream", async (HttpContext context, AppDbContext db, AiService ai, 
+            MemoryConsolidationService consolidation, ClaimsPrincipal user) => {
             var form = await context.Request.ReadFormAsync();
             var content = form["content"].ToString();
             var provider = form["provider"].ToString();
@@ -356,6 +357,9 @@ public static class ChatEndpoints
             
             await db.SaveChangesAsync();
             await context.Response.WriteAsync("data: [DONE]\n\n");
+
+            // 記憶の抽出をバックグラウンドで実行
+            _ = Task.Run(() => consolidation.TryConsolidateAsync(content, fullResponse.ToString(), userId));
         }).DisableAntiforgery();
 
         group.MapPost("/chat/cooperate/stream", async (
@@ -452,33 +456,6 @@ public static class ChatEndpoints
     public static string RenderMessage(Message m, List<AgentStep>? steps = null) => $@"
     <div class='chat {(m.IsAi ? "chat-start" : "chat-end")} group message-bubble-container'>
         <div class='chat-bubble shadow-sm {(m.IsAi ? "bg-base-200 text-base-content border border-base-300" : "bg-primary text-primary-content")} markdown leading-relaxed p-3 md:p-4 rounded-[18px] {(m.IsAi ? "rounded-bl-none" : "rounded-tr-none")}'>
-            {(steps != null && steps.Any() ? $@"
-                <div class='mb-3 border-b border-base-content/5 pb-3'>
-                    <div class='text-[10px] font-bold opacity-40 uppercase mb-2'>Execution Steps ({steps.Count})</div>
-                    <div class='space-y-1'>{string.Concat(steps.Select(s => {
-                        string badgeClass = s.Role switch {
-                            "Orchestrator" => "badge-info",
-                            "Executor" => "badge-success",
-                            "Reviewer" => "badge-secondary",
-                            _ => "badge-ghost"
-                        };
-                        string retryBadge = s.AttemptNumber > 1 ? $"<span class='badge badge-warning badge-xs ml-1'>Retry #{s.AttemptNumber}</span>" : "";
-                        string acceptedIcon = s.WasAccepted ? "" : "<span class='badge badge-error badge-xs ml-1'>Rejected</span>";
-                        return $@"
-                        <div class='collapse collapse-arrow bg-base-300/30 border border-base-content/10 mb-1'>
-                            <input type='checkbox' />
-                            <div class='collapse-title text-xs font-medium flex items-center gap-2 min-h-0 py-2'>
-                                <span class='badge {badgeClass} badge-xs'>{s.Role}</span>
-                                {retryBadge}{acceptedIcon}
-                                <span class='opacity-40 text-[10px] ml-auto'>{s.DurationMs}ms</span>
-                            </div>
-                            <div class='collapse-content text-xs opacity-80'>
-                                <pre class='whitespace-pre-wrap font-sans text-[11px]'>{WebUtility.HtmlEncode(s.Output)}</pre>
-                            </div>
-                        </div>";
-                    }))}
-                    </div>
-                </div>" : "")}
             <div class='content-body'>{WebUtility.HtmlEncode(m.Content)}</div>
         </div>
         <div class='chat-footer opacity-0 group-hover:opacity-50 transition-opacity flex gap-3 pt-2 px-1'>
