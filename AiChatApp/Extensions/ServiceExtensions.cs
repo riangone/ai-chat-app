@@ -14,7 +14,7 @@ public static class ServiceExtensions
         
         services.AddSingleton<MemoryFileService>();
         services.AddScoped<MemorySearchService>();
-        services.AddScoped<MemoryConsolidationService>();
+        services.AddScoped<MemoryConsolidationService>(); // fire-and-forget用にScopedのまま
         services.AddScoped<ProjectService>();
         services.AddScoped<SessionMemoryService>();
         services.AddScoped<SkillLearningService>();

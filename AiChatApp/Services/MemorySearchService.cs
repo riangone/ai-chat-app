@@ -15,80 +15,11 @@ public class MemorySearchService
         _fileService = fileService;
     }
 
-    /// <summary>
-    /// プロンプトに関連する記憶を多段マッチングで検索する。
-    /// 優先度: (1)タグの完全一致 → (2)タグの部分一致 → (3)コンテンツ部分一致
-    /// </summary>
-    public async Task<List<LongTermMemory>> SearchAsync(string prompt, int userId, int maxResults = 5)
-    {
-        var dbMemories = await _db.LongTermMemories
-            .Where(m => m.UserId == userId && m.RelevanceScore > 20)
-            .ToListAsync();
+    /// <summary>プロンプトに関連する記憶をmdファイルから検索する。</summary>
+    public Task<List<LongTermMemory>> SearchAsync(string prompt, int userId, int maxResults = 5)
+        => _fileService.SearchAsync(prompt, userId, maxResults);
 
-        var dbIds = dbMemories.Select(m => m.Id).ToList();
-        var fileMemories = _fileService.GetFileOnlyMemories(dbIds);
-        var allMemories = dbMemories.Concat(fileMemories).ToList();
-
-        // プロンプトを単語に分割（スペース・句読点で区切り）
-        var promptWords = prompt
-            .Split(new[] { ' ', '　', '、', '。', ',', '.', '!', '?', '\n' },
-                   StringSplitOptions.RemoveEmptyEntries)
-            .Select(w => w.ToLowerInvariant())
-            .Where(w => w.Length >= 2)
-            .ToHashSet();
-
-        var scored = allMemories.Select(m =>
-        {
-            var memTags = m.Tags
-                .Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Select(t => t.Trim().ToLowerInvariant())
-                .ToList();
-
-            int score = 0;
-
-            // (1) タグとプロンプト単語の完全一致 → 高スコア
-            foreach (var tag in memTags)
-            {
-                if (promptWords.Contains(tag)) score += 30;
-            }
-
-            // (2) プロンプト全体にタグが部分一致 → 中スコア
-            foreach (var tag in memTags)
-            {
-                if (prompt.Contains(tag, StringComparison.OrdinalIgnoreCase)) score += 15;
-            }
-
-            // (3) コンテンツがプロンプト単語に含まれる → 低スコア
-            foreach (var word in promptWords)
-            {
-                if (m.Content.Contains(word, StringComparison.OrdinalIgnoreCase)) score += 5;
-            }
-
-            // 記憶自体の重要度を乗算
-            score = (int)(score * (m.RelevanceScore / 100.0));
-
-            return new { Memory = m, Score = score };
-        })
-        .Where(x => x.Score > 0)
-        .OrderByDescending(x => x.Score)
-        .Take(maxResults)
-        .ToList();
-
-        // アクセス履歴を更新
-        foreach (var item in scored)
-        {
-            item.Memory.AccessCount++;
-            item.Memory.LastAccessedAt = DateTime.UtcNow;
-        }
-        if (scored.Any()) await _db.SaveChangesAsync();
-
-        return scored.Select(x => x.Memory).ToList();
-    }
-
-    /// <summary>
-    /// 有効スキルをトリガーキーワードで検索する。
-    /// TriggerKeywords が空のスキルは常に有効扱い（グローバルスキル）。
-    /// </summary>
+    /// <summary>有効スキルをトリガーキーワードで検索する（DB）。</summary>
     public async Task<List<Skill>> SearchSkillsAsync(string prompt, int userId, string? agentRole = null)
     {
         var skills = await _db.Skills
@@ -97,18 +28,14 @@ public class MemorySearchService
 
         return skills.Where(s =>
         {
-            // エージェントロールフィルタ
             if (s.BoundAgentRole != null && s.BoundAgentRole != agentRole) return false;
-
-            // トリガーキーワードが空 → 常に発火
             if (string.IsNullOrWhiteSpace(s.TriggerKeywords)) return true;
 
             var keywords = s.TriggerKeywords
                 .Split(',', StringSplitOptions.RemoveEmptyEntries)
                 .Select(k => k.Trim());
 
-            return keywords.Any(k =>
-                prompt.Contains(k, StringComparison.OrdinalIgnoreCase));
+            return keywords.Any(k => prompt.Contains(k, StringComparison.OrdinalIgnoreCase));
         }).ToList();
     }
 }

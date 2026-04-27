@@ -3,6 +3,9 @@ using System.Text.RegularExpressions;
 
 namespace AiChatApp.Services;
 
+/// <summary>
+/// mdファイルを唯一の記憶ストアとして管理する。DBは使用しない。
+/// </summary>
 public class MemoryFileService
 {
     private readonly string _memoryDir;
@@ -18,108 +21,185 @@ public class MemoryFileService
 
     public string MemoryDir => _memoryDir;
 
-    private string AppMemFilePath(int id) => Path.Combine(_memoryDir, $"mem_{id}.md");
+    // ─── 読み込み ───────────────────────────────────────────────────────────
 
-    public async Task WriteAsync(LongTermMemory memory)
+    /// <summary>指定ユーザーの記憶を全件返す。userId=0のファイルは全ユーザーに共有。</summary>
+    public List<LongTermMemory> GetMemoriesForUser(int userId)
     {
-        var shortDesc = memory.Content.Length > 80 ? memory.Content[..80] + "..." : memory.Content;
-        var content = $"""
-            ---
-            name: {memory.Tags}
-            description: {shortDesc}
-            type: user
-            appMemoryId: {memory.Id}
-            ---
+        if (!Directory.Exists(_memoryDir)) return [];
 
-            {memory.Content}
-            """;
-        await File.WriteAllTextAsync(AppMemFilePath(memory.Id), content);
-        await UpdateMemoryIndex();
-    }
-
-    public void Delete(int memoryId)
-    {
-        var path = AppMemFilePath(memoryId);
-        if (File.Exists(path)) File.Delete(path);
-        _ = UpdateMemoryIndex();
-    }
-
-    public void DeleteFile(string safeFileName)
-    {
-        var path = Path.Combine(_memoryDir, safeFileName);
-        if (File.Exists(path)) File.Delete(path);
-        _ = UpdateMemoryIndex();
-    }
-
-    // DB管理外のファイル記憶（Claude Code autoDreamが書いたもの）を読み込む
-    public List<LongTermMemory> GetFileOnlyMemories(IEnumerable<int> dbIds)
-    {
-        var dbFiles = dbIds.Select(id => $"mem_{id}.md").ToHashSet(StringComparer.OrdinalIgnoreCase);
         var result = new List<LongTermMemory>();
-
-        if (!Directory.Exists(_memoryDir)) return result;
-
         foreach (var filePath in Directory.GetFiles(_memoryDir, "*.md"))
         {
             var fileName = Path.GetFileName(filePath);
             if (fileName.Equals("MEMORY.md", StringComparison.OrdinalIgnoreCase)) continue;
-            if (dbFiles.Contains(fileName)) continue;
 
-            var text = File.ReadAllText(filePath);
-            var (name, _, body) = ParseFrontmatter(text);
+            var mem = ParseFile(filePath);
+            if (mem == null) continue;
+            if (mem.UserId != 0 && mem.UserId != userId) continue;
 
-            // ファイル名をIDとして負の値でエンコード（UI用）
-            result.Add(new LongTermMemory
-            {
-                Id = 0,
-                UserId = 0,
-                Content = string.IsNullOrWhiteSpace(body) ? text.Trim() : body,
-                Tags = string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(fileName) : name,
-                RelevanceScore = 80,
-                CreatedAt = File.GetCreationTime(filePath),
-                LastAccessedAt = File.GetLastWriteTime(filePath),
-                // SourceFile はモデルに追加しない→Tags末尾にエンコード
-            });
-
-            // ファイル名をTagsの末尾にエンコードして削除時に使えるようにする
-            result[^1].Tags = result[^1].Tags + $"|file:{fileName}";
+            result.Add(mem);
         }
 
-        return result;
+        return [.. result.OrderByDescending(m => m.CreatedAt)];
     }
 
-    private static (string Name, string Description, string Body) ParseFrontmatter(string text)
+    /// <summary>プロンプトに関連する記憶を多段スコアリングで検索する。</summary>
+    public async Task<List<LongTermMemory>> SearchAsync(string prompt, int userId, int maxResults = 5)
     {
-        if (!text.TrimStart().StartsWith("---")) return ("", "", text.Trim());
+        var all = GetMemoriesForUser(userId).Where(m => m.RelevanceScore > 20).ToList();
 
-        var match = Regex.Match(text, @"^---\s*\n(.*?)\n---\s*\n?(.*)", RegexOptions.Singleline);
-        if (!match.Success) return ("", "", text.Trim());
+        var promptWords = prompt
+            .Split(new[] { ' ', '　', '、', '。', ',', '.', '!', '?', '\n' },
+                   StringSplitOptions.RemoveEmptyEntries)
+            .Select(w => w.ToLowerInvariant())
+            .Where(w => w.Length >= 2)
+            .ToHashSet();
 
-        var fm = match.Groups[1].Value;
-        var body = match.Groups[2].Value.Trim();
+        var scored = all.Select(m =>
+        {
+            var memTags = m.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => t.Trim().ToLowerInvariant()).ToList();
+            int score = 0;
+            foreach (var tag in memTags)
+            {
+                if (promptWords.Contains(tag)) score += 30;
+                if (prompt.Contains(tag, StringComparison.OrdinalIgnoreCase)) score += 15;
+            }
+            foreach (var word in promptWords)
+                if (m.Content.Contains(word, StringComparison.OrdinalIgnoreCase)) score += 5;
+            score = (int)(score * (m.RelevanceScore / 100.0));
+            return (Memory: m, Score: score);
+        })
+        .Where(x => x.Score > 0)
+        .OrderByDescending(x => x.Score)
+        .Take(maxResults)
+        .ToList();
 
-        var name = Regex.Match(fm, @"^name:\s*(.+)$", RegexOptions.Multiline).Groups[1].Value.Trim();
-        var desc = Regex.Match(fm, @"^description:\s*(.+)$", RegexOptions.Multiline).Groups[1].Value.Trim();
+        // アクセス数をファイルに更新
+        var updateTasks = scored.Select(x =>
+        {
+            x.Memory.AccessCount++;
+            x.Memory.LastAccessedAt = DateTime.UtcNow;
+            return WriteAsync(x.Memory);
+        });
+        await Task.WhenAll(updateTasks);
 
-        return (name, desc, body);
+        return scored.Select(x => x.Memory).ToList();
     }
 
-    private async Task UpdateMemoryIndex()
+    // ─── 書き込み ───────────────────────────────────────────────────────────
+
+    /// <summary>記憶をファイルに書き込む。SourceFileが設定されていれば上書き、なければ新規ファイル生成。</summary>
+    public async Task WriteAsync(LongTermMemory memory)
+    {
+        var fileName = memory.SourceFile ?? GenerateFileName(memory.Tags);
+        var filePath = Path.Combine(_memoryDir, fileName);
+
+        var shortDesc = memory.Content.Length > 80 ? memory.Content[..80] + "..." : memory.Content;
+        var fm = $"""
+            ---
+            name: {memory.Tags}
+            description: {shortDesc}
+            type: user
+            userId: {memory.UserId}
+            tags: {memory.Tags}
+            relevanceScore: {memory.RelevanceScore}
+            accessCount: {memory.AccessCount}
+            createdAt: {memory.CreatedAt:O}
+            lastAccessedAt: {memory.LastAccessedAt:O}
+            ---
+
+            {memory.Content}
+            """;
+
+        await File.WriteAllTextAsync(filePath, fm);
+        memory.SourceFile = fileName;
+        await RefreshIndexAsync();
+    }
+
+    // ─── 削除 ───────────────────────────────────────────────────────────────
+
+    public void DeleteByFileName(string safeFileName)
+    {
+        if (safeFileName.Contains('/') || safeFileName.Contains('\\') || safeFileName.Contains("..")) return;
+        var path = Path.Combine(_memoryDir, safeFileName);
+        if (File.Exists(path)) File.Delete(path);
+        _ = RefreshIndexAsync();
+    }
+
+    // ─── ファイル名生成 ──────────────────────────────────────────────────────
+
+    private static string GenerateFileName(string tags)
+    {
+        var slug = Regex.Replace(tags.Split(',')[0].Trim().ToLowerInvariant(), @"[^\w]", "_");
+        slug = slug.Length > 20 ? slug[..20] : slug;
+        var suffix = Guid.NewGuid().ToString("N")[..6];
+        return $"mem_{slug}_{suffix}.md";
+    }
+
+    // ─── パース ──────────────────────────────────────────────────────────────
+
+    public LongTermMemory? ParseFile(string filePath)
+    {
+        try
+        {
+            var text = File.ReadAllText(filePath);
+            var match = Regex.Match(text, @"^---\s*\n(.*?)\n---\s*\n?(.*)", RegexOptions.Singleline);
+
+            string fm = "", body = text.Trim();
+            if (match.Success)
+            {
+                fm = match.Groups[1].Value;
+                body = match.Groups[2].Value.Trim();
+            }
+
+            string Get(string key, string def = "") =>
+                Regex.Match(fm, $@"^{key}:\s*(.+)$", RegexOptions.Multiline).Groups[1].Value.Trim() is { Length: > 0 } v ? v : def;
+
+            int GetInt(string key, int def = 0) =>
+                int.TryParse(Get(key), out var v) ? v : def;
+
+            DateTime GetDate(string key) =>
+                DateTime.TryParse(Get(key), out var v) ? v.ToUniversalTime() : File.GetCreationTimeUtc(filePath);
+
+            var tags = Get("tags");
+            if (string.IsNullOrWhiteSpace(tags)) tags = Get("name");
+            if (string.IsNullOrWhiteSpace(tags)) tags = Path.GetFileNameWithoutExtension(filePath);
+
+            return new LongTermMemory
+            {
+                Id = 0,
+                UserId = GetInt("userId", 0),
+                Content = body,
+                Tags = tags,
+                RelevanceScore = GetInt("relevanceScore", 80),
+                AccessCount = GetInt("accessCount", 0),
+                CreatedAt = GetDate("createdAt"),
+                LastAccessedAt = GetDate("lastAccessedAt"),
+                SourceFile = Path.GetFileName(filePath),
+            };
+        }
+        catch { return null; }
+    }
+
+    // ─── インデックス更新 ────────────────────────────────────────────────────
+
+    public async Task RefreshIndexAsync()
     {
         var indexPath = Path.Combine(_memoryDir, "MEMORY.md");
         var files = Directory.GetFiles(_memoryDir, "*.md")
             .Where(f => !Path.GetFileName(f).Equals("MEMORY.md", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(f => f)
-            .ToList();
+            .OrderBy(f => f);
 
         var lines = new List<string> { "# Memory Index", "" };
         foreach (var filePath in files)
         {
+            var mem = ParseFile(filePath);
+            if (mem == null) continue;
             var fileName = Path.GetFileName(filePath);
-            var text = File.ReadAllText(filePath);
-            var (name, desc, _) = ParseFrontmatter(text);
-            var title = string.IsNullOrWhiteSpace(name) ? Path.GetFileNameWithoutExtension(fileName) : name;
-            var hook = string.IsNullOrWhiteSpace(desc) ? title : desc[..Math.Min(80, desc.Length)];
+            var title = mem.Tags.Split(',')[0].Trim();
+            var hook = mem.Content.Length > 60 ? mem.Content[..60].Replace('\n', ' ') + "..." : mem.Content.Replace('\n', ' ');
             lines.Add($"- [{title}]({fileName}) — {hook}");
         }
 
