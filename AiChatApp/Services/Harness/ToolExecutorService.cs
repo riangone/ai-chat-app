@@ -38,11 +38,25 @@ public class ToolExecutorService
         return resultBuilder.ToString();
     }
 
+    private readonly string[] _forbiddenPatterns = { "rm -rf", "mkfs", "> /dev/sda", "dd if=", ":(){ :|:& };:" };
+
     private async Task<string> DispatchToolAsync(string name, string argsJson, string workingDir)
     {
         try
         {
             var args = JsonSerializer.Deserialize<Dictionary<string, string>>(argsJson) ?? new();
+
+            // Pre-flight policy check
+            if (name.ToLower() == "run_shell" && args.TryGetValue("command", out var cmd))
+            {
+                foreach (var pattern in _forbiddenPatterns)
+                {
+                    if (cmd.Contains(pattern))
+                    {
+                        return $"Error: Command '{cmd}' is blocked by security policy (forbidden pattern: '{pattern}').";
+                    }
+                }
+            }
 
             return name.ToLower() switch
             {

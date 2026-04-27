@@ -461,7 +461,8 @@ public class AiService
     {
         var roleSkills = await _memorySearch.SearchSkillsAsync(input, userId, agentRole: role);
         var workingDir = await GetProjectRootAsync(chatSessionId);
-        string fullPersona = persona;
+        var policies = await LoadPoliciesAsync();
+        string fullPersona = persona + policies;
 
         // Fetch project-specific role prompt if exists
         if (chatSessionId.HasValue)
@@ -555,14 +556,33 @@ public class AiService
         string result = await ExecuteCliAsync(checkPrompt, provider, systemPrompt: null);
         return result.Contains("OK", StringComparison.OrdinalIgnoreCase);
     }
+    private async Task<string> LoadPoliciesAsync()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies");
+        if (!Directory.Exists(path)) return "";
+
+        var sb = new StringBuilder("\n\n[ENVIRONMENTAL POLICIES & CONSTRAINTS]:\n");
+        var files = Directory.GetFiles(path, "*.md");
+        if (!files.Any()) return "";
+
+        foreach (var file in files)
+        {
+            var content = await File.ReadAllTextAsync(file);
+            sb.Append($"--- Policy: {Path.GetFileNameWithoutExtension(file)} ---\n{content}\n");
+        }
+        return sb.ToString();
+    }
+
     private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int? chatSessionId, string? agentRole, AgentProfile? selectedAgent = null)
     {
         var memories = await _memorySearch.SearchAsync(prompt, userId);
         var skills = await _memorySearch.SearchSkillsAsync(prompt, userId, agentRole);
+        var policies = await LoadPoliciesAsync();
 
         var sb = new StringBuilder("あなたは高度なAIアシスタントです。現在はソフトウェア開発プロジェクトのコンテキストで動作しています。");
         sb.Append("\nユーザーから具体的な実装や修正の指示があった場合、単にコードを提示するだけでなく、プロジェクトのファイル構造を理解し、必要に応じてファイルを直接操作・更新する計画を立てて実行してください。");
-        sb.Append("\n出力には、実行すべき具体的なアクション（ファイルの読み込み、書き込み、置換など）を明確に含めてください。");
+        sb.Append("\n出力には、実行すべき具体的なアクション（ファイルの読み込み、書き込み、置換など）を明确に含めてください。");
+        sb.Append(policies);
 
         if (selectedAgent != null)
         {

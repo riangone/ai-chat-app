@@ -1,5 +1,7 @@
 using System.Net;
+using System.Diagnostics;
 using AiChatApp.Data;
+using AiChatApp.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace AiChatApp.Endpoints;
@@ -84,6 +86,30 @@ public static class HarnessEndpoints
             return Results.Ok();
         }).DisableAntiforgery();
 
+        group.MapGet("/policies", () => {
+            var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies");
+            if (!Directory.Exists(path)) return Results.Ok(new List<string>());
+            var files = Directory.GetFiles(path, "*.md")
+                .Select(f => Path.GetFileNameWithoutExtension(f))
+                .ToList();
+            return Results.Ok(files);
+        });
+
+        group.MapGet("/policies/{name}", (string name) => {
+            var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies", $"{name}.md");
+            if (!File.Exists(path)) return Results.NotFound();
+            return Results.Text(File.ReadAllText(path), "text/markdown");
+        });
+
+        group.MapPost("/policies", async (HttpContext context) => {
+            var form = await context.Request.ReadFormAsync();
+            var name = form["name"].ToString();
+            var content = form["content"].ToString();
+            var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies", $"{name}.md");
+            await File.WriteAllTextAsync(path, content);
+            return Results.Ok();
+        }).DisableAntiforgery();
+
         group.MapGet("/pipelines/html", () => {
             var path = Path.Combine(AppContext.BaseDirectory, "pipelines");
             var files = Directory.Exists(path) ? Directory.GetFiles(path, "*.json").Select(Path.GetFileNameWithoutExtension).ToList() : new List<string?>();
@@ -142,6 +168,28 @@ public static class HarnessEndpoints
             return Results.Content(html, "text/html");
         });
 
+        group.MapGet("/policies/html", () => {
+            var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies");
+            var files = Directory.Exists(path) ? Directory.GetFiles(path, "*.md").Select(Path.GetFileNameWithoutExtension).ToList() : new List<string?>();
+            var html = $@"
+                <div class='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                    {string.Concat(files.Select(f => $@"
+                        <div class='card bg-base-100 shadow-sm border border-base-300'>
+                            <div class='card-body p-4'>
+                                <h3 class='card-title text-sm font-bold'>{f}.md</h3>
+                                <div class='card-actions justify-end mt-2'>
+                                    <button onclick=""editHarnessFile('policies', '{f}')"" class='btn btn-ghost btn-xs'>Edit Policy</button>
+                                </div>
+                            </div>
+                        </div>"))}
+                    <button onclick=""const n=prompt('Policy Name:'); if(n) editHarnessFile('policies', n)"" class='btn btn-dashed border-2 border-base-300 h-24 flex flex-col gap-2'>
+                        <svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='currentColor' class='w-6 h-6'><path stroke-linecap='round' stroke-linejoin='round' d='M12 4.5v15m7.5-7.5h-15' /></svg>
+                        <span class='text-xs opacity-50 uppercase font-black'>New Policy</span>
+                    </button>
+                </div>";
+            return Results.Content(html, "text/html");
+        });
+
         group.MapGet("/evals/html", async (AppDbContext db) => {
             var all = await db.Evaluations.OrderByDescending(e => e.CreatedAt).Take(20).ToListAsync();
             var summary = all.Any() ? new { count = all.Count, avg = (double)all.Average(e => e.Score) } : new { count = 0, avg = 0.0 };
@@ -166,6 +214,7 @@ public static class HarnessEndpoints
                                     <th class='text-[10px] font-black uppercase opacity-40'>Score</th>
                                     <th class='text-[10px] font-black uppercase opacity-40'>Reasoning</th>
                                     <th class='text-[10px] font-black uppercase opacity-40'>Date</th>
+                                    <th class='text-[10px] font-black uppercase opacity-40'>Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -177,6 +226,9 @@ public static class HarnessEndpoints
                                         </td>
                                         <td class='text-xs italic opacity-70 max-w-xs truncate' title='{WebUtility.HtmlEncode(e.Reasoning)}'>{WebUtility.HtmlEncode(e.Reasoning)}</td>
                                         <td class='text-[10px] opacity-40'>{e.CreatedAt:MMM dd HH:mm}</td>
+                                        <td>
+                                            <button onclick='extractRule({e.Id})' class='btn btn-ghost btn-xs text-primary font-black uppercase text-[9px]'>Extract Rule</button>
+                                        </td>
                                     </tr>"))}
                             </tbody>
                         </table>
@@ -237,5 +289,68 @@ public static class HarnessEndpoints
                 B = all.Where((e, i) => i % 2 != 0)
             });
         });
+
+        group.MapGet("/git/status", () => {
+            try {
+                var psi = new ProcessStartInfo("git", "status --porcelain pipelines/ memory/") {
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WorkingDirectory = AppContext.BaseDirectory
+                };
+                using var process = Process.Start(psi);
+                var output = process?.StandardOutput.ReadToEnd();
+                return Results.Ok(new { status = output });
+            } catch (Exception ex) {
+                return Results.Problem(ex.Message);
+            }
+        });
+
+        group.MapPost("/git/commit", async (HttpContext context) => {
+            var form = await context.Request.ReadFormAsync();
+            var message = form["message"].ToString();
+            if (string.IsNullOrEmpty(message)) return Results.BadRequest("Commit message required");
+
+            try {
+                var addPsi = new ProcessStartInfo("git", "add pipelines/ memory/") { WorkingDirectory = AppContext.BaseDirectory };
+                Process.Start(addPsi)?.WaitForExit();
+
+                var commitPsi = new ProcessStartInfo("git", $"commit -m \"{message.Replace("\"", "\\\"")}\"") { WorkingDirectory = AppContext.BaseDirectory };
+                Process.Start(commitPsi)?.WaitForExit();
+
+                return Results.Ok(new { message = "Committed successfully" });
+            } catch (Exception ex) {
+                return Results.Problem(ex.Message);
+            }
+        }).DisableAntiforgery();
+
+        group.MapPost("/extract-rule", async (HttpContext context, AppDbContext db, AiService ai) => {
+            var form = await context.Request.ReadFormAsync();
+            if (!int.TryParse(form["evalId"], out var evalId)) return Results.BadRequest("Invalid evalId");
+
+            var ev = await db.Evaluations.Include(e => e.AgentStep).FirstOrDefaultAsync(e => e.Id == evalId);
+            if (ev == null) return Results.NotFound();
+
+            string prompt = $@"
+                Analyze the following AI evaluation failure and extract a specific, actionable 'Guardrail' rule in Markdown.
+                This rule will be added to the 'Policies' folder to prevent this mistake in the future.
+                
+                FAILURE CONTEXT:
+                Criteria: {ev.Criteria}
+                Score: {ev.Score}
+                Reasoning: {ev.Reasoning}
+                
+                AGENT STEP OUTPUT:
+                {ev.AgentStep?.Output}
+                
+                OUTPUT FORMAT:
+                Return ONLY the Markdown content for the rule. Do not include titles or explanations outside the markdown block.
+            ";
+
+            var rule = await ai.ExecuteCliDirectAsync(prompt, "claude");
+            rule = System.Text.RegularExpressions.Regex.Replace(rule, @"^```markdown\n|```$", "").Trim();
+            
+            return Results.Ok(new { rule });
+        }).DisableAntiforgery();
     }
 }

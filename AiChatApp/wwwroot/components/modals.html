@@ -4,4 +4,18 @@
     <dialog id="memory_modal" class="modal"><div class="modal-box"><h3 class="font-bold text-lg" data-i18n="save-to-memory-title">Save Memory</h3><form id="memory-form" hx-post="/api/memories" hx-swap="none" class="mt-4 space-y-4" onsubmit="memory_modal.close()"><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="memory-tags-label">Tags</span></label><input type="text" name="tags" id="memory-tags" class="input input-bordered w-full" required /></div><div class="form-control"><label class="label"><span class="label-text font-bold" data-i18n="content-label">Content</span></label><textarea name="content" id="memory-content" class="textarea textarea-bordered w-full h-24" required></textarea></div><div class="modal-action"><button type="button" class="btn" onclick="memory_modal.close()">Cancel</button><button type="submit" class="btn btn-primary" data-i18n="save-memory-btn">Save</button></div></form></div></dialog>
     <dialog id="prompt_viewer_modal" class="modal"><div class="modal-box w-11/12 max-w-3xl"><h3 class="font-bold text-lg" id="prompt-viewer-title">Agent Prompt</h3><div class="mt-4"><pre id="prompt-viewer-content" class="p-4 bg-base-300 rounded-lg whitespace-pre-wrap break-words text-sm font-mono max-h-96 overflow-y-auto"></pre></div><div class="modal-action"><button type="button" class="btn" onclick="prompt_viewer_modal.close()">Close</button></div></div></dialog>
     <dialog id="history-modal" class="modal"><div class="modal-box max-w-lg"><h3 class="font-bold text-lg mb-4" data-i18n="input-history-title">Input History</h3><div class="max-h-96 overflow-y-auto"><ul id="input-history-list" class="menu p-0 bg-base-100 rounded-box w-full" hx-get="/api/input-history" hx-trigger="load, refreshHistory from:body"><li class="p-4 text-center opacity-40"><span class="loading loading-spinner loading-sm"></span></li></ul></div><div class="modal-action"><button type="button" class="btn" onclick="document.getElementById('history-modal').close()">Close</button></div></div></dialog>
+    <dialog id="git_commit_modal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg">Commit Harness Changes</h3>
+            <p class="py-4 text-xs opacity-60">This will commit all changes in pipelines/ and memory/ folders.</p>
+            <div class="form-control">
+                <label class="label"><span class="label-text font-bold">Commit Message</span></label>
+                <input type="text" id="git-commit-message" placeholder="e.g. Update security policies" class="input input-bordered w-full" required />
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn" onclick="git_commit_modal.close()">Cancel</button>
+                <button type="button" onclick="commitHarnessChanges()" class="btn btn-primary">Commit</button>
+            </div>
+        </div>
+    </dialog>
 </div>

@@ -20,6 +20,7 @@ public class AppDbContext : DbContext
     public DbSet<Evaluation> Evaluations => Set<Evaluation>();
     public DbSet<InputHistory> InputHistories => Set<InputHistory>();
     public DbSet<TodoItem> TodoItems => Set<TodoItem>();
+    public DbSet<Note> Notes => Set<Note>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
