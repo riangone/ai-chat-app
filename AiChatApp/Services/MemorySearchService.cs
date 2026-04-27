@@ -7,10 +7,12 @@ namespace AiChatApp.Services;
 public class MemorySearchService
 {
     private readonly AppDbContext _db;
+    private readonly MemoryFileService _fileService;
 
-    public MemorySearchService(AppDbContext db)
+    public MemorySearchService(AppDbContext db, MemoryFileService fileService)
     {
         _db = db;
+        _fileService = fileService;
     }
 
     /// <summary>
@@ -19,9 +21,13 @@ public class MemorySearchService
     /// </summary>
     public async Task<List<LongTermMemory>> SearchAsync(string prompt, int userId, int maxResults = 5)
     {
-        var allMemories = await _db.LongTermMemories
+        var dbMemories = await _db.LongTermMemories
             .Where(m => m.UserId == userId && m.RelevanceScore > 20)
             .ToListAsync();
+
+        var dbIds = dbMemories.Select(m => m.Id).ToList();
+        var fileMemories = _fileService.GetFileOnlyMemories(dbIds);
+        var allMemories = dbMemories.Concat(fileMemories).ToList();
 
         // プロンプトを単語に分割（スペース・句読点で区切り）
         var promptWords = prompt

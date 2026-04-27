@@ -12,6 +12,7 @@ public static class ServiceExtensions
     {
         services.AddDbContext<AppDbContext>(options => options.UseSqlite("Data Source=chat.db"));
         
+        services.AddSingleton<MemoryFileService>();
         services.AddScoped<MemorySearchService>();
         services.AddScoped<MemoryConsolidationService>();
         services.AddScoped<ProjectService>();
