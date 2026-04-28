@@ -15,8 +15,7 @@ public class MemoryFileService
         var dir = config["MemoryDir"];
         if (string.IsNullOrEmpty(dir))
         {
-            dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".claude", "projects", "-home-ubuntu-ws-ai-chat-app", "memory");
+            dir = Path.Combine(AppContext.BaseDirectory, "memory");
         }
 
         if (!Path.IsPathRooted(dir))
@@ -58,26 +57,56 @@ public class MemoryFileService
     {
         var all = GetMemoriesForUser(userId).Where(m => m.RelevanceScore > 20).ToList();
 
-        var promptWords = prompt
-            .Split(new[] { ' ', '　', '、', '。', ',', '.', '!', '?', '\n' },
+        // 单词分割（主要针对英文）
+        var wordTokens = prompt
+            .Split(new[] { ' ', '　', '、', '。', ',', '.', '!', '?', '\n', '\r', '\t' },
                    StringSplitOptions.RemoveEmptyEntries)
             .Select(w => w.ToLowerInvariant())
             .Where(w => w.Length >= 2)
             .ToHashSet();
+
+        // 字符级分割（针对中日韩等无空格语言）
+        var charTokens = new HashSet<string>();
+        if (prompt.Any(c => c > 127)) // 包含非 ASCII 字符
+        {
+            for (int i = 0; i < prompt.Length - 1; i++)
+            {
+                if (!char.IsWhiteSpace(prompt[i]))
+                    charTokens.Add(prompt.Substring(i, 1));
+                
+                // 二元语法 (Bigram) 提高精准度
+                if (!char.IsWhiteSpace(prompt[i]) && !char.IsWhiteSpace(prompt[i+1]))
+                    charTokens.Add(prompt.Substring(i, 2));
+            }
+        }
 
         var scored = all.Select(m =>
         {
             var memTags = m.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries)
                 .Select(t => t.Trim().ToLowerInvariant()).ToList();
             int score = 0;
+
+            // 标签匹配 (权重最高)
             foreach (var tag in memTags)
             {
-                if (promptWords.Contains(tag)) score += 30;
-                if (prompt.Contains(tag, StringComparison.OrdinalIgnoreCase)) score += 15;
+                if (wordTokens.Contains(tag)) score += 50;
+                if (charTokens.Contains(tag)) score += 40;
+                if (prompt.Contains(tag, StringComparison.OrdinalIgnoreCase)) score += 30;
             }
-            foreach (var word in promptWords)
-                if (m.Content.Contains(word, StringComparison.OrdinalIgnoreCase)) score += 5;
+
+            // 内容匹配
+            foreach (var word in wordTokens)
+                if (m.Content.Contains(word, StringComparison.OrdinalIgnoreCase)) score += 10;
+            
+            foreach (var token in charTokens)
+                if (token.Length > 1 && m.Content.Contains(token, StringComparison.OrdinalIgnoreCase)) score += 5;
+
+            // 基础相关度加权
             score = (int)(score * (m.RelevanceScore / 100.0));
+            
+            // 访问次数加成
+            score += Math.Min(m.AccessCount, 20);
+
             return (Memory: m, Score: score);
         })
         .Where(x => x.Score > 0)

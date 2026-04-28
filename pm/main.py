@@ -32,6 +32,16 @@ with engine.connect() as _conn:
 
 app = FastAPI()
 
+
+class AuthRequired(Exception):
+    pass
+
+
+@app.exception_handler(AuthRequired)
+async def auth_required_handler(request: Request, exc: AuthRequired):
+    return RedirectResponse("/pm/login", status_code=302)
+
+
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
 UPLOAD_DIR = STATIC_DIR / "uploads"
@@ -54,7 +64,7 @@ def get_current_user_dep(request: Request, db: Session = Depends(get_db)) -> mod
 def require_user(request: Request, db: Session = Depends(get_db)) -> models.User:
     user = auth.get_current_user_or_redirect(request, db)
     if user is None:
-        raise HTTPException(status_code=302, headers={"Location": "/login"})
+        raise AuthRequired()
     return user
 
 
@@ -64,7 +74,7 @@ def require_user(request: Request, db: Session = Depends(get_db)) -> models.User
 async def login_page(request: Request, db: Session = Depends(get_db)):
     user = auth.get_current_user_or_redirect(request, db)
     if user:
-        return RedirectResponse("/", status_code=302)
+        return RedirectResponse("/pm/", status_code=302)
     return templates.TemplateResponse(request=request, name="login.html", context={"error": None})
 
 
@@ -83,7 +93,7 @@ async def login_post(
             status_code=401,
         )
     token = auth.create_session_token(user.id)
-    response = RedirectResponse("/", status_code=302)
+    response = RedirectResponse("/pm/", status_code=302)
     response.set_cookie(
         auth.SESSION_COOKIE, token,
         httponly=True, samesite="lax",
@@ -97,7 +107,7 @@ async def login_post(
 async def register_page(request: Request, db: Session = Depends(get_db)):
     user = auth.get_current_user_or_redirect(request, db)
     if user:
-        return RedirectResponse("/", status_code=302)
+        return RedirectResponse("/pm/", status_code=302)
     return templates.TemplateResponse(request=request, name="register.html", context={"error": None})
 
 
@@ -136,7 +146,7 @@ async def register_post(
     logger.info("ユーザー登録: %s (id=%d)", username, new_user.id)
 
     token = auth.create_session_token(new_user.id)
-    response = RedirectResponse("/", status_code=302)
+    response = RedirectResponse("/pm/", status_code=302)
     response.set_cookie(
         auth.SESSION_COOKIE, token,
         httponly=True, samesite="lax",
@@ -147,9 +157,50 @@ async def register_post(
 
 @app.post("/logout")
 async def logout():
-    response = RedirectResponse("/login", status_code=302)
+    response = RedirectResponse("/pm/login", status_code=302)
     response.delete_cookie(auth.SESSION_COOKIE)
     return response
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, current_user: models.User = Depends(require_user)):
+    return templates.TemplateResponse(
+        request=request, name="settings.html",
+        context={"username": current_user.username, "error": None, "success": False},
+    )
+
+
+@app.post("/api/settings/change-password", response_class=HTMLResponse)
+async def change_password(
+    request: Request,
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_user),
+):
+    error = None
+    if not auth.verify_password(current_password, current_user.hashed_password):
+        error = "当前密码不正确"
+    elif len(new_password) < 8:
+        error = "新密码须至少 8 个字符"
+    elif new_password != confirm_password:
+        error = "两次密码输入不一致"
+
+    if error:
+        return templates.TemplateResponse(
+            request=request, name="settings.html",
+            context={"username": current_user.username, "error": error, "success": False},
+            status_code=400,
+        )
+
+    current_user.hashed_password = auth.hash_password(new_password)
+    db.commit()
+    logger.info("パスワード変更: user=%s (id=%d)", current_user.username, current_user.id)
+    return templates.TemplateResponse(
+        request=request, name="settings.html",
+        context={"username": current_user.username, "error": None, "success": True},
+    )
 
 
 # ─── Image utilities ──────────────────────────────────────────────────────────
@@ -188,7 +239,7 @@ def render_card(photo) -> str:
      data-photo-date="{uploaded}"
      onclick="openPreview(this)">
     <div class="aspect-square overflow-hidden rounded-xl bg-base-300 shadow-sm relative">
-        <img src="/thumbnail/{photo.id}"
+        <img src="/pm/thumbnail/{photo.id}"
              alt="{safe_title}"
              class="object-cover w-full h-full transition-transform duration-300 group-hover:scale-105"
              loading="lazy" />

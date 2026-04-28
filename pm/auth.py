@@ -1,8 +1,8 @@
 import os
+import bcrypt
 from fastapi import Request, HTTPException
 from fastapi.responses import RedirectResponse
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 import models
 
@@ -10,16 +10,15 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "photomanager-secret-key-change-in-pro
 SESSION_COOKIE = "pm_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7日
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 serializer = URLSafeTimedSerializer(SECRET_KEY)
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 def create_session_token(user_id: int) -> str:

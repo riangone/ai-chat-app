@@ -7,7 +7,7 @@ public class User
     public int Id { get; set; }
     public string Username { get; set; } = string.Empty;
     public string PasswordHash { get; set; } = string.Empty;
-    public string DefaultProvider { get; set; } = "gemini";
+    public string DefaultProvider { get; set; } = string.Empty;
     public List<ChatSession> ChatSessions { get; set; } = new();
 }
 
@@ -17,7 +17,7 @@ public class ChatSession
     public int UserId { get; set; }
     public int? ProjectId { get; set; } // Added link to project
     public string Title { get; set; } = "New Chat";
-    public string PreferredProvider { get; set; } = "gemini";
+    public string PreferredProvider { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public List<Message> Messages { get; set; } = new();

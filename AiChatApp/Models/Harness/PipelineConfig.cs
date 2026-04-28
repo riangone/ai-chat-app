@@ -27,6 +27,6 @@ public class PipelineConfig
 public class PipelineContext
 {
     public string Task { get; set; } = string.Empty;
-    public string Provider { get; set; } = "gemini";
+    public string Provider { get; set; } = string.Empty;
     public Dictionary<string, object> StepOutputs { get; set; } = new();
 }

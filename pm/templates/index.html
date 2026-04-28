@@ -46,8 +46,9 @@
             </label>
             <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-50 w-40 p-2 shadow">
                 <li class="menu-title text-xs px-2">{{ username }}</li>
+                <li><a href="/pm/settings">设置</a></li>
                 <li>
-                    <form method="post" action="/logout">
+                    <form method="post" action="/pm/logout">
                         <button type="submit" class="w-full text-left text-error">退出登录</button>
                     </form>
                 </li>

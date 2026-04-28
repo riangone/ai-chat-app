@@ -18,11 +18,12 @@ public class EvalService
         _serviceProvider = serviceProvider;
     }
 
-    public async Task EvaluateStepAsync(int agentStepId, string task, string output, string provider = "gemini")
+    public async Task EvaluateStepAsync(int agentStepId, string task, string output, string? provider = null)
     {
         try
         {
             var aiService = _serviceProvider.GetRequiredService<AiService>();
+            provider ??= aiService.DefaultProvider;
             
             // Define criteria for evaluation
             var criteria = new[] { "Accuracy", "Safety", "Format", "Helpfulness" };

@@ -229,29 +229,23 @@ public static class ChatEndpoints
             var u = await db.Users.FindAsync(userId);
             var isCooperative = form["mode"] == "cooperative";
 
-            ChatSession? session;
-            if (sessionId.HasValue) {
-                session = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId);
-            } else {
-                session = await db.ChatSessions
-                    .Where(s => s.UserId == userId && s.ProjectId == projectId)
-                    .OrderByDescending(s => s.CreatedAt)
-                    .FirstOrDefaultAsync();
-            }
+            ChatSession? session = sessionId.HasValue
+                ? await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId)
+                : null;
 
             if (session == null) {
                 session = new ChatSession { 
                     UserId = userId, 
                     ProjectId = projectId, 
                     Title = content.Length > 20 ? content[..20] + "..." : content,
-                    PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? "gemini") : provider
+                    PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? ai.DefaultProvider) : provider
                 };
                 db.ChatSessions.Add(session);
                 await db.SaveChangesAsync();
             }
 
             if (string.IsNullOrEmpty(provider)) {
-                provider = session.PreferredProvider ?? u?.DefaultProvider ?? "gemini";
+                provider = session.PreferredProvider ?? u?.DefaultProvider ?? ai.DefaultProvider;
             }
 
             var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
@@ -319,14 +313,14 @@ public static class ChatEndpoints
                     UserId = userId, 
                     ProjectId = projectId, 
                     Title = content.Length > 20 ? content[..20] + "..." : content,
-                    PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? "gemini") : provider
+                    PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? ai.DefaultProvider) : provider
                 };
                 db.ChatSessions.Add(session);
                 await db.SaveChangesAsync();
             }
 
             if (string.IsNullOrEmpty(provider)) {
-                provider = session.PreferredProvider ?? u?.DefaultProvider ?? "gemini";
+                provider = session.PreferredProvider ?? u?.DefaultProvider ?? ai.DefaultProvider;
             }
 
             var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
@@ -339,6 +333,14 @@ public static class ChatEndpoints
             context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
 
             var fullResponse = new StringBuilder();
+            using var keepAliveCts = new CancellationTokenSource();
+            _ = Task.Run(async () => {
+                while (!keepAliveCts.Token.IsCancellationRequested) {
+                    await Task.Delay(15000, keepAliveCts.Token).ContinueWith(_ => { });
+                    if (!keepAliveCts.Token.IsCancellationRequested)
+                        try { await context.Response.WriteAsync(": ping\n\n"); await context.Response.Body.FlushAsync(); } catch { }
+                }
+            });
             await foreach (var chunk in ai.GetResponseStreamAsync(content, userId, session.Id, provider, agentId))
             {
                 fullResponse.Append(chunk);
@@ -346,6 +348,7 @@ public static class ChatEndpoints
                 await context.Response.WriteAsync($"data: {data}\n\n");
                 await context.Response.Body.FlushAsync();
             }
+            keepAliveCts.Cancel();
 
             var aMsg = new Message { ChatSessionId = session.Id, Content = fullResponse.ToString(), IsAi = true };
             db.Messages.Add(aMsg);
@@ -395,14 +398,14 @@ public static class ChatEndpoints
                     UserId = userId, 
                     ProjectId = projectId, 
                     Title = content.Length > 20 ? content[..20] + "..." : content,
-                    PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? "gemini") : provider
+                    PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? ai.DefaultProvider) : provider
                 };
                 db.ChatSessions.Add(session);
                 await db.SaveChangesAsync();
             }
 
             if (string.IsNullOrEmpty(provider)) {
-                provider = session.PreferredProvider ?? u?.DefaultProvider ?? "gemini";
+                provider = session.PreferredProvider ?? u?.DefaultProvider ?? ai.DefaultProvider;
             }
 
             context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
@@ -431,12 +434,21 @@ public static class ChatEndpoints
             var sessionPayload = JsonSerializer.Serialize(new { sessionId = session.Id, agents = agentRoles });
             await SendEvent("session", sessionPayload);
 
+            using var keepAliveCts2 = new CancellationTokenSource();
+            _ = Task.Run(async () => {
+                while (!keepAliveCts2.Token.IsCancellationRequested) {
+                    await Task.Delay(15000, keepAliveCts2.Token).ContinueWith(_ => { });
+                    if (!keepAliveCts2.Token.IsCancellationRequested)
+                        try { await context.Response.WriteAsync(": ping\n\n"); await context.Response.Body.FlushAsync(); } catch { }
+                }
+            });
             var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, session.Id, provider,
                 onStepComplete: async (role, stepHtml) =>
                 {
                     var payload = JsonSerializer.Serialize(new { role, html = stepHtml });
                     await SendEvent("step-complete", payload);
                 });
+            keepAliveCts2.Cancel();
 
             aMsg.Content = html;
             

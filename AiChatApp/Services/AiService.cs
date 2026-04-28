@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Linq;
 using AiChatApp.Data;
 using AiChatApp.Models;
 using AiChatApp.Services.Harness;
@@ -18,6 +21,7 @@ public class AiService
     private readonly SchemaValidationService _schemaValidator;
     private readonly ToolExecutorService _toolExecutor;
     private readonly EvalService _evalService;
+    private readonly IConfiguration _config;
     private SkillLearningService _skillLearning => _serviceProvider.GetRequiredService<SkillLearningService>();
 
     public record AgentDefinition(string Name, string DisplayName, string Description, string SystemPrompt);
@@ -26,7 +30,7 @@ public class AiService
         SessionMemoryService sessionMemory, IServiceProvider serviceProvider, 
         SkillManagerService skillManager, PipelineLoaderService pipelineLoader, 
         SchemaValidationService schemaValidator, ToolExecutorService toolExecutor,
-        EvalService evalService)
+        EvalService evalService, IConfiguration config)
     {
         _db = db;
         _memorySearch = memorySearch;
@@ -37,7 +41,15 @@ public class AiService
         _schemaValidator = schemaValidator;
         _toolExecutor = toolExecutor;
         _evalService = evalService;
+        _config = config;
     }
+
+    public string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "gemini";
+    public string FallbackProvider => _config["AiSettings:FallbackProvider"] ?? "gemini";
+    public int TimeoutSeconds => int.TryParse(_config["AiSettings:TimeoutSeconds"], out var s) ? s : 300;
+
+    private string GetSystemPromptTemplate(string key, string fallback) => 
+        _config[$"AiSettings:SystemPrompts:{key}"] ?? fallback;
 
     /// <summary>获取所有可用的代理定义（统一从 SkillManager 获取）</summary>
     public async Task<List<AgentDefinition>> GetAvailableAgentsAsync(int userId)
@@ -82,8 +94,9 @@ public class AiService
 
     /// <summary>通常チャット。会話履歴・記憶・スキルを注入してAIを呼び出す。</summary>
     public async Task<string> GetResponseAsync(
-        string prompt, int userId, int? chatSessionId, string provider = "gemini", int? agentId = null)
+        string prompt, int userId, int? chatSessionId, string? provider = null, int? agentId = null)
     {
+        var targetProvider = provider ?? DefaultProvider;
         AgentProfile? agent = agentId.HasValue ? await _db.AgentProfiles.FindAsync(agentId.Value) : null;
         var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agent?.RoleName, agent);
         var workingDir = await GetProjectRootAsync(chatSessionId);
@@ -92,7 +105,7 @@ public class AiService
             ? prompt
             : $"{history}\nUser: {prompt}";
 
-        var targetProvider = agent?.PreferredProvider ?? provider;
+        if (agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
 
         // 获取当前会话最新的 MessageId (刚才保存的 User 消息)
         int messageId = 0;
@@ -136,10 +149,11 @@ public class AiService
     /// 各ステップの結果を AgentStep としてDBに記録する。
     /// </summary>
     public async Task<(string Html, List<AgentStep> Steps)> CooperateAsync(
-        string task, int userId, int messageId, int? chatSessionId, string provider = "gemini",
+        string task, int userId, int messageId, int? chatSessionId, string? provider = null,
         List<string>? selectedAgentNames = null,
         Func<string, string, Task>? onStepComplete = null)
     {
+        var targetProvider = provider ?? DefaultProvider;
         var steps = new List<AgentStep>();
         List<AgentDefinition> agentsToRun = new();
 
@@ -182,7 +196,7 @@ public class AiService
                     persona: agent.SystemPrompt,
                     input: input,
                     messageId: messageId,
-                    provider: provider,
+                    provider: targetProvider,
                     userId: userId,
                     chatSessionId: chatSessionId
                 );
@@ -193,7 +207,7 @@ public class AiService
                 await _db.SaveChangesAsync();
 
                 // --- Evaluation ---
-                _ = Task.Run(() => _evalService.EvaluateStepAsync(step.Id, task, step.Output, provider));
+                _ = Task.Run(() => _evalService.EvaluateStepAsync(step.Id, task, step.Output, targetProvider));
 
                 steps.Add(step);
                 lastOutput = step.Output;
@@ -237,7 +251,7 @@ public class AiService
                     persona: stagePersona,
                     input: combinedInput,
                     messageId: messageId,
-                    provider: stage.Provider ?? provider,
+                    provider: stage.Provider ?? targetProvider,
                     userId: userId,
                     chatSessionId: chatSessionId,
                     attemptNumber: attempt
@@ -313,8 +327,9 @@ public class AiService
     }
 
     public async IAsyncEnumerable<string> CooperateStreamAsync(
-        string task, int userId, int messageId, string provider = "gemini")
+        string task, int userId, int messageId, string? provider = null)
     {
+        var targetProvider = provider ?? DefaultProvider;
         var steps = new List<AgentStep>();
 
         // ─── Step 1: Orchestrator ───
@@ -331,7 +346,7 @@ public class AiService
             }
             """;
 
-        var orchStep = await RunAgentStepAsync("Orchestrator", orchestratorPersona, task, messageId, provider, userId);
+        var orchStep = await RunAgentStepAsync("Orchestrator", orchestratorPersona, task, messageId, targetProvider, userId);
         steps.Add(orchStep);
         yield return $"event: step-complete\ndata: Orchestrator|{BuildStepHtml(orchStep).Replace("\n", "\\n")}\n\n";
 
@@ -354,7 +369,7 @@ public class AiService
         string executorPersona = "あなたは実装の専門家（Executor）です。計画に基づいて成果物を作成してください。";
         string execInput = $"計画:\n{subtaskBlock}\n\n原タスク:\n{task}";
         
-        var execStep = await RunAgentStepAsync("Executor", executorPersona, execInput, messageId, provider, userId);
+        var execStep = await RunAgentStepAsync("Executor", executorPersona, execInput, messageId, targetProvider, userId);
         steps.Add(execStep);
         yield return $"event: step-complete\ndata: Executor|{BuildStepHtml(execStep).Replace("\n", "\\n")}\n\n";
 
@@ -362,7 +377,7 @@ public class AiService
         yield return "event: step-start\ndata: Reviewer\n\n";
         string reviewerPersona = "あなたは評審の専門家（Reviewer）です。最終的な回答をMarkdownで作成してください。";
         
-        var reviewStep = await RunAgentStepAsync("Reviewer", reviewerPersona, $"元タスク:\n{task}\n\n実行結果:\n{execStep.Output}", messageId, provider, userId);
+        var reviewStep = await RunAgentStepAsync("Reviewer", reviewerPersona, $"元タスク:\n{task}\n\n実行結果:\n{execStep.Output}", messageId, targetProvider, userId);
         steps.Add(reviewStep);
         
         string finalHtml = BuildCooperativeHtml(steps, reviewStep.Output);
@@ -370,8 +385,9 @@ public class AiService
     }
 
     public async IAsyncEnumerable<string> GetResponseStreamAsync(
-        string prompt, int userId, int? chatSessionId, string provider = "gemini", int? agentId = null)
+        string prompt, int userId, int? chatSessionId, string? provider = null, int? agentId = null)
     {
+        var targetProvider = provider ?? DefaultProvider;
         AgentProfile? agent = agentId.HasValue ? await _db.AgentProfiles.FindAsync(agentId.Value) : null;
         var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agent?.RoleName, agent);
         var workingDir = await GetProjectRootAsync(chatSessionId);
@@ -380,8 +396,19 @@ public class AiService
             ? prompt
             : $"{history}\nUser: {prompt}";
 
-        var targetProvider = agent?.PreferredProvider ?? provider;
-        var processInfo = SetupProcessInfo(targetProvider, workingDir);
+        if (agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
+
+        string fileName = targetProvider switch
+        {
+            "gh-copilot" => "copilot",
+            "claude" => "claude",
+            "codex" => "codex",
+            "opencode" => "opencode",
+            _ => DefaultProvider
+        };
+        var useJsonStreaming = targetProvider == "gemini" || fileName == "gemini" || targetProvider == "claude" || fileName == "claude";
+
+        var processInfo = SetupProcessInfo(targetProvider, workingDir, useJsonStreaming ? "stream-json" : null);
 
         // 获取 MessageId 用于记录日志
         int messageId = 0;
@@ -394,33 +421,194 @@ public class AiService
             messageId = lastMsg?.Id ?? 0;
         }
 
+        string inputToStdin = string.IsNullOrEmpty(systemPrompt)
+            ? fullPrompt
+            : $"{systemPrompt}\n\n{fullPrompt}";
+
+        if (targetProvider == "opencode")
+        {
+            processInfo.ArgumentList.Add(inputToStdin);
+            inputToStdin = string.Empty;
+        }
+        else if (targetProvider == "gh-copilot")
+        {
+            processInfo.ArgumentList.Add("-p");
+            processInfo.ArgumentList.Add(inputToStdin);
+            inputToStdin = string.Empty;
+        }
+
         var sw = Stopwatch.StartNew();
         using var process = Process.Start(processInfo);
-        if (process == null) 
+        if (process == null)
         {
             yield return "Error: Could not start CLI.";
             yield break;
         }
 
-        // Write full prompt to stdin
-        string inputToStdin = string.IsNullOrEmpty(systemPrompt)
-            ? fullPrompt
-            : $"System: {systemPrompt}\n\nUser: {fullPrompt}";
-        
         await process.StandardInput.WriteAsync(inputToStdin);
         process.StandardInput.Close();
 
-        var fullResponse = new StringBuilder();
-        var buffer = new char[64];
-        int read;
-        while ((read = await process.StandardOutput.ReadAsync(buffer, 0, buffer.Length)) > 0)
+        // Read stderr line-by-line; kill process immediately on known fatal errors
+        var stderrContent = new StringBuilder();
+        var stderrTask = Task.Run(async () =>
         {
-            var chunk = new string(buffer, 0, read);
-            fullResponse.Append(chunk);
-            yield return chunk;
+            string? line;
+            while ((line = await process.StandardError.ReadLineAsync()) != null)
+            {
+                stderrContent.AppendLine(line);
+                if (line.Contains("402") ||
+                    line.Contains("quota", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("No prompt provided", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("authentication failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    try { process.Kill(true); } catch { }
+                }
+            }
+            return stderrContent.ToString();
+        });
+
+        // Kill process after timeout to prevent indefinite hang
+        using var cts = new CancellationTokenSource();
+        _ = Task.Delay(TimeSpan.FromSeconds(TimeoutSeconds), cts.Token).ContinueWith(t =>
+        {
+            if (t.IsCompletedSuccessfully)
+            {
+                try { if (!process.HasExited) process.Kill(true); } catch { }
+            }
+        }, TaskScheduler.Default);
+
+        var fullResponse = new StringBuilder();
+        // Buffer for detecting and stripping echoed System:/User: prefix at stream start
+        var prefixBuffer = new StringBuilder();
+        bool prefixHandled = false;
+        const int maxPrefixBuffer = 4096;
+        string[] promptPrefixes = { "System:", "User:", "Assistant:", "Context:", "History:", "Memory:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:" };
+
+        if (useJsonStreaming)
+        {
+            string? line;
+            while ((line = await process.StandardOutput.ReadLineAsync()) != null)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                string? chunk = null;
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    // Standard message format (Gemini/Claude CLI)
+                    if (doc.RootElement.TryGetProperty("type", out var typeProp))
+                    {
+                        var type = typeProp.GetString();
+                        if (type == "message")
+                        {
+                            // Skip messages from user or system to avoid echoing the prompt
+                            bool isAssistant = true;
+                            if (doc.RootElement.TryGetProperty("role", out var roleProp))
+                            {
+                                var role = roleProp.GetString();
+                                if (role == "user" || role == "system") isAssistant = false;
+                            }
+
+                            if (isAssistant && doc.RootElement.TryGetProperty("content", out var contentProp))
+                            {
+                                chunk = contentProp.GetString() ?? "";
+                            }
+                        }
+                        else if (type == "content_block_delta" || type == "text_delta")
+                        {
+                            if (doc.RootElement.TryGetProperty("delta", out var deltaProp) &&
+                                deltaProp.TryGetProperty("text", out var textProp))
+                            {
+                                chunk = textProp.GetString() ?? "";
+                            }
+                        }
+                    }
+                    else if (doc.RootElement.TryGetProperty("content", out var directContent))
+                    {
+                        chunk = directContent.GetString() ?? "";
+                    }
+                }
+                catch (JsonException) { /* Skip invalid JSON lines */ }
+
+                if (chunk != null)
+                {
+                    fullResponse.Append(chunk);
+                    yield return chunk; // For JSON streaming, we trust the role/type filtering
+                }
+            }
         }
-        await process.WaitForExitAsync();
+        else
+        {
+            var buffer = new char[64];
+            int read;
+            while ((read = await process.StandardOutput.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            {
+                var chunk = new string(buffer, 0, read);
+                fullResponse.Append(chunk);
+                if (!prefixHandled)
+                {
+                    prefixBuffer.Append(chunk);
+                    var buf = prefixBuffer.ToString();
+                    
+                    bool startsWithPrefix = promptPrefixes.Any(p => buf.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (!startsWithPrefix)
+                    {
+                        prefixHandled = true;
+                        yield return buf;
+                        prefixBuffer.Clear();
+                    }
+                    else if (buf.Contains("\nUser:") || buf.Contains("\nAssistant:"))
+                    {
+                        // We think we've reached the end of the echoed prompt
+                        var stripped = StripEchoedPromptPrefix(buf);
+                        prefixHandled = true;
+                        if (!string.IsNullOrEmpty(stripped)) yield return stripped;
+                        prefixBuffer.Clear();
+                    }
+                    else if (buf.Length >= maxPrefixBuffer)
+                    {
+                        prefixHandled = true;
+                        yield return buf;
+                        prefixBuffer.Clear();
+                    }
+                }
+                else
+                {
+                    yield return chunk;
+                }
+            }
+            if (!prefixHandled && prefixBuffer.Length > 0)
+            {
+                var stripped = StripEchoedPromptPrefix(prefixBuffer.ToString());
+                if (!string.IsNullOrEmpty(stripped)) yield return stripped;
+            }
+        }
+        try { await process.WaitForExitAsync(); } catch { }
+        cts.Cancel();
         sw.Stop();
+
+        var stderrOutput = await stderrTask;
+
+        // stderr フォールバック: stdout が空の場合は gemini に切り替え、またはエラーを表示
+        if (fullResponse.Length == 0)
+        {
+            if (targetProvider != FallbackProvider)
+            {
+                await foreach (var chunk in GetResponseStreamAsync(prompt, userId, chatSessionId, FallbackProvider, agentId))
+                {
+                    yield return chunk;
+                }
+                yield break;
+            }
+
+            if (!string.IsNullOrWhiteSpace(stderrOutput))
+            {
+                var parsedError = ExtractCliError(stderrOutput, targetProvider);
+                var errMsg = $"[Error from {targetProvider}]: {parsedError}";
+                fullResponse.Append(errMsg);
+                yield return errMsg;
+            }
+        }
 
         // ストリーム完了後にログを保存
         if (messageId > 0)
@@ -460,9 +648,16 @@ public class AiService
         string provider, int userId, int? chatSessionId = null, int attemptNumber = 1)
     {
         var roleSkills = await _memorySearch.SearchSkillsAsync(input, userId, agentRole: role);
+        var memories = await _memorySearch.SearchAsync(input, userId);
         var workingDir = await GetProjectRootAsync(chatSessionId);
         var policies = await LoadPoliciesAsync();
         string fullPersona = persona + policies;
+
+        if (memories.Any())
+        {
+            fullPersona += "\n\n[ユーザーの既知情報・長期記憶]:\n";
+            foreach (var m in memories) fullPersona += $"- {m.Content}\n";
+        }
 
         // Fetch project-specific role prompt if exists
         if (chatSessionId.HasValue)
@@ -484,10 +679,10 @@ public class AiService
             {
                 fullPersona += "\n\n" + sessionMemoryContext;
             }
-
-            // Memory Instruction
-            fullPersona += "\n\n[MEMORY INSTRUCTION]:\n重要な発見や制約があれば \"MEMORY: key=value\" の形式で行末に出力してください。";
         }
+
+        // Memory Instruction
+        fullPersona += GetSystemPromptTemplate("MemoryInstruction", "\n\n[MEMORY INSTRUCTION]:\n重要な発見や制約があれば \"MEMORY: key=value\" の形式で行末に出力してください。");
 
         if (roleSkills.Any())
         {
@@ -543,8 +738,9 @@ public class AiService
         }
     }
 
-    private async Task<bool> QuickQualityCheckAsync(string originalTask, string execution, string provider)
+    private async Task<bool> QuickQualityCheckAsync(string originalTask, string execution, string? provider = null)
     {
+        var targetProvider = provider ?? DefaultProvider;
         string checkPrompt = $"""
             以下のタスクに対して実行結果が十分か判断してください。
             タスク: {originalTask}
@@ -553,7 +749,7 @@ public class AiService
             結果が十分であれば "OK"、不十分であれば "RETRY" のみを返してください。
             """;
 
-        string result = await ExecuteCliAsync(checkPrompt, provider, systemPrompt: null);
+        string result = await ExecuteCliAsync(checkPrompt, targetProvider, systemPrompt: null);
         return result.Contains("OK", StringComparison.OrdinalIgnoreCase);
     }
     private async Task<string> LoadPoliciesAsync()
@@ -579,9 +775,7 @@ public class AiService
         var skills = await _memorySearch.SearchSkillsAsync(prompt, userId, agentRole);
         var policies = await LoadPoliciesAsync();
 
-        var sb = new StringBuilder("あなたは高度なAIアシスタントです。現在はソフトウェア開発プロジェクトのコンテキストで動作しています。");
-        sb.Append("\nユーザーから具体的な実装や修正の指示があった場合、単にコードを提示するだけでなく、プロジェクトのファイル構造を理解し、必要に応じてファイルを直接操作・更新する計画を立てて実行してください。");
-        sb.Append("\n出力には、実行すべき具体的なアクション（ファイルの読み込み、書き込み、置換など）を明确に含めてください。");
+        var sb = new StringBuilder(GetSystemPromptTemplate("Default", "あなたは高度なAIアシスタントです。現在はソフトウェア開発プロジェクトのコンテキストで動作しています。"));
         sb.Append(policies);
 
         if (selectedAgent != null)
@@ -611,6 +805,13 @@ public class AiService
                     }
                 }
             }
+
+            // Inject Session Memory
+            var sessionMemoryContext = await _sessionMemory.ReadAllAsContextAsync(chatSessionId.Value);
+            if (!string.IsNullOrEmpty(sessionMemoryContext))
+            {
+                sb.Append("\n\n" + sessionMemoryContext);
+            }
         }
 
         if (memories.Any())
@@ -624,6 +825,9 @@ public class AiService
             sb.Append("\n\n[有効なスキル指示]:\n");
             foreach (var s in skills) sb.Append($"- {s.Description}\n");
         }
+
+        // Memory Instruction
+        sb.Append(GetSystemPromptTemplate("MemoryInstruction", "\n\n[MEMORY INSTRUCTION]:\n重要な発見や制約があれば \"MEMORY: key=value\" の形式で行末に出力してください。"));
 
         return sb.ToString();
     }
@@ -690,14 +894,250 @@ public class AiService
         return "{}";
     }
 
-    private ProcessStartInfo SetupProcessInfo(string provider, string? workingDirectory = null)
+    private static string StripEchoedPromptPrefix(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        var lines = text.Split('\n');
+        int lastPromptLine = -1;
+        
+        string[] promptPrefixes = { 
+            "System:", "User:", "Assistant:", "Context:", "History:", "Memory:", 
+            "Thought:", "Thinking:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:", 
+            "[追加スキル指示]:", "[MEMORY INSTRUCTION]:", "[ENVIRONMENTAL POLICIES & CONSTRAINTS]:", 
+            "--- Policy:", "Role:", "Persona:", "Input:", "Output:"
+        };
+        string[] systemPromptFragments = { 
+            "あなたは高度なAIアシスタントです", 
+            "現在はソフトウェア開発プロジェクトのコンテキストで動作しています",
+            "あなたはタスク分解の専門家",
+            "あなたは実装の専門家",
+            "あなたは評審の専門家",
+            "[MEMORY INSTRUCTION]",
+            "[会話履歴]:",
+            "[ユーザーの既知情報・長期記憶]:",
+            "重要な発見や制約があれば"
+        };
+
+        for (int i = 0; i < Math.Min(lines.Length, 150); i++)
+        {
+            var trimmedLine = lines[i].Trim();
+            if (string.IsNullOrWhiteSpace(trimmedLine))
+            {
+                lastPromptLine = i;
+                continue;
+            }
+
+            bool isPromptHeader = promptPrefixes.Any(p => trimmedLine.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+            bool isSystemFragment = systemPromptFragments.Any(f => trimmedLine.Contains(f));
+
+            if (isPromptHeader || isSystemFragment)
+            {
+                lastPromptLine = i;
+            }
+            else
+            {
+                // Stop if we hit a line that's definitely not a prompt line
+                // But only if we've already found some prompt lines
+                if (lastPromptLine != -1 && trimmedLine.Length > 0)
+                {
+                    // Special case: if the line starts with "Assistant:", we want to skip it and take the rest
+                    if (trimmedLine.StartsWith("Assistant:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        lastPromptLine = i;
+                        continue;
+                    }
+                    break; 
+                }
+            }
+        }
+
+        if (lastPromptLine >= 0)
+        {
+            var remainingLines = lines.Skip(lastPromptLine + 1).ToList();
+            if (remainingLines.Any())
+            {
+                var joined = string.Join("\n", remainingLines).Trim();
+                // Recursively strip if the first line of the result is still a prefix
+                if (promptPrefixes.Any(p => joined.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
+                    return StripEchoedPromptPrefix(joined);
+                return joined;
+            }
+            else
+            {
+                // If everything was stripped, maybe the last line WAS the response but matched a fragment
+                return text.Trim();
+            }
+        }
+
+        return text.Trim();
+    }
+
+    private static string CleanResponse(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        // 1. Strip echoed System:/User: prompt prefix
+        text = StripEchoedPromptPrefix(text);
+
+        // 2. Remove XML-style thinking/thought tags
+        text = Regex.Replace(text, @"<(thinking|thought|thought_process)>.*?</\1>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"<(thinking|thought|thought_process)>.*", "", RegexOptions.Singleline | RegexOptions.IgnoreCase); // Handle unclosed tags
+
+        // 3. Remove "Thought:" or "Thinking:" blocks
+        text = Regex.Replace(text, @"(^(Thought|Thinking|Reasoning):.*?\n\n)", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\n\n(Thought|Thinking|Reasoning):.*?\n\n", "\n\n", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"(Thought|Thinking|Reasoning):.*?$", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+
+        // 4. Final check for any leaking "System:" or "Assistant:" at the very beginning
+        if (text.StartsWith("System:", StringComparison.OrdinalIgnoreCase))
+            text = text.Substring(7).Trim();
+        if (text.StartsWith("Assistant:", StringComparison.OrdinalIgnoreCase))
+            text = text.Substring(10).Trim();
+
+        return text.Trim();
+    }
+
+    private static string ExtractCliError(string stderr, string provider)
+    {
+        if (string.IsNullOrWhiteSpace(stderr))
+            return "Unknown CLI error.";
+
+        var lines = stderr
+            .Replace("\r\n", "\n")
+            .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+        var messages = new List<string>();
+
+        foreach (var line in lines)
+        {
+            if (provider == "codex" && TryExtractCodexJsonError(line, out var jsonError))
+            {
+                messages.Add(jsonError);
+                continue;
+            }
+
+            if (ShouldIgnoreStderrLine(line, provider))
+                continue;
+
+            messages.Add(line);
+        }
+
+        var distinctMessages = messages
+            .Select(m => m.Trim())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Distinct()
+            .ToList();
+
+        if (distinctMessages.Count == 0)
+            return "Request failed in CLI process.";
+
+        var combined = string.Join("\n", distinctMessages);
+        return NormalizeProviderError(combined, provider);
+    }
+
+    private static string NormalizeProviderError(string message, string provider)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return "Request failed in CLI process.";
+
+        if (provider == "codex" &&
+            message.Contains("model is not supported when using Codex with a ChatGPT account", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Codex is logged in with a ChatGPT account, so API models such as gpt-5.5 are unavailable. Re-authenticate Codex with an OpenAI API key.";
+        }
+
+        if (provider == "gh-copilot" &&
+            (message.Contains("402", StringComparison.OrdinalIgnoreCase) ||
+             message.Contains("You have no quota", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "GitHub Copilot quota is unavailable or the subscription has expired. Check your Copilot plan and quota status.";
+        }
+
+        return message;
+    }
+
+    private static bool TryExtractCodexJsonError(string line, out string message)
+    {
+        message = string.Empty;
+        const string prefix = "ERROR:";
+        if (!line.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+
+        var payload = line[prefix.Length..].Trim();
+        if (!payload.StartsWith("{", StringComparison.Ordinal))
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.TryGetProperty("error", out var error) &&
+                error.TryGetProperty("message", out var errorMessage))
+            {
+                message = errorMessage.GetString() ?? string.Empty;
+                return !string.IsNullOrWhiteSpace(message);
+            }
+
+            if (doc.RootElement.TryGetProperty("message", out var rootMessage))
+            {
+                message = rootMessage.GetString() ?? string.Empty;
+                return !string.IsNullOrWhiteSpace(message);
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return false;
+    }
+
+    private static bool ShouldIgnoreStderrLine(string line, string provider)
+    {
+        if (line.StartsWith("System:", StringComparison.Ordinal) ||
+            line.StartsWith("User:", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (provider == "opencode")
+            return true;
+
+        if (provider != "codex")
+            return false;
+
+        if (line == "Reading prompt from stdin..." || line == "--------" || line == "user")
+            return true;
+
+        if (line.StartsWith("OpenAI Codex v", StringComparison.Ordinal) ||
+            line.StartsWith("workdir:", StringComparison.Ordinal) ||
+            line.StartsWith("model:", StringComparison.Ordinal) ||
+            line.StartsWith("provider:", StringComparison.Ordinal) ||
+            line.StartsWith("approval:", StringComparison.Ordinal) ||
+            line.StartsWith("sandbox:", StringComparison.Ordinal) ||
+            line.StartsWith("reasoning effort:", StringComparison.Ordinal) ||
+            line.StartsWith("reasoning summaries:", StringComparison.Ordinal) ||
+            line.StartsWith("session id:", StringComparison.Ordinal) ||
+            line.StartsWith("System:", StringComparison.Ordinal) ||
+            line.StartsWith("User:", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (line.Contains("failed to record rollout items", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
+    }
+
+    private ProcessStartInfo SetupProcessInfo(string provider, string? workingDirectory = null, string? outputFormat = null)
     {
         string fileName = provider switch
         {
             "gh-copilot" => "copilot",
             "claude" => "claude",
             "codex" => "codex",
-            _ => "gemini"
+            "opencode" => "opencode",
+            _ => DefaultProvider
         };
 
         var processInfo = new ProcessStartInfo
@@ -711,6 +1151,9 @@ public class AiService
             WorkingDirectory = workingDirectory ?? Directory.GetCurrentDirectory()
         };
 
+        // Explicitly disable sandbox if docker/podman is not available
+        processInfo.EnvironmentVariables["GEMINI_SANDBOX"] = "false";
+
         if (provider == "codex")
         {
             processInfo.ArgumentList.Add("exec");
@@ -718,26 +1161,48 @@ public class AiService
             processInfo.ArgumentList.Add("--color");
             processInfo.ArgumentList.Add("never");
         }
+        else if (provider == "opencode")
+        {
+            processInfo.ArgumentList.Add("run");
+            processInfo.ArgumentList.Add("--dangerously-skip-permissions");
+        }
+        else if (provider == "gh-copilot")
+        {
+            processInfo.ArgumentList.Add("--allow-all-tools");
+        }
         else
         {
             processInfo.ArgumentList.Add("-p");
             processInfo.ArgumentList.Add(""); // Headless mode, read from stdin
-            if (provider == "claude")
-                processInfo.ArgumentList.Add("--dangerously-skip-permissions");
-            else if (provider == "gh-copilot")
+            
+            if (provider == "claude" || fileName == "claude")
             {
-                processInfo.ArgumentList.Add("--yolo");
-                processInfo.ArgumentList.Add("--silent");
+                processInfo.ArgumentList.Add("--dangerously-skip-permissions");
+                processInfo.ArgumentList.Add("--sandbox");
+                processInfo.ArgumentList.Add("false");
+                processInfo.ArgumentList.Add("--output-format");
+                processInfo.ArgumentList.Add(outputFormat ?? "json");
             }
             else
+            {
                 processInfo.ArgumentList.Add("--yolo");
+                processInfo.ArgumentList.Add("--sandbox");
+                processInfo.ArgumentList.Add("false");
+                if (provider == "gemini" || fileName == "gemini")
+                {
+                    processInfo.ArgumentList.Add("--output-format");
+                    processInfo.ArgumentList.Add(outputFormat ?? "json");
+                    processInfo.ArgumentList.Add("--raw-output");
+                }
+            }
         }
 
         return processInfo;
     }
 
-    public async Task<string> GenerateTitleAsync(string userPrompt, string aiResponse, string provider = "gemini")
+    public async Task<string> GenerateTitleAsync(string userPrompt, string aiResponse, string? provider = null)
     {
+        var targetProvider = provider ?? DefaultProvider;
         string prompt = $"""
             以下のやり取りに基づいて、チャットセッションの短いタイトルを生成してください。
             タイトルは5語以内、または15文字程度で、装飾なしのプレーンテキストのみを返してください。
@@ -746,7 +1211,7 @@ public class AiService
             AI: {(aiResponse.Length > 200 ? aiResponse[..200] + "..." : aiResponse)}
             """;
 
-        string result = await ExecuteCliAsync(prompt, provider, systemPrompt: "あなたはチャットタイトルの命名者です。簡潔で適切なタイトルのみを返します。");
+        string result = await ExecuteCliAsync(prompt, targetProvider, systemPrompt: GetSystemPromptTemplate("TitleGenerator", "あなたはチャットタイトルの命名者です。簡潔で適切なタイトルのみを返します。"));
         return result.Trim().Trim('"', '\'').Replace("\n", " ");
     }
 
@@ -754,30 +1219,89 @@ public class AiService
     {
         var processInfo = SetupProcessInfo(provider, workingDirectory);
 
+        string inputToStdin = string.IsNullOrEmpty(systemPrompt)
+            ? prompt
+            : $"{systemPrompt}\n\n{prompt}";
+
+        if (provider == "opencode")
+        {
+            processInfo.ArgumentList.Add(inputToStdin);
+            inputToStdin = string.Empty;
+        }
+        else if (provider == "gh-copilot")
+        {
+            processInfo.ArgumentList.Add("-p");
+            processInfo.ArgumentList.Add(inputToStdin);
+            inputToStdin = string.Empty;
+        }
+
         try
         {
             using var process = Process.Start(processInfo);
             if (process == null) return $"Error: Could not start {provider} CLI.";
 
-            // Write prompt to stdin
-            string inputToStdin = string.IsNullOrEmpty(systemPrompt)
-                ? prompt
-                : $"System: {systemPrompt}\n\nUser: {prompt}";
-            
+            using var cts = new CancellationTokenSource();
+            // Kill process after timeout to prevent indefinite hang
+            _ = Task.Delay(TimeSpan.FromSeconds(TimeoutSeconds), cts.Token).ContinueWith(t =>
+            {
+                if (t.IsCompletedSuccessfully)
+                {
+                    try { if (!process.HasExited) process.Kill(true); } catch { }
+                }
+            }, TaskScheduler.Default);
+
             await process.StandardInput.WriteAsync(inputToStdin);
             process.StandardInput.Close();
 
             string output = await process.StandardOutput.ReadToEndAsync();
             string error = await process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
+            try { await process.WaitForExitAsync(); } catch { }
+            cts.Cancel();
 
-            if (process.ExitCode != 0 && !string.IsNullOrWhiteSpace(error))
-                return $"[Error from {provider}]: {error}";
+            if (string.IsNullOrWhiteSpace(output) || (process.ExitCode != 0 && provider != "opencode"))
+            {
+                if (provider != FallbackProvider)
+                {
+                    // Fallback to configured fallback provider
+                    return await ExecuteCliAsync(prompt, FallbackProvider, systemPrompt, workingDirectory);
+                }
+                
+                if (!string.IsNullOrWhiteSpace(error))
+                    return $"[Error from {provider}]: {ExtractCliError(error, provider)}";
+            }
 
-            return string.IsNullOrWhiteSpace(output) ? "No response received from AI." : output;
+            if (string.IsNullOrWhiteSpace(output)) return "No response received from AI.";
+
+            // Try to extract JSON and get the final response property
+            try
+            {
+                var jsonText = ExtractJson(output);
+                if (!string.IsNullOrEmpty(jsonText) && jsonText != "{}")
+                {
+                    using var doc = JsonDocument.Parse(jsonText);
+                    // Check common properties for the final response
+                    if (doc.RootElement.TryGetProperty("response", out var resProp))
+                        return CleanResponse(resProp.GetString() ?? "");
+                    if (doc.RootElement.TryGetProperty("content", out var contentProp))
+                        return CleanResponse(contentProp.GetString() ?? "");
+                    if (doc.RootElement.TryGetProperty("text", out var textProp))
+                        return CleanResponse(textProp.GetString() ?? "");
+                }
+            }
+            catch (JsonException)
+            {
+                // Fallback to raw output if JSON parsing fails
+            }
+
+            // If not JSON or property not found, clean the raw output
+            return CleanResponse(output);
         }
         catch (Exception ex)
         {
+            if (provider != FallbackProvider)
+            {
+                return await ExecuteCliAsync(prompt, FallbackProvider, systemPrompt, workingDirectory);
+            }
             return $"[Exception]: {ex.Message}";
         }
     }

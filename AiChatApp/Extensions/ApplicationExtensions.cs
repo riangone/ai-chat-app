@@ -25,7 +25,7 @@ public static class ApplicationExtensions
         }
         if (!usersColumns.Contains("DefaultProvider"))
         {
-            command.CommandText = "ALTER TABLE Users ADD COLUMN DefaultProvider TEXT NOT NULL DEFAULT 'gemini';";
+            command.CommandText = "ALTER TABLE Users ADD COLUMN DefaultProvider TEXT NOT NULL DEFAULT '';";
             command.ExecuteNonQuery();
         }
 
@@ -38,7 +38,7 @@ public static class ApplicationExtensions
         }
         if (!sessionColumns.Contains("PreferredProvider"))
         {
-            command.CommandText = "ALTER TABLE ChatSessions ADD COLUMN PreferredProvider TEXT NOT NULL DEFAULT 'gemini';";
+            command.CommandText = "ALTER TABLE ChatSessions ADD COLUMN PreferredProvider TEXT NOT NULL DEFAULT '';";
             command.ExecuteNonQuery();
         }
 

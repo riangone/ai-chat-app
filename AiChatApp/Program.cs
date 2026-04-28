@@ -30,4 +30,4 @@ app.MapInputHistoryEndpoints();
 app.MapTodoEndpoints();
 app.MapNotesEndpoints();
 
-app.Run("http://0.0.0.0:5000");
+app.Run();

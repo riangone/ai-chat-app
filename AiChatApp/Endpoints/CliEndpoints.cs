@@ -10,11 +10,11 @@ public static class CliEndpoints
     {
         var group = app.MapGroup("/api/cli").RequireAuthorization();
 
-        group.MapGet("/sessions", () => {
+        group.MapGet("/sessions", (IConfiguration config) => {
             var sessions = new List<dynamic>();
             
             // 1. Gemini
-            var geminiPath = "/home/ubuntu/.gemini/tmp/ai-chat-app/chats";
+            var geminiPath = config["CliPaths:Gemini"] ?? "/home/ubuntu/.gemini/tmp/ai-chat-app/chats";
             if (Directory.Exists(geminiPath)) {
                 sessions.AddRange(Directory.GetFiles(geminiPath, "session-*.json")
                     .Select(f => new FileInfo(f))
@@ -22,7 +22,7 @@ public static class CliEndpoints
             }
 
             // 2. Claude
-            var claudePath = "/home/ubuntu/.cache/claude-cli-nodejs";
+            var claudePath = config["CliPaths:Claude"] ?? "/home/ubuntu/.cache/claude-cli-nodejs";
             if (Directory.Exists(claudePath)) {
                 sessions.AddRange(Directory.GetFiles(claudePath, "*.jsonl")
                     .Select(f => new FileInfo(f))
@@ -30,13 +30,13 @@ public static class CliEndpoints
             }
 
             // 3. Codex
-            var codexHistory = "/home/ubuntu/.codex/history.jsonl";
+            var codexHistory = config["CliPaths:Codex"] ?? "/home/ubuntu/.codex/history.jsonl";
             if (File.Exists(codexHistory)) {
                 sessions.Add(new { Source = "Codex", Name = "history.jsonl", Time = new FileInfo(codexHistory).LastWriteTime, Path = codexHistory });
             }
 
             // 4. Copilot
-            var copilotPath = "/home/ubuntu/.copilot/logs";
+            var copilotPath = config["CliPaths:Copilot"] ?? "/home/ubuntu/.copilot/logs";
             if (Directory.Exists(copilotPath)) {
                 sessions.AddRange(Directory.GetFiles(copilotPath, "*.log")
                     .Select(f => new FileInfo(f))

@@ -10,7 +10,11 @@ public static class ServiceExtensions
 {
     public static IServiceCollection AddProjectServices(this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddDbContext<AppDbContext>(options => options.UseSqlite("Data Source=chat.db"));
+        var connectionString = configuration.GetConnectionString("DefaultConnection") 
+            ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+
+        services.AddDbContext<AppDbContext>(options => 
+            options.UseSqlite(connectionString));
         
         services.AddSingleton<MemoryFileService>();
         services.AddScoped<MemorySearchService>();
