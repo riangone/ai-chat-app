@@ -30,5 +30,6 @@ public class Message
     public int ChatSessionId { get; set; }
     public string Content { get; set; } = string.Empty;
     public bool IsAi { get; set; }
+    public string? AgentName { get; set; }
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 }

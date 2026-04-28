@@ -258,7 +258,7 @@ public static class ChatEndpoints
 
             string aiResponse;
             if (isCooperative || selectedAgents.Any()) {
-                var aMsg = new Message { ChatSessionId = session.Id, Content = "", IsAi = true };
+                var aMsg = new Message { ChatSessionId = session.Id, Content = "", IsAi = true, AgentName = "Multi-Agent" };
                 db.Messages.Add(aMsg);
                 await db.SaveChangesAsync();
 
@@ -278,7 +278,12 @@ public static class ChatEndpoints
                 return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg), "text/html");
             } else {
                 aiResponse = await ai.GetResponseAsync(content, userId, session.Id, provider, agentId);
-                var aMsg = new Message { ChatSessionId = session.Id, Content = aiResponse, IsAi = true };
+                string agentName = provider;
+                if (agentId.HasValue) {
+                    var agentProfile = await db.AgentProfiles.FindAsync(agentId.Value);
+                    if (agentProfile != null) agentName = agentProfile.RoleName;
+                }
+                var aMsg = new Message { ChatSessionId = session.Id, Content = aiResponse, IsAi = true, AgentName = agentName };
                 db.Messages.Add(aMsg);
                 await db.SaveChangesAsync();
 
@@ -356,7 +361,12 @@ public static class ChatEndpoints
                 }
                 keepAliveCts.Cancel();
 
-                var aMsg = new Message { ChatSessionId = session.Id, Content = fullResponse.ToString(), IsAi = true };
+                string agentName = provider;
+                if (agentId.HasValue) {
+                    var agentProfile = await db.AgentProfiles.FindAsync(agentId.Value);
+                    if (agentProfile != null) agentName = agentProfile.RoleName;
+                }
+                var aMsg = new Message { ChatSessionId = session.Id, Content = fullResponse.ToString(), IsAi = true, AgentName = agentName };
                 db.Messages.Add(aMsg);
                 
                 session.UpdatedAt = DateTime.UtcNow;
@@ -420,7 +430,7 @@ public static class ChatEndpoints
 
             var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
             db.Messages.Add(uMsg);
-            var aMsg = new Message { ChatSessionId = session.Id, Content = "", IsAi = true };
+            var aMsg = new Message { ChatSessionId = session.Id, Content = "", IsAi = true, AgentName = "Multi-Agent" };
             db.Messages.Add(aMsg);
             await db.SaveChangesAsync();
 
@@ -479,6 +489,7 @@ public static class ChatEndpoints
             <div class='content-body'>{WebUtility.HtmlEncode(m.Content)}</div>
         </div>
         <div class='chat-footer flex items-center gap-3 pt-1 px-1'>
+            {(m.IsAi && !string.IsNullOrEmpty(m.AgentName) ? $"<span class='badge badge-ghost badge-xs opacity-50 font-bold uppercase tracking-wider'>{m.AgentName}</span>" : "")}
             <time class='text-[10px] opacity-40 font-mono'>{m.Timestamp.ToLocalTime().ToString("yyyy/MM/dd HH:mm")}</time>
             <div class='opacity-0 group-hover:opacity-100 transition-opacity flex gap-3'>
                 <button class='hover:text-primary transition-colors' onclick='copyText(this)' title='Copy'>

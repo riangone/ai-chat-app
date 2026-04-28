@@ -42,7 +42,20 @@ public static class ApplicationExtensions
             command.ExecuteNonQuery();
         }
 
-        // 3. Explicitly create Notes table if it doesn't exist (Existing logic)
+        // 3. Add AgentName to Messages if missing
+        command.CommandText = "PRAGMA table_info(Messages);";
+        var messageColumns = new List<string>();
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read()) messageColumns.Add(reader.GetString(1));
+        }
+        if (!messageColumns.Contains("AgentName"))
+        {
+            command.CommandText = "ALTER TABLE Messages ADD COLUMN AgentName TEXT;";
+            command.ExecuteNonQuery();
+        }
+
+        // 4. Explicitly create Notes table if it doesn't exist (Existing logic)
         command.CommandText = @"
             CREATE TABLE IF NOT EXISTS Notes (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,

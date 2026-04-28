@@ -412,8 +412,16 @@
             return false;
         }
         async function sendMessageStream(fd) {
+            let agentName = fd.get('provider');
+            const aid = fd.get('agentId');
+            if (aid && window.currentProjectAgents) {
+                const a = window.currentProjectAgents.find(x => x.id == aid);
+                if (a) agentName = a.roleName;
+            }
+            if (fd.get('mode') === 'cooperative') agentName = 'Multi-Agent';
+
             const list = document.getElementById('message-list') || document.getElementById('chat-box');
-            const id='ai-'+Date.now(); list.insertAdjacentHTML('beforeend',renderAiBubbleId('',id)); scrollToBottom();
+            const id='ai-'+Date.now(); list.insertAdjacentHTML('beforeend',renderAiBubbleId('',id, agentName)); scrollToBottom();
             const b=document.getElementById(id).querySelector('.content-body'); let acc='';
             try {
                 const r=await fetch('/api/chat/stream',{method:'POST',body:fd}); if(!r.ok||!r.body) throw new Error('stream failed');
@@ -432,14 +440,15 @@
             renderMarkdown();
             scrollToBottom(); 
         }
-        function renderAiBubbleId(c,id) { return `<div id="${id}" class="chat chat-start group message-bubble-container"><div class="chat-bubble shadow-sm bg-base-200 text-base-content border border-base-300 markdown leading-relaxed p-3 md:p-4 rounded-[18px] rounded-bl-none"><div class="content-body">${c||'<div class="typing-dots"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>'}</div></div>${renderChatFooter(true)}</div>`; }
-        function renderAiBubble(c) { return `<div class="chat chat-start group message-bubble-container"><div class="chat-bubble shadow-sm bg-base-200 text-base-content border border-base-300 markdown leading-relaxed p-3 md:p-4 rounded-[18px] rounded-bl-none"><div class="content-body">${c}</div></div>${renderChatFooter(true)}</div>`; }
-        function renderChatFooter(isAi = true) {
+        function renderAiBubbleId(c,id, agentName = '') { return `<div id="${id}" class="chat chat-start group message-bubble-container"><div class="chat-bubble shadow-sm bg-base-200 text-base-content border border-base-300 markdown leading-relaxed p-3 md:p-4 rounded-[18px] rounded-bl-none"><div class="content-body">${c||'<div class="typing-dots"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>'}</div></div>${renderChatFooter(true, agentName)}</div>`; }
+        function renderAiBubble(c, agentName = '') { return `<div class="chat chat-start group message-bubble-container"><div class="chat-bubble shadow-sm bg-base-200 text-base-content border border-base-300 markdown leading-relaxed p-3 md:p-4 rounded-[18px] rounded-bl-none"><div class="content-body">${c}</div></div>${renderChatFooter(true, agentName)}</div>`; }
+        function renderChatFooter(isAi = true, agentName = '') {
             const now = new Date();
             const dateStr = now.toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/');
             const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
             const fullStr = `${dateStr} ${timeStr}`;
             return `<div class="chat-footer flex items-center gap-3 pt-1 px-1">
+                ${(isAi && agentName) ? `<span class="badge badge-ghost badge-xs opacity-50 font-bold uppercase tracking-wider">${agentName}</span>` : ""}
                 <time class="text-[10px] opacity-40 font-mono">${fullStr}</time>                <div class="opacity-0 group-hover:opacity-100 transition-opacity flex gap-3">
                     <button onclick="copyText(this)" class="hover:text-primary" title="Copy"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5 1.5h6.375a1.125 1.125 0 0 1 1.125 1.125v9.375Zm3 3V6.75a1.125 1.125 0 0 0-1.125-1.125h-1.5a3.375 3.375 0 0 1-3.375-3.375V2.125c0-.621-.504-1.125-1.125-1.125H9.75a1.125 1.125 0 0 0-1.125 1.125V4.5a9.06 9.06 0 0 1 1.5 1.5h6.75a1.125 1.125 0 0 1 1.125 1.125v13.125a1.125 1.125 0 0 1-1.125 1.125H15" /></svg></button>
                     <button onclick="forwardText(this)" class="hover:text-primary" title="Forward"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg></button>
