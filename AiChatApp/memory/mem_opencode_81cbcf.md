@@ -5,9 +5,9 @@ type: user
 userId: 1
 tags: opencode,provider,cli,setup
 relevanceScore: 80
-accessCount: 8
+accessCount: 12
 createdAt: 2026-04-27T16:35:04.3979755Z
-lastAccessedAt: 2026-04-28T08:45:01.4968228Z
+lastAccessedAt: 2026-04-28T11:40:03.0044710Z
 ---
 
 opencode CLIがシステムにインストール済みで、AIプロバイダーの一つとして追加された

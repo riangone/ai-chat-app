@@ -303,7 +303,7 @@ public class AiService
     }
 
     public async IAsyncEnumerable<string> CooperateStreamAsync(
-        string task, int userId, int messageId, string? provider = null)
+        string task, int userId, int messageId, int? chatSessionId = null, string? provider = null)
     {
         var targetProvider = provider ?? DefaultProvider;
         var steps = new List<AgentStep>();
@@ -322,7 +322,7 @@ public class AiService
             }
             """;
 
-        var orchStep = await RunAgentStepAsync("Orchestrator", orchestratorPersona, task, messageId, targetProvider, userId);
+        var orchStep = await RunAgentStepAsync("Orchestrator", orchestratorPersona, task, messageId, targetProvider, userId, chatSessionId);
         steps.Add(orchStep);
         yield return $"event: step-complete\ndata: Orchestrator|{BuildStepHtml(orchStep).Replace("\n", "\\n")}\n\n";
 
@@ -345,7 +345,7 @@ public class AiService
         string executorPersona = "あなたは実装の専門家（Executor）です。計画に基づいて成果物を作成してください。";
         string execInput = $"計画:\n{subtaskBlock}\n\n原タスク:\n{task}";
         
-        var execStep = await RunAgentStepAsync("Executor", executorPersona, execInput, messageId, targetProvider, userId);
+        var execStep = await RunAgentStepAsync("Executor", executorPersona, execInput, messageId, targetProvider, userId, chatSessionId);
         steps.Add(execStep);
         yield return $"event: step-complete\ndata: Executor|{BuildStepHtml(execStep).Replace("\n", "\\n")}\n\n";
 
@@ -353,7 +353,7 @@ public class AiService
         yield return "event: step-start\ndata: Reviewer\n\n";
         string reviewerPersona = "あなたは評審の専門家（Reviewer）です。最終的な回答をMarkdownで作成してください。";
         
-        var reviewStep = await RunAgentStepAsync("Reviewer", reviewerPersona, $"元タスク:\n{task}\n\n実行結果:\n{execStep.Output}", messageId, targetProvider, userId);
+        var reviewStep = await RunAgentStepAsync("Reviewer", reviewerPersona, $"元タスク:\n{task}\n\n実行結果:\n{execStep.Output}", messageId, targetProvider, userId, chatSessionId);
         steps.Add(reviewStep);
         
         string finalHtml = BuildCooperativeHtml(steps, reviewStep.Output);
@@ -467,7 +467,7 @@ public class AiService
         var prefixBuffer = new StringBuilder();
         bool prefixHandled = false;
         const int maxPrefixBuffer = 4096;
-        string[] promptPrefixes = { "System:", "User:", "Assistant:", "Context:", "History:", "Memory:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:" };
+        string[] promptPrefixes = { "System:", "User:", "Assistant:", "Context:", "History:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:" };
 
         if (useJsonStreaming)
         {
@@ -900,7 +900,7 @@ public class AiService
         int lastPromptLine = -1;
         
         string[] promptPrefixes = { 
-            "System:", "User:", "Assistant:", "Context:", "History:", "Memory:", 
+            "System:", "User:", "Assistant:", "Context:", "History:", 
             "Thought:", "Thinking:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:", 
             "[追加スキル指示]:", "[MEMORY INSTRUCTION]:", "[ENVIRONMENTAL POLICIES & CONSTRAINTS]:", 
             "--- Policy:", "Role:", "Persona:", "Input:", "Output:"
@@ -940,10 +940,25 @@ public class AiService
                 if (lastPromptLine != -1 && trimmedLine.Length > 0)
                 {
                     // Special case: if the line starts with "Assistant:", we want to skip it and take the rest
+                    // But if it contains content after "Assistant:", we should treat it as the response start
                     if (trimmedLine.StartsWith("Assistant:", StringComparison.OrdinalIgnoreCase))
                     {
-                        lastPromptLine = i;
-                        continue;
+                        var contentAfter = trimmedLine.Substring("Assistant:".Length).Trim();
+                        if (string.IsNullOrEmpty(contentAfter))
+                        {
+                            lastPromptLine = i;
+                            continue;
+                        }
+                        else
+                        {
+                            // It has content! We should stop here, but set lastPromptLine such that we keep this line (minus prefix)
+                            // Actually, the logic below uses lastPromptLine + 1 as start.
+                            // So if we want to KEEP this line but strip "Assistant:", we can't just break.
+                            
+                            // Let's modify the result construction instead.
+                            lastPromptLine = i; 
+                            break; 
+                        }
                     }
                     break; 
                 }
@@ -952,9 +967,22 @@ public class AiService
 
         if (lastPromptLine >= 0)
         {
-            var remainingLines = lines.Skip(lastPromptLine + 1).ToList();
+            var remainingLines = lines.Skip(lastPromptLine).ToList();
             if (remainingLines.Any())
             {
+                // Check if the first remaining line starts with a prefix we want to strip
+                var firstLine = remainingLines[0];
+                foreach (var p in promptPrefixes)
+                {
+                    if (firstLine.Trim().StartsWith(p, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var idx = firstLine.IndexOf(p, StringComparison.OrdinalIgnoreCase);
+                        firstLine = firstLine.Substring(idx + p.Length).Trim();
+                        remainingLines[0] = firstLine;
+                        break;
+                    }
+                }
+
                 var joined = string.Join("\n", remainingLines).Trim();
                 // Recursively strip if the first line of the result is still a prefix
                 if (promptPrefixes.Any(p => joined.StartsWith(p, StringComparison.OrdinalIgnoreCase)))

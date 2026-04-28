@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using AiChatApp.Data;
 using AiChatApp.Models;
+using AiChatApp.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Net;
 
@@ -27,7 +28,7 @@ public static class TodoEndpoints
         });
 
         // POST /api/todos → create item, return new item HTML fragment
-        group.MapPost("/", async ([FromForm] string title, AppDbContext db) =>
+        group.MapPost("/", async ([FromForm] string title, AppDbContext db, ProactiveBrainService brain) =>
         {
             if (string.IsNullOrWhiteSpace(title))
                 return Results.BadRequest();
@@ -36,17 +37,24 @@ public static class TodoEndpoints
             db.TodoItems.Add(item);
             await db.SaveChangesAsync();
 
+            brain.ProcessTodoChange(item, "created");
+
             return Results.Content(BuildItemHtml(item), "text/html");
         }).DisableAntiforgery();
 
         // PUT /api/todos/{id}/toggle → toggle IsCompleted, return updated item HTML
-        group.MapPut("/{id}/toggle", async (int id, AppDbContext db) =>
+        group.MapPut("/{id}/toggle", async (int id, AppDbContext db, ProactiveBrainService brain) =>
         {
             var item = await db.TodoItems.FindAsync(id);
             if (item is null) return Results.NotFound();
 
             item.IsCompleted = !item.IsCompleted;
             await db.SaveChangesAsync();
+
+            if (item.IsCompleted)
+            {
+                brain.ProcessTodoChange(item, "completed");
+            }
 
             return Results.Content(BuildItemHtml(item), "text/html");
         }).DisableAntiforgery();
@@ -67,7 +75,7 @@ public static class TodoEndpoints
     private static string BuildListHtml(List<TodoItem> items)
     {
         if (!items.Any())
-            return "<li class=\"text-center py-8 opacity-40\">No todos yet. Add one above!</li>";
+            return "<li id=\"no-todos-hint\" class=\"text-center py-8 opacity-40\">No todos yet. Add one above!</li>";
 
         return string.Join("", items.Select(BuildItemHtml));
     }

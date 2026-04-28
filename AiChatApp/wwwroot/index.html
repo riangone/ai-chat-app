@@ -16,10 +16,37 @@
     <link rel="stylesheet" href="https://unpkg.com/swiper@11/swiper-bundle.min.css" />
     <script src="https://unpkg.com/swiper@11/swiper-bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
     <script src="translations.js"></script>
     <style>
         .htmx-indicator { display: none; }
         .htmx-request .htmx-indicator { display: inline-block; }
+        
+        /* Proactive Agent Suggestion UI */
+        #proactive-suggestions {
+            position: fixed;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            z-index: 9999;
+            max-width: 400px;
+            min-width: 320px;
+            pointer-events: none;
+        }
+        .suggestion-card {
+            animation: slideInRight 0.3s ease-out;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            pointer-events: auto;
+        }
+        @keyframes slideInRight {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .suggestion-card.hiding {
+            animation: slideOutRight 0.3s ease-in forwards;
+        }
+        @keyframes slideOutRight {
+            to { transform: translateX(100%); opacity: 0; }
+        }
         .requesting #send-btn, .requesting #chat-input { pointer-events: none; opacity: 0.5; }
         #send-btn {
             position: relative;
@@ -227,15 +254,55 @@
             }
         }
         function updateTabBar(index) { document.querySelectorAll('.sidebar-item').forEach((item, i) => { item.classList.toggle('active', i === index); }); }
+        
+        function ensureTabDataLoaded(index) {
+            const containerMap = {
+                1: { id: 'history-list-container', trigger: 'loadHistory' },
+                2: { id: 'projects-list-container', trigger: 'loadProjects' },
+                3: { id: 'skills-list-container', trigger: 'loadSkills' },
+                4: { id: 'memory-list-container', trigger: 'loadMemories' },
+                5: { id: 'cli-list-container', trigger: 'loadCli' },
+                6: { id: 'notes-list', trigger: 'refreshNoteList' },
+                11: { id: 'todo-list', trigger: 'refreshTodoList' }
+            };
+
+            const config = containerMap[index];
+            if (config) {
+                const el = document.getElementById(config.id);
+                if (el && !el.dataset.loaded) {
+                    htmx.trigger(el, config.trigger);
+                    el.dataset.loaded = 'true';
+                }
+                return;
+            }
+
+            if (index === 7) {
+                const h = document.getElementById('harness-content-area');
+                if (h && !h.dataset.loaded) {
+                    switchHarnessTab('pipelines');
+                    h.dataset.loaded = 'true';
+                }
+            } else if (index === 8) {
+                const p = document.getElementById('pipeline-panel');
+                if (p && !p.dataset.loaded) {
+                    initPipelinePanel();
+                    p.dataset.loaded = 'true';
+                }
+            } else if (index === 10) {
+                const f = document.getElementById('files-content');
+                if (f && !f.dataset.loaded) {
+                    browsePath(currentFilesPath || '');
+                    f.dataset.loaded = 'true';
+                }
+            }
+        }
+
         function switchMainTab(index) { 
             if (swiper) swiper.slideTo(index); 
             updateTabBar(index); 
             const f = document.getElementById('global-footer'); 
             if (f) f.style.display = (index === 0) ? 'block' : 'none'; 
-            if (index === 10) {
-                const fc = document.getElementById('files-content');
-                if (fc && fc.innerHTML.trim() === '') browsePath(currentFilesPath || '');
-            }
+            ensureTabDataLoaded(index);
             closeDrawer(); 
         }
         function toggleDrawer() { document.querySelector('.app-container').classList.toggle('drawer-open'); }
@@ -518,6 +585,164 @@
             }
         }
         function applyRolePreset(n) { const p=(translations[currentLang].presets||{})[n]; if(p){document.getElementById('new-agent-role').value=n;document.getElementById('new-agent-prompt').value=p.prompt;} }
+
+        // Proactive Agent SignalR Connection
+        let proactiveConnection = null;
+        let suggestionQueue = [];
+        let isShowingSuggestion = false;
+
+        async function initProactiveAgent() {
+            if (proactiveConnection) return;
+            
+            proactiveConnection = new signalR.HubConnectionBuilder()
+                .withUrl('/hub/proactive-agent')
+                .withAutomaticReconnect()
+                .build();
+
+            // Handle legacy file-change messages
+            proactiveConnection.on('FileChanged', (message) => {
+                showProactiveSuggestion({
+                    type: 'file-change',
+                    title: 'File Changed',
+                    content: `${message.fileName} was ${message.changeType.toLowerCase()}`,
+                    metadata: message.filePath,
+                    actions: [
+                        { label: 'View', command: 'view-file', payload: message.filePath },
+                        { label: 'Dismiss', command: 'dismiss' }
+                    ]
+                });
+            });
+
+            // Handle new rich proactive messages from ProactiveBrainService
+            proactiveConnection.on('ProactiveMessage', (suggestion) => {
+                showProactiveSuggestion(suggestion);
+            });
+
+            try {
+                await proactiveConnection.start();
+                console.log('Hyperion Proactive Brain Connected');
+                
+                if (selectedProjectId) {
+                    await proactiveConnection.invoke('JoinProjectGroup', selectedProjectId);
+                }
+            } catch (err) {
+                console.error('Proactive connection failed: ', err);
+            }
+        }
+
+        function showProactiveSuggestion(suggestion) {
+            suggestionQueue.push(suggestion);
+            if (!isShowingSuggestion) {
+                processSuggestionQueue();
+            }
+        }
+
+        async function processSuggestionQueue() {
+            if (suggestionQueue.length === 0) {
+                isShowingSuggestion = false;
+                return;
+            }
+
+            isShowingSuggestion = true;
+            const suggestion = suggestionQueue.shift();
+            const container = document.getElementById('proactive-suggestions');
+            
+            const typeConfig = {
+                'file-change': { color: 'alert-info', icon: 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
+                'insight': { color: 'bg-indigo-500 text-white border-none', icon: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z' },
+                'task': { color: 'alert-primary', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01' },
+                'warning': { color: 'alert-warning', icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 17c-.77 1.333.192 3 1.732 3z' },
+                'success': { color: 'alert-success', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' }
+            };
+            
+            const config = typeConfig[suggestion.type] || typeConfig['file-change'];
+            
+            const html = `
+                <div class="alert ${config.color} suggestion-card mb-3 p-4 flex-col items-start gap-3" id="current-suggestion">
+                    <div class="flex items-start gap-3 w-full">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" class="shrink-0 w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="${config.icon}"></path></svg>
+                        <div class="flex-1">
+                            <h3 class="font-black text-sm uppercase tracking-wider">${suggestion.title || 'Hyperion Insight'}</h3>
+                            <div class="text-xs mt-1 leading-relaxed">${suggestion.content}</div>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-2 w-full mt-1">
+                        ${suggestion.actions ? suggestion.actions.map(a => 
+                            `<button class="btn btn-xs rounded-lg ${a.style || 'btn-ghost'}" onclick="handleSuggestionAction('${a.command}', '${a.payload || ''}')">${a.label}</button>`
+                        ).join('') : ''}
+                    </div>
+                </div>
+            `;
+            
+            container.innerHTML = html;
+            
+            // Auto-dismiss after 15 seconds for rich suggestions
+            setTimeout(() => {
+                dismissSuggestion();
+            }, 15000);
+        }
+
+        function handleSuggestionAction(command, payload) {
+            console.log('Executing Hyperion Command:', command, payload);
+            
+            switch(command) {
+                case 'view-file':
+                    viewFile(payload);
+                    break;
+                case 'generate-subtasks':
+                    // Just an example: put text into chat input
+                    const input = document.getElementById('chat-input');
+                    input.value = `请帮我拆解这个任务：${payload}`;
+                    input.focus();
+                    autoExpand(input);
+                    break;
+                case 'diagnose-bug':
+                    document.getElementById('chat-input').value = `分析一下这个 Bug：${payload}`;
+                    handleFormSubmit();
+                    break;
+                case 'memorize-note':
+                    // Note memorization logic
+                    alert('正在将笔记存入长期记忆...');
+                    break;
+                case 'dismiss':
+                default:
+                    // Just dismiss
+                    break;
+            }
+            dismissSuggestion();
+        }
+
+        function dismissSuggestion() {
+            const current = document.getElementById('current-suggestion');
+            if (current) {
+                current.classList.add('hiding');
+                setTimeout(() => {
+                    processSuggestionQueue();
+                }, 300);
+            } else {
+                processSuggestionQueue();
+            }
+        }
+
+        function viewFile(filePath) {
+            // Navigate to file manager or open file
+            switchMainTab(10); // Assuming file manager is tab 10
+            console.log('View file:', filePath);
+        }
+
+        function applySuggestion(message) {
+            console.log('Apply suggestion:', message);
+            // Implement suggestion application logic
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(() => {
+                if (typeof signalR !== 'undefined') {
+                    initProactiveAgent();
+                }
+            }, 1000);
+        });
         function scrollToBottom() { const b=document.getElementById('chat-box'); if(b) b.scrollTop = b.scrollHeight; }
         function autoExpand(el) { el.style.height='auto'; el.style.height=(el.scrollHeight)+'px'; }
         function resetInputHeight() { const i=document.getElementById('chat-input'); if(i) i.style.height='44px'; }
@@ -761,7 +986,6 @@
         window.addEventListener('DOMContentLoaded', () => {
             initTheme(); updateUI(); renderUserProfile(); renderMarkdown(); syncActiveSessionFromDom(); syncProjectContext(); wirePanelNavigation(); loadCurrentUser(); loadPanelData('history-panel');
             refreshHarnessBadge();
-            browsePath('');
             
             document.body.addEventListener('htmx:afterSwap', (e) => {
                 updateUI();
@@ -781,6 +1005,10 @@
                      slidesPerView: 1,
                      allowTouchMove: true,
                      speed: 300,
+                     navigation: {
+                         nextEl: '.swiper-button-next',
+                         prevEl: '.swiper-button-prev',
+                     },
                      touchStartPreventDefault: false,
                      observer: true,
                      observeParents: true,
@@ -790,6 +1018,7 @@
                              updateTabBar(index);
                              const footer = document.getElementById('global-footer');
                              if (footer) footer.style.display = (index === 0) ? 'block' : 'none';
+                             ensureTabDataLoaded(index);
                          }
                      }
                  });
@@ -1130,6 +1359,9 @@
     </style>
 </head>
 <body class="bg-base-200">
+    <!-- Proactive Agent Suggestions Container -->
+    <div id="proactive-suggestions" class="fixed bottom-6 right-6 z-[9999] max-w-[400px] min-w-[320px]"></div>
+    
     <div class="app-container">
         <button onclick="toggleDrawer()" class="fixed top-3 left-4 btn btn-ghost btn-sm md:hidden z-[60] bg-base-100/50 backdrop-blur shadow-sm border border-base-content/10">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
@@ -1140,6 +1372,9 @@
 
         <main class="main-content">
             <div class="swiper-container content-swiper">
+                <!-- Swiper Navigation -->
+                <div class="swiper-button-next hidden md:flex !text-primary/30 hover:!text-primary transition-all" style="--swiper-navigation-size: 20px; width: 30px; height: 30px;"></div>
+                <div class="swiper-button-prev hidden md:flex !text-primary/30 hover:!text-primary transition-all" style="--swiper-navigation-size: 20px; width: 30px; height: 30px;"></div>
                 <div class="swiper-wrapper">
                     <div class="swiper-slide">
                         <div class="shell-header">
@@ -1173,23 +1408,23 @@
                     </div>
                     <div class="swiper-slide">
                         <div class="shell-header"><div class="shell-badge"><span data-i18n="history-title">History</span></div></div>
-                        <div id="history-panel" class="flex flex-col flex-1"><div id="history-list-container" hx-get="/api/chat/list" hx-trigger="load, loadHistory" hx-target="#chat-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="chat-list"></div></div></div>
+                        <div id="history-panel" class="flex flex-col flex-1"><div id="history-list-container" hx-get="/api/chat/list" hx-trigger="loadHistory" hx-target="#chat-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="chat-list"></div></div></div>
                     </div>
                     <div class="swiper-slide">
                         <div class="shell-header"><div class="shell-badge"><span data-i18n="projects-title">Workspaces</span></div><div class="right-actions"><button onclick="project_modal.showModal()" class="btn btn-ghost btn-sm btn-circle text-primary" data-i18n-title="new-project"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button></div></div>
-                        <div id="projects-panel" class="flex flex-col flex-1"><div id="projects-list-container" hx-get="/api/projects/list-html" hx-trigger="load, loadProjects" hx-target="#projects-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto w-full"><div id="selected-project-info" class="hidden mb-8 p-6 bg-primary/10 border border-primary/20 rounded-2xl"><div class="flex justify-between items-start"><div><span class="text-xl font-bold text-primary" id="current-project-name">No Project</span><p class="text-sm opacity-60 mt-1" id="current-project-path"></p></div><button onclick="deselectProject()" class="btn btn-ghost btn-sm text-error">✕ Deselect</button></div><div class="mt-4 flex gap-2"><button onclick="showAgentModal()" class="btn btn-primary">Manage Roles</button></div><div class="divider text-xs opacity-30 mt-8">Project History</div><div id="project-chat-list" class="flex flex-col gap-2"></div></div><div id="projects-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div></div></div></div>
+                        <div id="projects-panel" class="flex flex-col flex-1"><div id="projects-list-container" hx-get="/api/projects/list-html" hx-trigger="loadProjects" hx-target="#projects-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto w-full"><div id="selected-project-info" class="hidden mb-8 p-6 bg-primary/10 border border-primary/20 rounded-2xl"><div class="flex justify-between items-start"><div><span class="text-xl font-bold text-primary" id="current-project-name">No Project</span><p class="text-sm opacity-60 mt-1" id="current-project-path"></p></div><button onclick="deselectProject()" class="btn btn-ghost btn-sm text-error">✕ Deselect</button></div><div class="mt-4 flex gap-2"><button onclick="showAgentModal()" class="btn btn-primary">Manage Roles</button></div><div class="divider text-xs opacity-30 mt-8">Project History</div><div id="project-chat-list" class="flex flex-col gap-2"></div></div><div id="projects-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div></div></div></div>
                     </div>
                     <div class="swiper-slide">
                         <div class="shell-header"><div class="shell-badge"><span data-i18n="skills-title">Skills</span></div><div class="right-actions"><button onclick="createSkill()" class="btn btn-ghost btn-sm btn-circle text-primary" data-i18n-title="skills"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button></div></div>
-                        <div id="skills-panel" class="flex flex-col flex-1"><div id="skills-list-container" hx-get="/api/skills" hx-trigger="load, loadSkills" hx-target="#skills-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6" id="skills-list"></div></div></div>
+                        <div id="skills-panel" class="flex flex-col flex-1"><div id="skills-list-container" hx-get="/api/skills" hx-trigger="loadSkills" hx-target="#skills-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6" id="skills-list"></div></div></div>
                     </div>
                     <div class="swiper-slide">
                         <div class="shell-header"><div class="shell-badge"><span data-i18n="memory-title">Memory</span></div><button onclick="htmx.trigger('#memory-list-container','loadMemories')" class="btn btn-ghost btn-xs opacity-60 hover:opacity-100" title="Refresh"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg></button></div>
-                        <div id="memory-panel" class="flex flex-col flex-1"><div id="memory-list-container" hx-get="/api/memories" hx-trigger="load, loadMemories" hx-target="#memory-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-4xl mx-auto space-y-4" id="memory-list"></div></div></div>
+                        <div id="memory-panel" class="flex flex-col flex-1"><div id="memory-list-container" hx-get="/api/memories" hx-trigger="loadMemories" hx-target="#memory-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-4xl mx-auto space-y-4" id="memory-list"></div></div></div>
                     </div>
                     <div class="swiper-slide">
                         <div class="shell-header"><div class="shell-badge"><span data-i18n="cli-title">CLI Sessions</span></div></div>
-                        <div id="cli-panel" class="flex flex-col flex-1"><div id="cli-list-container" hx-get="/api/cli/sessions" hx-trigger="load, loadCli" hx-target="#cli-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="cli-list"></div></div></div>
+                        <div id="cli-panel" class="flex flex-col flex-1"><div id="cli-list-container" hx-get="/api/cli/sessions" hx-trigger="loadCli" hx-target="#cli-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="cli-list"></div></div></div>
                     </div>
                     <div class="swiper-slide" style="position: relative;">
                         <div id="notes-panel" style="position: absolute; inset: 0; overflow: hidden;">
@@ -1213,7 +1448,7 @@
                                         <input type="text" id="note-search" placeholder="Quick search..." oninput="filterNotes(this.value)" class="input input-sm w-full pl-9 bg-base-300/50 border-none focus:ring-2 focus:ring-primary/20 rounded-xl text-xs font-medium placeholder:opacity-30" />
                                     </div>
                                 </div>
-                                <div id="notes-list" hx-get="/api/notes" hx-trigger="load, refreshNoteList from:body" class="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar">
+                                <div id="notes-list" hx-get="/api/notes" hx-trigger="refreshNoteList from:body" class="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar">
                                     <div class="flex items-center justify-center h-20 opacity-30"><span class="loading loading-spinner loading-sm"></span></div>
                                 </div>
                             </div>
@@ -1388,6 +1623,31 @@
                         <div id="files-panel" class="flex flex-col flex-1">
                             <div id="files-content" class="flex-1 overflow-y-auto custom-scrollbar">
                                 <div class="flex items-center justify-center h-20 opacity-30"><span class="loading loading-spinner loading-sm"></span></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="swiper-slide">
+                        <div class="shell-header"><div class="shell-badge"><span data-i18n="todo-title">Todo List</span></div></div>
+                        <div id="todo-panel" class="flex flex-col flex-1">
+                            <div class="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1">
+                                <div class="max-w-3xl mx-auto space-y-6">
+                                    <div class="bg-base-100 p-6 rounded-3xl border border-base-content/10 shadow-sm">
+                                        <form hx-post="/api/todos" 
+                                              hx-target="#todo-list" 
+                                              hx-swap="afterbegin" 
+                                              hx-on::after-request="if(event.detail.successful) { this.reset(); this.querySelector('input').focus(); document.getElementById('no-todos-hint')?.remove(); }"
+                                              class="flex gap-2">
+                                            <input type="text" name="title" placeholder="Add a new task..." class="input input-bordered flex-1 rounded-2xl" required />
+                                            <button type="submit" class="btn btn-primary rounded-2xl px-6 hx-indicator">
+                                                <span class="hx-indicator-spinner loading loading-spinner loading-xs hidden"></span>
+                                                Add
+                                            </button>
+                                        </form>
+                                    </div>
+                                    <ul id="todo-list" hx-get="/api/todos" hx-trigger="refreshTodoList" class="space-y-2">
+                                        <div class="flex items-center justify-center py-12 opacity-30"><span class="loading loading-spinner loading-md"></span></div>
+                                    </ul>
+                                </div>
                             </div>
                         </div>
                     </div>

@@ -55,16 +55,18 @@ public static class ApplicationExtensions
             );";
         command.ExecuteNonQuery();
 
-        // 4. Explicitly create InputHistories table if it doesn't exist
+        // 4. Explicitly create TodoItems table if it doesn't exist
         command.CommandText = @"
-            CREATE TABLE IF NOT EXISTS InputHistories (
+            CREATE TABLE IF NOT EXISTS TodoItems (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                UserId INTEGER NOT NULL,
-                Content TEXT NOT NULL,
-                UsedAt DATETIME NOT NULL,
-                CONSTRAINT FK_InputHistories_Users_UserId FOREIGN KEY (UserId) REFERENCES Users (Id) ON DELETE CASCADE
+                Title TEXT NOT NULL,
+                IsCompleted INTEGER NOT NULL DEFAULT 0,
+                CreatedAt DATETIME NOT NULL,
+                UserId INTEGER NOT NULL DEFAULT 0
             );";
         command.ExecuteNonQuery();
+
+        // 5. Explicitly create InputHistories table if it doesn't exist
 
         // Initialize PipelineLoaderService
         var pipelineLoader = scope.ServiceProvider.GetRequiredService<PipelineLoaderService>();

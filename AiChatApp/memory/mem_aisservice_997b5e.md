@@ -1,13 +1,14 @@
 ---
 name: aisservice,timeout,process-management
-description: AIプロセスのタイムアウト設定。appsettings.json:600秒、AiService.csデフォルト:300秒。正常終了時にタイムアウトタスクをキャンセルする改善済み。
-type: project
+description: AIプロセスのタイムアウト設定（2026-04-27改善済み）：
+- `appsettings.json` の `TimeoutSeconds`: 600秒（1...
+type: user
 userId: 1
 tags: aisservice,timeout,process-management
 relevanceScore: 80
-accessCount: 7
+accessCount: 8
 createdAt: 2026-04-27T17:43:00.9369483Z
-lastAccessedAt: 2026-04-27T23:50:54.2834331Z
+lastAccessedAt: 2026-04-28T13:31:00.0389805Z
 ---
 
 AIプロセスのタイムアウト設定（2026-04-27改善済み）：

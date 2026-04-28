@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using AiChatApp.Data;
 using AiChatApp.Models;
+using AiChatApp.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using System.Net;
@@ -55,7 +56,7 @@ public static class NotesEndpoints
         }).DisableAntiforgery();
 
         // PUT /api/notes/{id} → update note, return 200 OK
-        group.MapPut("/{id}", async (int id, [FromForm] string title, [FromForm] string content, AppDbContext db, ClaimsPrincipal user) =>
+        group.MapPut("/{id}", async (int id, [FromForm] string title, [FromForm] string content, AppDbContext db, ClaimsPrincipal user, ProactiveBrainService brain) =>
         {
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var note = await db.Notes.FirstOrDefaultAsync(n => n.Id == id && n.UserId == userId);
@@ -66,6 +67,9 @@ public static class NotesEndpoints
             note.UpdatedAt = DateTime.UtcNow;
 
             await db.SaveChangesAsync();
+            
+            brain.ProcessNoteChange(note);
+            
             return Results.Ok();
         }).DisableAntiforgery();
 

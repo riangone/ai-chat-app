@@ -1,6 +1,7 @@
 using AiChatApp.Extensions;
 using AiChatApp.Endpoints;
 using AiChatApp.Services;
+using AiChatApp.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,5 +31,7 @@ app.MapInputHistoryEndpoints();
 app.MapTodoEndpoints();
 app.MapNotesEndpoints();
 app.MapFileManagerEndpoints();
+
+app.MapHub<ProactiveAgentHub>("/hub/proactive-agent");
 
 app.Run();

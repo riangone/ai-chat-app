@@ -1,8 +1,10 @@
 using AiChatApp.Data;
+using AiChatApp.Hubs;
 using AiChatApp.Services;
 using AiChatApp.Services.Harness;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.SignalR;
 
 namespace AiChatApp.Extensions;
 
@@ -28,6 +30,7 @@ public static class ServiceExtensions
         services.AddScoped<ToolExecutorService>();
         services.AddScoped<EvalService>();
         services.AddScoped<AiService>();
+        services.AddSingleton<ProactiveBrainService>();
 
         services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options => {
             options.SerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
@@ -39,6 +42,9 @@ public static class ServiceExtensions
                 options.LoginPath = "/login";
             });
         services.AddAuthorization();
+
+        services.AddSignalR();
+        services.AddHostedService<FileWatcherService>();
 
         return services;
     }
