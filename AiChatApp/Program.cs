@@ -29,5 +29,6 @@ app.MapProjectEndpoints();
 app.MapInputHistoryEndpoints();
 app.MapTodoEndpoints();
 app.MapNotesEndpoints();
+app.MapFileManagerEndpoints();
 
 app.Run();
