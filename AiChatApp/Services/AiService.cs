@@ -96,7 +96,7 @@ public class AiService
     public async Task<string> GetResponseAsync(
         string prompt, int userId, int? chatSessionId, string? provider = null, int? agentId = null)
     {
-        var targetProvider = provider ?? DefaultProvider;
+        var targetProvider = string.IsNullOrWhiteSpace(provider) ? DefaultProvider : provider;
         AgentProfile? agent = agentId.HasValue ? await _db.AgentProfiles.FindAsync(agentId.Value) : null;
         var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agent?.RoleName, agent);
         var workingDir = await GetProjectRootAsync(chatSessionId);
@@ -107,38 +107,14 @@ public class AiService
 
         if (agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
 
-        // 获取当前会话最新的 MessageId (刚才保存的 User 消息)
-        int messageId = 0;
-        if (chatSessionId.HasValue)
-        {
-            var lastMsg = await _db.Messages
-                .Where(m => m.ChatSessionId == chatSessionId.Value && !m.IsAi)
-                .OrderByDescending(m => m.Id)
-                .FirstOrDefaultAsync();
-            messageId = lastMsg?.Id ?? 0;
-        }
+        int messageId = await GetLatestUserMessageIdAsync(chatSessionId);
 
         var sw = Stopwatch.StartNew();
         string response = await ExecuteCliDirectAsync(fullPrompt, targetProvider, systemPrompt, workingDir);
         sw.Stop();
 
         // ログを記録
-        if (messageId > 0)
-        {
-            var step = new AgentStep
-            {
-                MessageId = messageId,
-                Role = agent?.RoleName ?? "Assistant",
-                Persona = systemPrompt ?? "Default Assistant",
-                Input = fullPrompt,
-                Output = response,
-                DurationMs = (int)sw.ElapsedMilliseconds,
-                WasAccepted = true,
-                CreatedAt = DateTime.UtcNow
-            };
-            _db.AgentSteps.Add(step);
-            await _db.SaveChangesAsync();
-        }
+        await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", systemPrompt ?? "Default Assistant", fullPrompt, response, (int)sw.ElapsedMilliseconds);
 
         return response;
     }
@@ -411,15 +387,7 @@ public class AiService
         var processInfo = SetupProcessInfo(targetProvider, workingDir, useJsonStreaming ? "stream-json" : null);
 
         // 获取 MessageId 用于记录日志
-        int messageId = 0;
-        if (chatSessionId.HasValue)
-        {
-            var lastMsg = await _db.Messages
-                .Where(m => m.ChatSessionId == chatSessionId.Value && !m.IsAi)
-                .OrderByDescending(m => m.Id)
-                .FirstOrDefaultAsync();
-            messageId = lastMsg?.Id ?? 0;
-        }
+        int messageId = await GetLatestUserMessageIdAsync(chatSessionId);
 
         string inputToStdin = string.IsNullOrEmpty(systemPrompt)
             ? fullPrompt
@@ -427,6 +395,7 @@ public class AiService
 
         if (targetProvider == "opencode")
         {
+            processInfo.ArgumentList.Add("--yolo");
             processInfo.ArgumentList.Add(inputToStdin);
             inputToStdin = string.Empty;
         }
@@ -438,7 +407,23 @@ public class AiService
         }
 
         var sw = Stopwatch.StartNew();
-        using var process = Process.Start(processInfo);
+        Process? process = null;
+        string? startError = null;
+        try
+        {
+            process = Process.Start(processInfo);
+        }
+        catch (Exception ex)
+        {
+            startError = $"Error starting CLI: {ex.Message}";
+        }
+
+        if (startError != null)
+        {
+            yield return startError;
+            yield break;
+        }
+
         if (process == null)
         {
             yield return "Error: Could not start CLI.";
@@ -611,22 +596,7 @@ public class AiService
         }
 
         // ストリーム完了後にログを保存
-        if (messageId > 0)
-        {
-            var step = new AgentStep
-            {
-                MessageId = messageId,
-                Role = agent?.RoleName ?? "Assistant",
-                Persona = systemPrompt ?? "Default Assistant",
-                Input = fullPrompt,
-                Output = fullResponse.ToString(),
-                DurationMs = (int)sw.ElapsedMilliseconds,
-                WasAccepted = true,
-                CreatedAt = DateTime.UtcNow
-            };
-            _db.AgentSteps.Add(step);
-            await _db.SaveChangesAsync();
-        }
+        await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", systemPrompt ?? "Default Assistant", fullPrompt, fullResponse.ToString(), (int)sw.ElapsedMilliseconds);
     }
 
     public Task<string> ExecuteCliDirectAsync(string prompt, string provider, string? systemPrompt = null, string? workingDir = null)
@@ -637,6 +607,34 @@ public class AiService
         if (!chatSessionId.HasValue) return null;
         var session = await _db.ChatSessions.Include(s => s.Project).FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
         return session?.Project?.RootPath;
+    }
+
+    private async Task<int> GetLatestUserMessageIdAsync(int? chatSessionId)
+    {
+        if (!chatSessionId.HasValue) return 0;
+        var lastMsg = await _db.Messages
+            .Where(m => m.ChatSessionId == chatSessionId.Value && !m.IsAi)
+            .OrderByDescending(m => m.Id)
+            .FirstOrDefaultAsync();
+        return lastMsg?.Id ?? 0;
+    }
+
+    private async Task LogAgentStepAsync(int messageId, string role, string persona, string input, string output, int durationMs)
+    {
+        if (messageId <= 0) return;
+        var step = new AgentStep
+        {
+            MessageId = messageId,
+            Role = role,
+            Persona = persona ?? "Default Assistant",
+            Input = input,
+            Output = output,
+            DurationMs = durationMs,
+            WasAccepted = true,
+            CreatedAt = DateTime.UtcNow
+        };
+        _db.AgentSteps.Add(step);
+        await _db.SaveChangesAsync();
     }
 
     // ─────────────────────────────────────────
@@ -1165,6 +1163,7 @@ public class AiService
         {
             processInfo.ArgumentList.Add("run");
             processInfo.ArgumentList.Add("--dangerously-skip-permissions");
+            processInfo.ArgumentList.Add("--yolo");
         }
         else if (provider == "gh-copilot")
         {

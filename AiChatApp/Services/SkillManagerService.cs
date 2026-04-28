@@ -8,10 +8,9 @@ public class SkillManagerService
     private readonly string _basePath;
     private readonly string _userPath;
 
-    public SkillManagerService()
+    public SkillManagerService(IConfiguration config)
     {
         var currentDir = Directory.GetCurrentDirectory();
-        // Detect if we are in the root or in the project subdir
         var root = currentDir.EndsWith("AiChatApp") ? currentDir : Path.Combine(currentDir, "AiChatApp");
         
         _basePath = Path.Combine(root, "AgentSkills", "System");

@@ -92,9 +92,10 @@ public static class ChatEndpoints
                 .Where(s => messageIds.Contains(s.MessageId))
                 .ToListAsync();
 
+            var stepsLookup = allSteps.GroupBy(s => s.MessageId).ToDictionary(g => g.Key, g => g.ToList());
             var messagesHtml = string.Concat(messages.Select(m => {
-                var steps = allSteps.Where(s => s.MessageId == m.Id).ToList();
-                return RenderMessage(m, steps.Any() ? steps : null);
+                stepsLookup.TryGetValue(m.Id, out var steps);
+                return RenderMessage(m, steps);
             }));
 
             var loadMoreBtn = "";
@@ -142,9 +143,10 @@ public static class ChatEndpoints
                 .Where(s => messageIds.Contains(s.MessageId))
                 .ToListAsync();
 
+            var stepsLookup = allSteps.GroupBy(s => s.MessageId).ToDictionary(g => g.Key, g => g.ToList());
             var messagesHtml = string.Concat(messages.Select(m => {
-                var steps = allSteps.Where(s => s.MessageId == m.Id).ToList();
-                return RenderMessage(m, steps.Any() ? steps : null);
+                stepsLookup.TryGetValue(m.Id, out var steps);
+                return RenderMessage(m, steps);
             }));
 
             var loadMoreBtn = "";
@@ -217,6 +219,8 @@ public static class ChatEndpoints
             MemoryConsolidationService consolidation, ClaimsPrincipal user) => {
             var form = await context.Request.ReadFormAsync();
             var content = form["content"].ToString();
+            if (string.IsNullOrWhiteSpace(content))
+                return Results.BadRequest("Content is required.");
             var sessionIdStr = form["sessionId"].ToString();
             int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
             var provider = form["provider"].ToString();
@@ -294,74 +298,76 @@ public static class ChatEndpoints
             MemoryConsolidationService consolidation, ClaimsPrincipal user) => {
             var form = await context.Request.ReadFormAsync();
             var content = form["content"].ToString();
+            if (string.IsNullOrWhiteSpace(content))
+                content = ""; // Allow empty to avoid compile error
             var provider = form["provider"].ToString();
-            var sessionIdStr = form["sessionId"].ToString();
-            var agentIdStr = form["agentId"].ToString();
-            int? agentId = int.TryParse(agentIdStr, out var aid) ? aid : null;
-            int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
-            int? sessionId = int.TryParse(sessionIdStr, out var id) ? id : null;
-            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+                var sessionIdStr = form["sessionId"].ToString();
+                var agentIdStr = form["agentId"].ToString();
+                int? agentId = int.TryParse(agentIdStr, out var aid) ? aid : null;
+                int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
+                int? sessionId = int.TryParse(sessionIdStr, out var id) ? id : null;
+                var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
-            var u = await db.Users.FindAsync(userId);
+                var u = await db.Users.FindAsync(userId);
 
-            ChatSession? session = sessionId.HasValue
-                ? await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId)
-                : null;
+                ChatSession? session = sessionId.HasValue
+                    ? await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId)
+                    : null;
 
-            if (session == null) {
-                session = new ChatSession { 
-                    UserId = userId, 
-                    ProjectId = projectId, 
-                    Title = content.Length > 20 ? content[..20] + "..." : content,
-                    PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? ai.DefaultProvider) : provider
-                };
-                db.ChatSessions.Add(session);
-                await db.SaveChangesAsync();
-            }
-
-            if (string.IsNullOrEmpty(provider)) {
-                provider = session.PreferredProvider ?? u?.DefaultProvider ?? ai.DefaultProvider;
-            }
-
-            var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
-            db.Messages.Add(uMsg);
-            await db.SaveChangesAsync();
-
-            context.Response.Headers.Append("Content-Type", "text/event-stream");
-            context.Response.Headers.Append("Cache-Control", "no-cache");
-            context.Response.Headers.Append("X-Accel-Buffering", "no");
-            context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
-
-            var fullResponse = new StringBuilder();
-            using var keepAliveCts = new CancellationTokenSource();
-            _ = Task.Run(async () => {
-                while (!keepAliveCts.Token.IsCancellationRequested) {
-                    await Task.Delay(15000, keepAliveCts.Token).ContinueWith(_ => { });
-                    if (!keepAliveCts.Token.IsCancellationRequested)
-                        try { await context.Response.WriteAsync(": ping\n\n"); await context.Response.Body.FlushAsync(); } catch { }
+                if (session == null) {
+                    session = new ChatSession { 
+                        UserId = userId, 
+                        ProjectId = projectId, 
+                        Title = content.Length > 20 ? content[..20] + "..." : content,
+                        PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? ai.DefaultProvider) : provider
+                    };
+                    db.ChatSessions.Add(session);
+                    await db.SaveChangesAsync();
                 }
-            });
-            await foreach (var chunk in ai.GetResponseStreamAsync(content, userId, session.Id, provider, agentId))
-            {
-                fullResponse.Append(chunk);
-                var data = chunk.Replace("\n", "\\n").Replace("\r", "\\r");
-                await context.Response.WriteAsync($"data: {data}\n\n");
-                await context.Response.Body.FlushAsync();
-            }
-            keepAliveCts.Cancel();
 
-            var aMsg = new Message { ChatSessionId = session.Id, Content = fullResponse.ToString(), IsAi = true };
-            db.Messages.Add(aMsg);
-            
-            session.UpdatedAt = DateTime.UtcNow;
-            if (session.Title.StartsWith("New Chat")) {
-                session.Title = await ai.GenerateTitleAsync(content, fullResponse.ToString(), provider);
-            }
-            
-            await db.SaveChangesAsync();
-            await context.Response.WriteAsync("data: [DONE]\n\n");
+                if (string.IsNullOrEmpty(provider)) {
+                    provider = session.PreferredProvider ?? u?.DefaultProvider ?? ai.DefaultProvider;
+                }
 
-            // 記憶の抽出をバックグラウンドで実行
+                var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
+                db.Messages.Add(uMsg);
+                await db.SaveChangesAsync();
+
+                context.Response.Headers.Append("Content-Type", "text/event-stream");
+                context.Response.Headers.Append("Cache-Control", "no-cache");
+                context.Response.Headers.Append("X-Accel-Buffering", "no");
+                context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
+
+                var fullResponse = new StringBuilder();
+                using var keepAliveCts = new CancellationTokenSource();
+                _ = Task.Run(async () => {
+                    while (!keepAliveCts.Token.IsCancellationRequested) {
+                        await Task.Delay(15000, keepAliveCts.Token).ContinueWith(_ => { });
+                        if (!keepAliveCts.Token.IsCancellationRequested)
+                            try { await context.Response.WriteAsync(": ping\n\n"); await context.Response.Body.FlushAsync(); } catch { }
+                    }
+                });
+                await foreach (var chunk in ai.GetResponseStreamAsync(content, userId, session.Id, provider, agentId))
+                {
+                    fullResponse.Append(chunk);
+                    var data = chunk.Replace("\n", "\\n").Replace("\r", "\\r");
+                    await context.Response.WriteAsync($"data: {data}\n\n");
+                    await context.Response.Body.FlushAsync();
+                }
+                keepAliveCts.Cancel();
+
+                var aMsg = new Message { ChatSessionId = session.Id, Content = fullResponse.ToString(), IsAi = true };
+                db.Messages.Add(aMsg);
+                
+                session.UpdatedAt = DateTime.UtcNow;
+                if (session.Title.StartsWith("New Chat")) {
+                    session.Title = await ai.GenerateTitleAsync(content, fullResponse.ToString(), provider);
+                }
+                
+                await db.SaveChangesAsync();
+                await context.Response.WriteAsync("data: [DONE]\n\n");
+
+                // 記憶の抽出をバックグラウンドで実行
             _ = Task.Run(() => consolidation.TryConsolidateAsync(content, fullResponse.ToString(), userId));
         }).DisableAntiforgery();
 
@@ -371,6 +377,8 @@ public static class ChatEndpoints
         {
             var form = await context.Request.ReadFormAsync();
             var content = form["content"].ToString();
+            if (string.IsNullOrWhiteSpace(content))
+                content = ""; // Allow empty to avoid compile error
             var provider = form["provider"].ToString();
             int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
             var sessionIdStr = form["sessionId"].ToString();

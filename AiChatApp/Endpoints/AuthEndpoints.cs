@@ -20,10 +20,18 @@ public static class AuthEndpoints
         var group = app.MapGroup("/api/auth");
 
         group.MapPost("/register", async ([FromForm] string username, [FromForm] string password, AppDbContext db) => {
+            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+                return Results.BadRequest("Username and password are required.");
+            if (password.Length < 6)
+                return Results.BadRequest("Password must be at least 6 characters.");
             if (await db.Users.AnyAsync(u => u.Username == username)) return Results.Redirect("/register?error=exists");
             var user = new User { Username = username, PasswordHash = BCrypt.Net.BCrypt.HashPassword(password) };
             db.Users.Add(user);
-            await db.SaveChangesAsync();
+            try {
+                await db.SaveChangesAsync();
+            } catch (Exception) {
+                return Results.BadRequest("Failed to create user.");
+            }
             return Results.Redirect("/login");
         }).DisableAntiforgery();
 
@@ -56,6 +64,8 @@ public static class AuthEndpoints
         group.MapPost("/change-password", async ([FromForm] string oldPassword, [FromForm] string newPassword, AppDbContext db, ClaimsPrincipal user) => {
             var userIdStr = user.FindFirstValue(ClaimTypes.NameIdentifier);
             if (userIdStr == null) return Results.Unauthorized();
+            if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 6)
+                return Results.BadRequest("New password must be at least 6 characters.");
             
             var userId = int.Parse(userIdStr);
             var dbUser = await db.Users.FindAsync(userId);
