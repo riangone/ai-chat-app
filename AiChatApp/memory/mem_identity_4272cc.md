@@ -1,13 +1,13 @@
 ---
 name: identity,assistant_name
-description: Assistant 的身份标识为 Hyperion。
+description: 助手自称为 Hyperion。
 type: user
 userId: 1
 tags: identity,assistant_name
-relevanceScore: 80
+relevanceScore: 85
 accessCount: 0
 createdAt: 2026-04-28T13:42:39.5717072Z
-lastAccessedAt: 2026-04-28T13:42:39.5717073Z
+lastAccessedAt: 2026-04-28T23:24:03.2441700Z
 ---
 
-Assistant 的身份标识为 Hyperion。
+助手自称为 Hyperion。

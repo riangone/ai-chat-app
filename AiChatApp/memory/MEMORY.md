@@ -58,6 +58,7 @@
 - [dev_ops](mem_dev_ops_a646ae.md) — 后端 ProactiveBrainService 逻辑升级后，需运行 ./restart.sh 或 dotnet run...
 - [developer-preference](mem_developer_preference_f26ae3.md) — Hyperion 倾向于通过编写临时测试脚本（如控制台应用）来验证核心算法逻辑（如前缀剥离逻辑）的准确性。
 - [documentation](mem_documentation_9e0e0f.md) — 已更新 docs/PROACTIVE_DESIGN.md，确立了四层感知架构作为未来进化的蓝图。
+- [documentation](mem_documentation_f282c9.md) — 项目包含核心设计文档 PROACTIVE_DESIGN.md。
 - [documentation](mem_documentation_fd04d7.md) — 已在 /AiChatApp/docs/PROJECT_DOC.md 生成了完整的项目文档，包含概述、结构、功能、API ...
 - [feature](mem_feature_126f70.md) — 在文件管理器的文件查看模式下新增了“复制路径”功能，支持一键复制文件的相对路径。
 - [feature](mem_feature_18cbd9.md) — 实现了任务感知功能：当用户新增或完成 Todo 时，Hyperion 会主动提供分析、拆解建议或庆祝。
@@ -66,6 +67,7 @@
 - [feature](mem_feature_67160e.md) — 项目实现了主动式代理系统 (Proactive Agent System)，用于实时监控代码变动并推送 AI 建议。
 - [feature](mem_feature_9ac5d2.md) — 实现了笔记联想功能：当用户保存笔记时，Hyperion 会建议将其转化为长期记忆或关联现有代码。
 - [feature](mem_feature_ac6f46.md) — 文件管理器 (FileManager) 功能已在项目中完全实现，支持文件列表浏览、内容查看、创建和删除操作。
+- [feature](mem_feature_d74398.md) — 项目实现了内存注入逻辑，在 memory/ 目录下维护着大量内存文件。
 - [feature](mem_feature_ea1094.md) — 系统已成功集成 Todo（待办事项）功能，界面作为第 11 个滑块面板（Slide 11）加入主界面。
 - [feature](mem_feature_eaf634.md) — Hyperion 具备“主动思维中枢”（Proactive Brain Service），在用户添加 Todo 任务时，...
 - [feature-restoration](mem_feature_restoration_f60ac3.md) — 从备份文件 index.html.bak 中恢复了 Settings 页面缺失的语言 (Language) 和主题 (T...
@@ -98,7 +100,7 @@
 - [i18n](mem_i18n_b4e484.md) — 多语言配置文件 translations.js 已更新，支持 Todo 模块的中英文切换。
 - [i18n](mem_i18n_fada30.md) — 项目支持多语言国际化 (i18n)，翻译文件位于 `wwwroot/translations.js`，包含中、英、日、韩...
 - [identity](mem_identity_1b4aaf.md) — 助手自称为 Hyperion，是一个能够指挥 opencode 等子代理进行开发协作的 AI 角色。
-- [identity](mem_identity_4272cc.md) — Assistant 的身份标识为 Hyperion。
+- [identity](mem_identity_4272cc.md) — 助手自称为 Hyperion。
 - [identity](mem_identity_462213.md) — 助手在对话中使用的名称为 Hyperion。
 - [identity](mem_identity_4beaa4.md) — 助理的身份设定为 Hyperion。
 - [identity](mem_identity_5cf8a5.md) — 当前助手的身份设定为 Hyperion，具备“主动感知”能力。
@@ -201,6 +203,7 @@
 - [tech_stack](mem_tech_stack_7ddcee.md) — 项目技术栈包含 Tailwind CSS, Swiper.js 和 HTMX。
 - [tech_stack](mem_tech_stack_844f31.md) — 项目目前的技术架构已经集成了多种代码模型，包括 DeepSeek 和 opencode。
 - [tech-stack](mem_tech_stack_8a22ad.md) — 项目后端采用 .NET 10 Minimal API，前端结合了 HTMX, Swiper, Tailwind CSS ...
+- [tech_stack](mem_tech_stack_958e6e.md) — 项目实现了 AiService.cs 的重构，支持配置驱动的 Provider，并新增了 ProactiveBrainS...
 - [tech-stack](mem_tech_stack_a5dbcd.md) — AiChatApp 项目在 AiService 中通过 Process.Start 调用外部 AI 工具，并已增加了针对...
 - [tech_stack](mem_tech_stack_a6eec9.md) — AiChatApp 的技术栈确认包括 ASP.NET Core, HTMX, Tailwind CSS 和 DaisyU...
 - [tech_stack](mem_tech_stack_b33d71.md) — 当前对话的代理（Gemini CLI）底层推理引擎是由 DeepSeek 模型（通过 opencode 接口）驱动的。
@@ -231,6 +234,7 @@
 - [user_info](mem_user_info_61312c.md) — 用户的名称是 oneriang
 - [user_info](mem_user_info_f51da3.md) — 用户的名字是 oneriang
 - [user_preference](mem_user_preference_1d0cc1.md) — 用户在 AiChatApp 界面中选择了 opencode 作为模型提供商。
+- [user_preference](mem_user_preference_a9946c.md) — 用户倾向于将 chat.db 数据库文件提交并推送至远程仓库。
 - [user_request](mem_user_request_7703ed.md) — ユーザーはサーバーのファイルを確認できるFileManager機能を新しいSwiperスライドとして追加することを希望し...
 - [validation](mem_validation_ae2b8b.md) — 验证并确保了 wwwroot/index.html 中的 div 标签平衡（Open: 200, Close: 200）...
 - [vision](mem_vision_ed1f89.md) — Hyperion 正在从代码辅助工具进化为全方位的“真实助手”，具备意图预测、项目治理和自主协调能力。

@@ -307,56 +307,57 @@ public class AiService
     {
         var targetProvider = provider ?? DefaultProvider;
         var steps = new List<AgentStep>();
+        List<AgentDefinition> agentsToRun = new();
 
-        // ─── Step 1: Orchestrator ───
-        yield return "event: step-start\ndata: Orchestrator\n\n";
-        string orchestratorPersona = """
-            あなたはタスク分解の専門家（Orchestrator）です。
-            ユーザーのタスクを分析し、以下のJSON形式でのみ回答してください：
-            {
-              "plan": "全体方針の概要（1-2文）",
-              "subtasks": [
-                {"id": 1, "description": "サブタスクの説明", "expectedOutput": "期待される成果物"},
-                ...
-              ]
-            }
-            """;
-
-        var orchStep = await RunAgentStepAsync("Orchestrator", orchestratorPersona, task, messageId, targetProvider, userId, chatSessionId);
-        steps.Add(orchStep);
-        yield return $"event: step-complete\ndata: Orchestrator|{BuildStepHtml(orchStep).Replace("\n", "\\n")}\n\n";
-
-        // JSONパース
-        string planSummary = orchStep.Output;
-        string subtaskBlock = task;
-        try
+        if (chatSessionId.HasValue)
         {
-            var planDoc = System.Text.Json.JsonDocument.Parse(ExtractJson(orchStep.Output));
-            planSummary = planDoc.RootElement.GetProperty("plan").GetString() ?? orchStep.Output;
-            var subtasks = planDoc.RootElement.GetProperty("subtasks").EnumerateArray()
-                .Select(s => s.GetProperty("description").GetString() ?? "")
-                .Where(s => !string.IsNullOrEmpty(s));
-            subtaskBlock = string.Join("\n", subtasks.Select((s, i) => $"{i + 1}. {s}"));
+            var session = await _db.ChatSessions
+                .Include(s => s.Project)
+                    .ThenInclude(p => p!.Agents)
+                .FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
+            
+            if (session?.Project?.Agents != null && session.Project.Agents.Any())
+            {
+                var activeAgents = session.Project.Agents.Where(a => a.IsActive).OrderBy(a => a.Id).ToList();
+                agentsToRun = activeAgents.Select(a => new AgentDefinition(a.RoleName, a.RoleName, "DB Agent", a.SystemPrompt)).ToList();
+            }
         }
-        catch { }
 
-        // ─── Step 2: Executor ───
-        yield return "event: step-start\ndata: Executor\n\n";
-        string executorPersona = "あなたは実装の専門家（Executor）です。計画に基づいて成果物を作成してください。";
-        string execInput = $"計画:\n{subtaskBlock}\n\n原タスク:\n{task}";
-        
-        var execStep = await RunAgentStepAsync("Executor", executorPersona, execInput, messageId, targetProvider, userId, chatSessionId);
-        steps.Add(execStep);
-        yield return $"event: step-complete\ndata: Executor|{BuildStepHtml(execStep).Replace("\n", "\\n")}\n\n";
+        if (!agentsToRun.Any())
+        {
+            agentsToRun.Add(new AgentDefinition("Orchestrator", "Orchestrator", "Task Breakdown", """
+                あなたはタスク分解の専門家（Orchestrator）です。
+                ユーザーのタスクを分析し、以下のJSON形式でのみ回答してください：
+                {
+                  "plan": "全体方針の概要（1-2文）",
+                  "subtasks": [
+                    {"id": 1, "description": "サブタスクの説明", "expectedOutput": "期待される成果物"},
+                    ...
+                  ]
+                }
+                """));
+            agentsToRun.Add(new AgentDefinition("Executor", "Executor", "Implementation", "あなたは実装の専門家（Executor）です。計画に基づいて成果物を作成してください。"));
+            agentsToRun.Add(new AgentDefinition("Reviewer", "Reviewer", "Review", "あなたは評審の専門家（Reviewer）です。最終的な回答をMarkdownで作成してください。"));
+        }
 
-        // ─── Step 3: Reviewer ───
-        yield return "event: step-start\ndata: Reviewer\n\n";
-        string reviewerPersona = "あなたは評審の専門家（Reviewer）です。最終的な回答をMarkdownで作成してください。";
-        
-        var reviewStep = await RunAgentStepAsync("Reviewer", reviewerPersona, $"元タスク:\n{task}\n\n実行結果:\n{execStep.Output}", messageId, targetProvider, userId, chatSessionId);
-        steps.Add(reviewStep);
-        
-        string finalHtml = BuildCooperativeHtml(steps, reviewStep.Output);
+        string contextFromPrevious = "";
+        foreach (var agent in agentsToRun)
+        {
+            yield return $"event: step-start\ndata: {agent.DisplayName}\n\n";
+            
+            string currentInput = string.IsNullOrEmpty(contextFromPrevious)
+                ? task
+                : $"Task: {task}\n\nPrevious steps context:\n{contextFromPrevious}";
+
+            var step = await RunAgentStepAsync(agent.Name, agent.SystemPrompt, currentInput, messageId, targetProvider, userId, chatSessionId);
+            steps.Add(step);
+            
+            yield return $"event: step-complete\ndata: {agent.DisplayName}|{BuildStepHtml(step).Replace("\n", "\\n")}\n\n";
+            contextFromPrevious += $"\n--- {agent.Name} ---\n{step.Output}\n";
+        }
+
+        string finalResult = steps.Last().Output;
+        string finalHtml = BuildCooperativeHtml(steps, finalResult);
         yield return $"event: final\ndata: {finalHtml.Replace("\n", "\\n")}\n\n";
     }
 
@@ -649,13 +650,9 @@ public class AiService
         var memories = await _memorySearch.SearchAsync(input, userId);
         var workingDir = await GetProjectRootAsync(chatSessionId);
         var policies = await LoadPoliciesAsync();
-        string fullPersona = persona + policies;
-
-        if (memories.Any())
-        {
-            fullPersona += "\n\n[ユーザーの既知情報・長期記憶]:\n";
-            foreach (var m in memories) fullPersona += $"- {m.Content}\n";
-        }
+        
+        // Base Persona
+        var sb = new StringBuilder();
 
         // Fetch project-specific role prompt if exists
         if (chatSessionId.HasValue)
@@ -668,30 +665,45 @@ public class AiService
             var projectAgent = session?.Project?.Agents.FirstOrDefault(a => a.RoleName.Equals(role, StringComparison.OrdinalIgnoreCase));
             if (projectAgent != null)
             {
-                fullPersona = projectAgent.SystemPrompt + "\n\n" + persona;
+                sb.AppendLine(projectAgent.SystemPrompt);
+                sb.AppendLine();
             }
+        }
 
+        sb.AppendLine(persona);
+        sb.AppendLine(policies);
+
+        if (memories.Any())
+        {
+            sb.AppendLine("\n[ユーザーの既知情報・長期記憶]:");
+            foreach (var m in memories) sb.AppendLine($"- {m.Content}");
+        }
+
+        if (chatSessionId.HasValue)
+        {
             // Inject Session Memory
             var sessionMemoryContext = await _sessionMemory.ReadAllAsContextAsync(chatSessionId.Value);
             if (!string.IsNullOrEmpty(sessionMemoryContext))
             {
-                fullPersona += "\n\n" + sessionMemoryContext;
+                sb.AppendLine();
+                sb.AppendLine(sessionMemoryContext);
             }
         }
 
         // Memory Instruction
-        fullPersona += GetSystemPromptTemplate("MemoryInstruction", "\n\n[MEMORY INSTRUCTION]:\n重要な発見や制約があれば \"MEMORY: key=value\" の形式で行末に出力してください。");
+        sb.AppendLine(GetSystemPromptTemplate("MemoryInstruction", "\n[MEMORY INSTRUCTION]:\n重要な発見や制約があれば \"MEMORY: key=value\" の形式で行末に出力してください。"));
 
         if (roleSkills.Any())
         {
-            fullPersona += "\n\n[追加スキル指示]:\n" +
-                string.Join("\n", roleSkills.Select(s => $"- {s.Description}"));
+            sb.AppendLine("\n[追加スキル指示]:");
+            sb.Append(string.Join("\n", roleSkills.Select(s => $"- {s.Description}")));
             
             // 使用したスキルのメトリクスを更新（簡易的に最初の1つ）
             var firstSkill = roleSkills.First();
             _ = Task.Run(() => _skillLearning.UpdateSkillMetricsAsync(firstSkill.Id, true));
         }
 
+        string fullPersona = sb.ToString();
         var sw = Stopwatch.StartNew();
         string output = await ExecuteCliAsync(input, provider, fullPersona, workingDir);
         sw.Stop();
@@ -897,7 +909,8 @@ public class AiService
         if (string.IsNullOrEmpty(text)) return text;
 
         var lines = text.Split('\n');
-        int lastPromptLine = -1;
+        int firstContentLine = -1;
+        string? firstLineContent = null;
         
         string[] promptPrefixes = { 
             "System:", "User:", "Assistant:", "Context:", "History:", 
@@ -905,6 +918,8 @@ public class AiService
             "[追加スキル指示]:", "[MEMORY INSTRUCTION]:", "[ENVIRONMENTAL POLICIES & CONSTRAINTS]:", 
             "--- Policy:", "Role:", "Persona:", "Input:", "Output:"
         };
+        // Removed "Memory:" from the list above because AI uses "MEMORY: key=value" for memory extraction.
+
         string[] systemPromptFragments = { 
             "あなたは高度なAIアシスタントです", 
             "現在はソフトウェア開発プロジェクトのコンテキストで動作しています",
@@ -920,80 +935,54 @@ public class AiService
         for (int i = 0; i < Math.Min(lines.Length, 150); i++)
         {
             var trimmedLine = lines[i].Trim();
-            if (string.IsNullOrWhiteSpace(trimmedLine))
+            if (string.IsNullOrWhiteSpace(trimmedLine)) continue;
+
+            bool isPrefixHeader = false;
+            string? matchedPrefix = null;
+            foreach (var p in promptPrefixes)
             {
-                lastPromptLine = i;
+                if (trimmedLine.StartsWith(p, StringComparison.OrdinalIgnoreCase))
+                {
+                    isPrefixHeader = true;
+                    matchedPrefix = p;
+                    break;
+                }
+            }
+
+            bool isSystemFragment = systemPromptFragments.Any(f => trimmedLine.Contains(f));
+
+            if (isPrefixHeader)
+            {
+                // Check if there is content AFTER the prefix on the SAME line
+                var contentAfter = trimmedLine.Substring(matchedPrefix!.Length).Trim();
+                if (!string.IsNullOrEmpty(contentAfter))
+                {
+                    // This is likely the start of the actual response
+                    firstContentLine = i;
+                    firstLineContent = contentAfter;
+                    break;
+                }
+                // It was just a header line, skip and continue
+                continue;
+            }
+            
+            if (isSystemFragment)
+            {
+                // System prompts are echoes, skip them
                 continue;
             }
 
-            bool isPromptHeader = promptPrefixes.Any(p => trimmedLine.StartsWith(p, StringComparison.OrdinalIgnoreCase));
-            bool isSystemFragment = systemPromptFragments.Any(f => trimmedLine.Contains(f));
-
-            if (isPromptHeader || isSystemFragment)
-            {
-                lastPromptLine = i;
-            }
-            else
-            {
-                // Stop if we hit a line that's definitely not a prompt line
-                // But only if we've already found some prompt lines
-                if (lastPromptLine != -1 && trimmedLine.Length > 0)
-                {
-                    // Special case: if the line starts with "Assistant:", we want to skip it and take the rest
-                    // But if it contains content after "Assistant:", we should treat it as the response start
-                    if (trimmedLine.StartsWith("Assistant:", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var contentAfter = trimmedLine.Substring("Assistant:".Length).Trim();
-                        if (string.IsNullOrEmpty(contentAfter))
-                        {
-                            lastPromptLine = i;
-                            continue;
-                        }
-                        else
-                        {
-                            // It has content! We should stop here, but set lastPromptLine such that we keep this line (minus prefix)
-                            // Actually, the logic below uses lastPromptLine + 1 as start.
-                            // So if we want to KEEP this line but strip "Assistant:", we can't just break.
-                            
-                            // Let's modify the result construction instead.
-                            lastPromptLine = i; 
-                            break; 
-                        }
-                    }
-                    break; 
-                }
-            }
+            // If it's not a prefix header and not a system fragment, it must be content!
+            firstContentLine = i;
+            firstLineContent = lines[i];
+            break;
         }
 
-        if (lastPromptLine >= 0)
+        if (firstContentLine != -1)
         {
-            var remainingLines = lines.Skip(lastPromptLine).ToList();
-            if (remainingLines.Any())
-            {
-                // Check if the first remaining line starts with a prefix we want to strip
-                var firstLine = remainingLines[0];
-                foreach (var p in promptPrefixes)
-                {
-                    if (firstLine.Trim().StartsWith(p, StringComparison.OrdinalIgnoreCase))
-                    {
-                        var idx = firstLine.IndexOf(p, StringComparison.OrdinalIgnoreCase);
-                        firstLine = firstLine.Substring(idx + p.Length).Trim();
-                        remainingLines[0] = firstLine;
-                        break;
-                    }
-                }
-
-                var joined = string.Join("\n", remainingLines).Trim();
-                // Recursively strip if the first line of the result is still a prefix
-                if (promptPrefixes.Any(p => joined.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
-                    return StripEchoedPromptPrefix(joined);
-                return joined;
-            }
-            else
-            {
-                // If everything was stripped, maybe the last line WAS the response but matched a fragment
-                return text.Trim();
-            }
+            var remainingLines = lines.Skip(firstContentLine + 1).ToList();
+            var result = firstLineContent + (remainingLines.Any() ? "\n" + string.Join("\n", remainingLines) : "");
+            return result.Trim();
         }
 
         return text.Trim();
