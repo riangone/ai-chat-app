@@ -90,6 +90,11 @@ public static class ApplicationExtensions
             command.CommandText = "ALTER TABLE AgentSteps ADD COLUMN TotalTokens INTEGER NOT NULL DEFAULT 0;";
             command.ExecuteNonQuery();
         }
+        if (!agentStepColumns.Contains("Provider"))
+        {
+            command.CommandText = "ALTER TABLE AgentSteps ADD COLUMN Provider TEXT NOT NULL DEFAULT '';";
+            command.ExecuteNonQuery();
+        }
 
         // 5. Explicitly create Notes table if it doesn't exist (Existing logic)
         command.CommandText = @"

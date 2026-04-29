@@ -116,7 +116,7 @@ public class AiService
 
         // ログを記録 — Model が空のときは provider 名を使用して統計ページで正しく分類できるようにする
         var modelName = string.IsNullOrEmpty(result.Model) ? targetProvider : result.Model;
-        await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", modelName, systemPrompt ?? "Default Assistant", fullPrompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
+        await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", modelName, targetProvider, systemPrompt ?? "Default Assistant", fullPrompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
 
         return result.Output;
     }
@@ -761,7 +761,9 @@ public class AiService
         }
 
         // ストリーム完了後にログを保存
-        await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", extractedModel ?? targetProvider, systemPrompt ?? "Default Assistant", fullPrompt, fullResponse.ToString(), (int)sw.ElapsedMilliseconds, pt, ct, tt);
+        var providerForLog = extractedModel != null && (extractedModel.Contains("gemini") || extractedModel.Contains("claude") || extractedModel.Contains("copilot") || extractedModel.Contains("codex") || extractedModel.Contains("opencode"))
+            ? extractedModel.ToLower() : targetProvider;
+        await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", extractedModel ?? targetProvider, targetProvider, systemPrompt ?? "Default Assistant", fullPrompt, fullResponse.ToString(), (int)sw.ElapsedMilliseconds, pt, ct, tt);
     }
 
     public async Task<string> ExecuteCliDirectAsync(string prompt, string provider, string? systemPrompt = null, string? workingDir = null)
@@ -810,7 +812,7 @@ public class AiService
             int messageId = await GetLatestUserMessageIdAsync(chatSessionId);
             if (messageId > 0)
             {
-                await LogAgentStepAsync(messageId, profile.Role, result.Model, sb.ToString(), prompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
+                await LogAgentStepAsync(messageId, profile.Role, result.Model, targetProvider, sb.ToString(), prompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
             }
         }
 
@@ -834,7 +836,7 @@ public class AiService
         return lastMsg?.Id ?? 0;
     }
 
-    private async Task LogAgentStepAsync(int messageId, string role, string model, string persona, string input, string output, int durationMs, int promptTokens = 0, int completionTokens = 0, int totalTokens = 0)
+    private async Task LogAgentStepAsync(int messageId, string role, string model, string provider, string persona, string input, string output, int durationMs, int promptTokens = 0, int completionTokens = 0, int totalTokens = 0)
     {
         if (messageId <= 0) return;
         var step = new AgentStep
@@ -842,6 +844,7 @@ public class AiService
             MessageId = messageId,
             Role = role,
             Model = model,
+            Provider = provider.ToLower(),
             PromptTokens = promptTokens,
             CompletionTokens = completionTokens,
             TotalTokens = totalTokens,
