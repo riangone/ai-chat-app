@@ -33,7 +33,7 @@ var processInfo = new ProcessStartInfo
 };
 
 // プロバイダーごとのフラグのみ ArgumentList に追加（ユーザー入力は含めない）
-if (provider == "gh-copilot")
+if (provider == "copilot")
 {
     processInfo.FileName = "copilot";
     processInfo.ArgumentList.Add("--yolo");
@@ -327,7 +327,7 @@ public async IAsyncEnumerable<string> GetResponseStreamAsync(
     // ArgumentList で安全に引数構築（Issue 1 の修正と組み合わせる）
     var processInfo = new ProcessStartInfo
     {
-        FileName = provider == "gh-copilot" ? "copilot" : provider == "claude" ? "claude" : "gemini",
+        FileName = provider == "copilot" ? "copilot" : provider == "claude" ? "claude" : "gemini",
         RedirectStandardOutput = true,
         RedirectStandardError = true,
         UseShellExecute = false,

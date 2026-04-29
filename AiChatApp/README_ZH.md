@@ -1,6 +1,6 @@
 # AiChatApp - 智能终端聊天封装工具 (v2.0)
 
-AiChatApp 是一个现代化的 Web 聊天界面，它将专业的 AI CLI 工具（如 `gemini` 和 `gh-copilot`）与丰富、响应式的用户体验相结合。它具有长期记忆、多智能体协作任务执行和高级会话管理功能。
+AiChatApp 是一个现代化的 Web 聊天界面，它将专业的 AI CLI 工具（如 `gemini` 和 `copilot`）与丰富、响应式的用户体验相结合。它具有长期记忆、多智能体协作任务执行和高级会话管理功能。
 
 ## 🚀 核心特性
 
@@ -45,7 +45,7 @@ AiChatApp/
 1. 安装 **.NET 10 SDK**。
 2. **AI CLI 工具**：
    - 安装 `gemini` CLI（需添加到系统 PATH）。
-   - 安装 `gh-copilot`（可选，用于支持 GitHub Copilot）。
+   - 安装 `copilot`（可选，用于支持 GitHub Copilot）。
 
 ## 🏃 快速上手
 

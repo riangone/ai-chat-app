@@ -636,7 +636,7 @@ public class AiService
         // Issue 1 修正済み: ArgumentList を使用してインジェクションを防ぐ
         string fileName = provider switch
         {
-            "gh-copilot" => "copilot",
+            "copilot" => "copilot",
             "claude" => "claude",
             _ => "gemini"
         };

@@ -88,7 +88,7 @@ AiService.cs：
 
 目前是一个相对基础的 CLI 包装器。
 具备基本的“记忆”和“技能”检索功能（通过关键词匹配）。
-使用 ExecuteCliAsync 直接调用 gemini 或 gh-copilot。
+使用 ExecuteCliAsync 直接调用 gemini 或 copilot。
 具备一个未使用的 ConsolidateMemoryAsync 方法。
 
 Models：

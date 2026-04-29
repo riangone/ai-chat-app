@@ -450,7 +450,7 @@
                         <input type="hidden" name="sessionId" id="session-id-input" />
                         <input type="hidden" name="projectId" id="project-id-input" />
                         <div class="flex items-center justify-between px-3 pt-1 pb-1 border-b border-base-content/5 mb-1">
-                            <select name="provider" class="select select-ghost select-xs opacity-60 font-semibold"><option value="gemini" selected>Gemini</option><option value="gh-copilot">GitHub Copilot</option><option value="claude">Claude Code</option></select>
+                            <select name="provider" class="select select-ghost select-xs opacity-60 font-semibold"><option value="gemini" selected>Gemini</option><option value="copilot">GitHub Copilot</option><option value="claude">Claude Code</option></select>
                             <div class="flex items-center gap-1 bg-base-300/50 rounded-full p-0.5"><button type="button" id="mode-normal-btn" onclick="setMode('normal')" class="btn btn-xs rounded-full px-3 btn-primary">Normal</button><button type="button" id="mode-multi-btn" onclick="setMode('cooperative')" class="btn btn-xs rounded-full px-3 btn-ghost">Multi-Agent</button><input type="hidden" name="mode" id="mode-input" value="" /></div>
                         </div>
                         <div id="agent-selector" class="flex items-center gap-2 px-3 py-1.5 overflow-x-auto no-scrollbar border-b border-base-content/5 hidden"><span class="text-[9px] font-bold opacity-30 uppercase">Agents:</span><div id="agent-chips" class="flex items-center gap-1.5"></div></div>

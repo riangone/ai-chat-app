@@ -379,7 +379,7 @@ public class AiService
 
         string fileName = targetProvider switch
         {
-            "gh-copilot" => "copilot",
+            "copilot" => "copilot",
             "claudecode" => "claudecode",
             "claude" => "claude",
             "codex" => "codex",
@@ -389,7 +389,7 @@ public class AiService
         var useJsonStreaming = targetProvider == "gemini" || fileName == "gemini" ||
                               targetProvider == "claude" || fileName == "claude" ||
                               targetProvider == "claudecode" || fileName == "claudecode" ||
-                              targetProvider == "gh-copilot" || fileName == "copilot" ||
+                              targetProvider == "copilot" || fileName == "copilot" ||
                               targetProvider == "codex" || fileName == "codex" ||
                               targetProvider == "opencode" || fileName == "opencode";
 
@@ -407,7 +407,7 @@ public class AiService
             processInfo.ArgumentList.Add(inputToStdin);
             inputToStdin = string.Empty;
         }
-        else if (targetProvider == "gh-copilot")
+        else if (targetProvider == "copilot")
         {
             processInfo.ArgumentList.Add("-p");
             processInfo.ArgumentList.Add(inputToStdin);
@@ -1295,7 +1295,7 @@ public class AiService
             return "Codex is logged in with a ChatGPT account, so API models such as gpt-5.5 are unavailable. Re-authenticate Codex with an OpenAI API key.";
         }
 
-        if (provider == "gh-copilot" &&
+        if (provider == "copilot" &&
             (message.Contains("402", StringComparison.OrdinalIgnoreCase) ||
              message.Contains("You have no quota", StringComparison.OrdinalIgnoreCase)))
         {
@@ -1379,13 +1379,14 @@ public class AiService
 
     private ProcessStartInfo SetupProcessInfo(string provider, string? workingDirectory = null, string? outputFormat = null)
     {
-        string fileName = provider switch
+        string fileName = provider.ToLower() switch
         {
-            "gh-copilot" => "copilot",
+            "copilot" => "copilot",
             "claudecode" => "claudecode",
             "claude" => "claude",
             "codex" => "codex",
             "opencode" => "opencode",
+            "gemini" => "gemini",
             _ => DefaultProvider
         };
 
@@ -1417,7 +1418,7 @@ public class AiService
             processInfo.ArgumentList.Add("--format");
             processInfo.ArgumentList.Add("json"); // JSONL output with token usage
         }
-        else if (provider == "gh-copilot")
+        else if (provider == "copilot")
         {
             processInfo.ArgumentList.Add("--allow-all-tools");
             processInfo.ArgumentList.Add("--output-format");
@@ -1427,7 +1428,7 @@ public class AiService
         {
             processInfo.ArgumentList.Add("-p");
             processInfo.ArgumentList.Add(""); // Headless mode, read from stdin
-            
+
             if (provider == "claude" || fileName == "claude" || provider == "claudecode" || fileName == "claudecode")
             {
                 processInfo.ArgumentList.Add("--dangerously-skip-permissions");
@@ -1484,7 +1485,7 @@ public class AiService
             processInfo.ArgumentList.Add(inputToStdin);
             inputToStdin = string.Empty;
         }
-        else if (provider == "gh-copilot")
+        else if (provider == "copilot")
         {
             processInfo.ArgumentList.Add("-p");
             processInfo.ArgumentList.Add(inputToStdin);

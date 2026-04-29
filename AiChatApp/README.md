@@ -2,7 +2,7 @@
 
 [中文版本 (Chinese Version)](./README_ZH.md)
 
-AiChatApp is a modern, web-based chat interface that bridges professional AI CLI tools (like `gemini` and `gh-copilot`) with a rich, responsive user experience. It features long-term memory, cooperative multi-agent task execution, and advanced session management.
+AiChatApp is a modern, web-based chat interface that bridges professional AI CLI tools (like `gemini` and `copilot`) with a rich, responsive user experience. It features long-term memory, cooperative multi-agent task execution, and advanced session management.
 
 ## 🚀 Key Features
 
@@ -47,7 +47,7 @@ AiChatApp/
 1. **.NET 10 SDK** installed.
 2. **AI CLIs**:
    - `gemini` CLI (available in PATH).
-   - `gh-copilot` (optional, for GitHub Copilot support).
+   - `copilot` (optional, for GitHub Copilot support).
 
 ## 🏃 Getting Started
 

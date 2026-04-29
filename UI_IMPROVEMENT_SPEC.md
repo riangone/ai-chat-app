@@ -746,7 +746,7 @@ function updateProjectBanner(projectName) {
                         <option value="">Global Default</option>
                         <option value="gemini">Gemini 2.0</option>
                         <option value="claude">Claude Code</option>
-                        <option value="gh-copilot">GitHub Copilot</option>
+                        <option value="copilot">GitHub Copilot</option>
                         <option value="codex">OpenAI Codex</option>
                     </select>
                 </div>

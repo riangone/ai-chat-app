@@ -205,7 +205,7 @@ switchMode(localStorage.getItem('mode') || 'chat');
                             class="select select-bordered select-xs w-full bg-base-100">
                         <option value="gemini" selected>🔷 Gemini</option>
                         <option value="claude">🟠 Claude</option>
-                        <option value="gh-copilot">🐙 Copilot</option>
+                        <option value="copilot">🐙 Copilot</option>
                         <option value="codex">🟢 Codex</option>
                     </select>
                 </div>
@@ -226,7 +226,7 @@ switchMode(localStorage.getItem('mode') || 'chat');
                             class="select select-bordered select-xs w-full bg-base-100">
                         <option value="gemini">🔷 Gemini</option>
                         <option value="claude" selected>🟠 Claude</option>
-                        <option value="gh-copilot">🐙 Copilot</option>
+                        <option value="copilot">🐙 Copilot</option>
                         <option value="codex">🟢 Codex</option>
                     </select>
                 </div>
@@ -247,7 +247,7 @@ switchMode(localStorage.getItem('mode') || 'chat');
                             class="select select-bordered select-xs w-full bg-base-100">
                         <option value="gemini">🔷 Gemini</option>
                         <option value="claude">🟠 Claude</option>
-                        <option value="gh-copilot" selected>🐙 Copilot</option>
+                        <option value="copilot" selected>🐙 Copilot</option>
                         <option value="codex">🟢 Codex</option>
                     </select>
                 </div>
@@ -268,7 +268,7 @@ switchMode(localStorage.getItem('mode') || 'chat');
                             class="select select-bordered select-xs w-full bg-base-100">
                         <option value="gemini">🔷 Gemini</option>
                         <option value="claude">🟠 Claude</option>
-                        <option value="gh-copilot">🐙 Copilot</option>
+                        <option value="copilot">🐙 Copilot</option>
                         <option value="codex" selected>🟢 Codex</option>
                     </select>
                 </div>

@@ -284,33 +284,29 @@ public static class HarnessEndpoints
         });
 
         group.MapGet("/visualizer/model-stats-html", async (AppDbContext db) => {
-            // Join AgentSteps → Messages → ChatSessions to recover provider info for old records where Model is empty
-            var providerByMessageId = await db.Messages
-                .Join(db.ChatSessions, m => m.ChatSessionId, s => s.Id, (m, s) => new { m.Id, Provider = s.PreferredProvider ?? "gemini" })
-                .ToDictionaryAsync(x => x.Id, x => x.Provider);
+            // Join AgentSteps → Messages → ChatSessions to get the true provider for each step
+            var stepsWithProvider = await db.AgentSteps
+                .Include(s => s.Evaluations)
+                .Join(db.Messages, s => s.MessageId, m => m.Id, (s, m) => new { Step = s, m.ChatSessionId })
+                .Join(db.ChatSessions, x => x.ChatSessionId, cs => cs.Id, (x, cs) => new {
+                    Step = x.Step,
+                    Provider = (cs.PreferredProvider ?? "gemini").ToLower()
+                })
+                .ToListAsync();
 
-            var steps = await db.AgentSteps.Include(s => s.Evaluations).ToListAsync();
-
-            // Fill in missing Model field using session's PreferredProvider
-            foreach (var step in steps.Where(s => string.IsNullOrEmpty(s.Model)))
-            {
-                if (providerByMessageId.TryGetValue(step.MessageId, out var sessionProvider))
-                    step.Model = sessionProvider;
-            }
-            
-            // 1. 定义提供商映射逻辑 (严格匹配用户要求的 gemini, claudecode, codex, copilot, opencode)
-            string GetProvider(string? model) {
-                if (string.IsNullOrEmpty(model)) return "Other";
-                var m = model.ToLower();
-                if (m.Contains("gemini")) return "Gemini";
-                if (m.Contains("claudecode") || m.Contains("claude-code")) return "ClaudeCode";
-                if (m.Contains("claude") || m.Contains("anthropic") || m.Contains("sonnet") || m.Contains("haiku")) return "Claude";
-                if (m.Contains("codex")) return "Codex";
-                if (m.Contains("copilot") || m.Contains("gh-copilot")) return "Copilot";
-                if (m.Contains("opencode") || m.Contains("open-code")) return "OpenCode";
-                if (m.Contains("gpt") || m.Contains("openai")) return "OpenAI";
-                if (m.Contains("deepseek")) return "DeepSeek";
-                return "Other";
+            // 1. 定义提供商显示名称
+            string GetProviderDisplayName(string provider) {
+                return provider switch {
+                    "gemini" => "Gemini",
+                    "claudecode" or "claude-code" => "ClaudeCode",
+                    "claude" => "Claude",
+                    "codex" => "Codex",
+                    "copilot" => "Copilot",
+                    "opencode" or "open-code" => "OpenCode",
+                    "openai" or "gpt" => "OpenAI",
+                    "deepseek" => "DeepSeek",
+                    _ => "Other"
+                };
             }
 
             // 2. 提供商配额设定 (软配额) - 为每个请求的工具设定独立配额
@@ -341,31 +337,27 @@ public static class HarnessEndpoints
                 };
             }
 
-            // 4. 聚合数据 — 按 Model 分组（空 Model 归入 Role 名；同时忽略纯 role 名分组以减少噪音）
-            var knownRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-                "Assistant","Orchestrator","Executor","Reviewer","Architect","Developer","Coder",
-                "Researcher","Planner","SkillCoder","Backend-Dev","UI-Specialist","API-Architect",
-                "Logic-Architect","Architect-Agent","Developer-Agent","assistant"
-            };
-
-            var modelStats = steps
-                .GroupBy(s => string.IsNullOrEmpty(s.Model) ? s.Role : s.Model)
+            // 4. 聚合数据 — 按 session 的 PreferredProvider 分组，而非解析 Model 字段
+            var modelStats = stepsWithProvider
+                .GroupBy(x => GetProviderDisplayName(x.Provider))
                 .Select(g => {
-                    var promptT = g.Sum(s => (long)s.PromptTokens);
-                    var completionT = g.Sum(s => (long)s.CompletionTokens);
-                    var totalT = g.Sum(s => (long)s.TotalTokens);
+                    var steps = g.Select(x => x.Step);
+                    var promptT = steps.Sum(s => (long)s.PromptTokens);
+                    var completionT = steps.Sum(s => (long)s.CompletionTokens);
+                    var totalT = steps.Sum(s => (long)s.TotalTokens);
                     if (totalT == 0 && (promptT > 0 || completionT > 0)) totalT = promptT + completionT;
+                    var firstProvider = g.Key;
                     return new {
-                        Model = g.Key,
-                        Provider = GetProvider(g.Key),
-                        Count = g.Count(),
-                        AvgScore = g.SelectMany(s => s.Evaluations).Any() ? g.SelectMany(s => s.Evaluations).Average(e => e.Score) : 0,
-                        AvgDuration = g.Average(s => s.DurationMs),
+                        Model = firstProvider,
+                        Provider = firstProvider,
+                        Count = steps.Count(),
+                        AvgScore = steps.SelectMany(s => s.Evaluations).Any() ? steps.SelectMany(s => s.Evaluations).Average(e => e.Score) : 0,
+                        AvgDuration = steps.Average(s => s.DurationMs),
                         PromptTokens = promptT,
                         CompletionTokens = completionT,
                         TotalTokens = totalT,
-                        SuccessRate = (double)g.Count(s => s.WasAccepted) / g.Count(),
-                        Roles = g.GroupBy(s => s.Role).Select(rg => new { Role = rg.Key, Count = rg.Count() }).ToList()
+                        SuccessRate = steps.Any() ? (double)steps.Count(s => s.WasAccepted) / steps.Count() : 0,
+                        Roles = steps.GroupBy(s => s.Role).Select(rg => new { Role = rg.Key, Count = rg.Count() }).ToList()
                     };
                 }).OrderByDescending(s => s.TotalTokens).ToList();
 

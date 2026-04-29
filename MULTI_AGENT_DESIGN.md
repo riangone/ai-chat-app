@@ -31,7 +31,7 @@ CooperateAsync(task, userId, messageId, roleProviders)
     │
     ├── RunAgentStepAsync("Orchestrator", ..., roleProviders["Orchestrator"])  ← gemini
     ├── RunAgentStepAsync("Executor",     ..., roleProviders["Executor"])      ← claude
-    ├── RunAgentStepAsync("Tester",       ..., roleProviders["Tester"])        ← gh-copilot
+    ├── RunAgentStepAsync("Tester",       ..., roleProviders["Tester"])        ← copilot
     └── RunAgentStepAsync("Reviewer",     ..., roleProviders["Reviewer"])      ← codex
 ```
 
@@ -69,7 +69,7 @@ public async Task<(string Html, List<AgentStep> Steps)> CooperateAsync(
     // ロール→プロバイダーのマッピング（デフォルト値付き）
     string orchProvider   = roleProviders?.GetValueOrDefault("Orchestrator", "gemini")    ?? "gemini";
     string execProvider   = roleProviders?.GetValueOrDefault("Executor",     "claude")    ?? "claude";
-    string testerProvider = roleProviders?.GetValueOrDefault("Tester",       "gh-copilot") ?? "gh-copilot";
+    string testerProvider = roleProviders?.GetValueOrDefault("Tester",       "copilot") ?? "copilot";
     string reviewProvider = roleProviders?.GetValueOrDefault("Reviewer",     "codex")     ?? "codex";
 
     var steps = new List<AgentStep>();
@@ -301,7 +301,7 @@ var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id,
             <select name="roleProvider_Orchestrator" class="select select-bordered select-xs w-full">
                 <option value="gemini" selected>Gemini</option>
                 <option value="claude">Claude</option>
-                <option value="gh-copilot">Copilot</option>
+                <option value="copilot">Copilot</option>
                 <option value="codex">Codex</option>
             </select>
         </div>
@@ -314,7 +314,7 @@ var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id,
             <select name="roleProvider_Executor" class="select select-bordered select-xs w-full">
                 <option value="gemini">Gemini</option>
                 <option value="claude" selected>Claude</option>
-                <option value="gh-copilot">Copilot</option>
+                <option value="copilot">Copilot</option>
                 <option value="codex">Codex</option>
             </select>
         </div>
@@ -327,7 +327,7 @@ var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id,
             <select name="roleProvider_Tester" class="select select-bordered select-xs w-full">
                 <option value="gemini">Gemini</option>
                 <option value="claude">Claude</option>
-                <option value="gh-copilot" selected>Copilot</option>
+                <option value="copilot" selected>Copilot</option>
                 <option value="codex">Codex</option>
             </select>
         </div>
@@ -340,7 +340,7 @@ var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id,
             <select name="roleProvider_Reviewer" class="select select-bordered select-xs w-full">
                 <option value="gemini">Gemini</option>
                 <option value="claude">Claude</option>
-                <option value="gh-copilot">Copilot</option>
+                <option value="copilot">Copilot</option>
                 <option value="codex" selected>Codex</option>
             </select>
         </div>
@@ -384,7 +384,7 @@ content=ユーザーメッセージ
 &provider=gemini                    ← 後方互換のため残す（使用しない）
 &roleProvider_Orchestrator=gemini
 &roleProvider_Executor=claude
-&roleProvider_Tester=gh-copilot
+&roleProvider_Tester=copilot
 &roleProvider_Reviewer=codex
 ```
 
@@ -455,7 +455,7 @@ curl -c cookies.txt -X POST http://localhost:5000/api/auth/login \
 
 # 2. SSEエンドポイントへ送信
 curl -b cookies.txt -N -X POST http://localhost:5000/api/chat/cooperate/stream \
-  -d "content=Cシャープで電卓クラスを実装して&sessionId=1&roleProvider_Orchestrator=gemini&roleProvider_Executor=claude&roleProvider_Tester=gh-copilot&roleProvider_Reviewer=codex"
+  -d "content=Cシャープで電卓クラスを実装して&sessionId=1&roleProvider_Orchestrator=gemini&roleProvider_Executor=claude&roleProvider_Tester=copilot&roleProvider_Reviewer=codex"
 ```
 
 期待するSSE出力：
