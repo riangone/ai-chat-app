@@ -284,19 +284,31 @@ public static class HarnessEndpoints
         });
 
         group.MapGet("/visualizer/model-stats-html", async (AppDbContext db) => {
-            // Join AgentSteps → Messages → ChatSessions to get the true provider for each step
+            // Join AgentSteps → Messages → ChatSessions to get provider info for each step
             var stepsWithProvider = await db.AgentSteps
                 .Include(s => s.Evaluations)
                 .Join(db.Messages, s => s.MessageId, m => m.Id, (s, m) => new { Step = s, m.ChatSessionId })
                 .Join(db.ChatSessions, x => x.ChatSessionId, cs => cs.Id, (x, cs) => new {
                     Step = x.Step,
-                    Provider = (cs.PreferredProvider ?? "gemini").ToLower()
+                    SessionProvider = (cs.PreferredProvider ?? "gemini").ToLower(),
+                    Model = x.Step.Model ?? ""
                 })
                 .ToListAsync();
 
-            // 1. 定义提供商显示名称
-            string GetProviderDisplayName(string provider) {
-                return provider switch {
+            // 1. 从 Model 字段解析提供商，失败则用 session 的 PreferredProvider
+            string GetProviderDisplayName(string model, string sessionProvider) {
+                if (!string.IsNullOrEmpty(model)) {
+                    var m = model.ToLower();
+                    if (m.Contains("gemini")) return "Gemini";
+                    if (m.Contains("claudecode") || m.Contains("claude-code")) return "ClaudeCode";
+                    if (m.Contains("claude") || m.Contains("anthropic") || m.Contains("sonnet") || m.Contains("haiku")) return "Claude";
+                    if (m.Contains("codex")) return "Codex";
+                    if (m.Contains("copilot") || m.Contains("gh-copilot")) return "Copilot";
+                    if (m.Contains("opencode") || m.Contains("open-code")) return "OpenCode";
+                    if (m.Contains("gpt") || m.Contains("openai")) return "OpenAI";
+                    if (m.Contains("deepseek")) return "DeepSeek";
+                }
+                return sessionProvider switch {
                     "gemini" => "Gemini",
                     "claudecode" or "claude-code" => "ClaudeCode",
                     "claude" => "Claude",
@@ -337,22 +349,22 @@ public static class HarnessEndpoints
                 };
             }
 
-            // 4. 聚合数据 — 按 session 的 PreferredProvider 分组，而非解析 Model 字段
+            // 4. 聚合数据 — 优先使用 Model 字段判断 provider，否则用 session 的 PreferredProvider
             var modelStats = stepsWithProvider
-                .GroupBy(x => GetProviderDisplayName(x.Provider))
+                .GroupBy(x => GetProviderDisplayName(x.Model, x.SessionProvider))
                 .Select(g => {
-                    var steps = g.Select(x => x.Step);
+                    var items = g.ToList();
+                    var steps = items.Select(x => x.Step);
                     var promptT = steps.Sum(s => (long)s.PromptTokens);
                     var completionT = steps.Sum(s => (long)s.CompletionTokens);
                     var totalT = steps.Sum(s => (long)s.TotalTokens);
                     if (totalT == 0 && (promptT > 0 || completionT > 0)) totalT = promptT + completionT;
-                    var firstProvider = g.Key;
                     return new {
-                        Model = firstProvider,
-                        Provider = firstProvider,
+                        Model = g.Key,
+                        Provider = g.Key,
                         Count = steps.Count(),
                         AvgScore = steps.SelectMany(s => s.Evaluations).Any() ? steps.SelectMany(s => s.Evaluations).Average(e => e.Score) : 0,
-                        AvgDuration = steps.Average(s => s.DurationMs),
+                        AvgDuration = steps.Any() ? steps.Average(s => s.DurationMs) : 0,
                         PromptTokens = promptT,
                         CompletionTokens = completionT,
                         TotalTokens = totalT,
