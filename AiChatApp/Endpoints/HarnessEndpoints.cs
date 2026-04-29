@@ -303,11 +303,11 @@ public static class HarnessEndpoints
                 if (string.IsNullOrEmpty(model)) return "Other";
                 var m = model.ToLower();
                 if (m.Contains("gemini")) return "Gemini";
-                if (m.Contains("claudecode")) return "ClaudeCode";
-                if (m.Contains("claude") || m.Contains("anthropic")) return "Claude";
+                if (m.Contains("claudecode") || m.Contains("claude-code")) return "ClaudeCode";
+                if (m.Contains("claude") || m.Contains("anthropic") || m.Contains("sonnet") || m.Contains("haiku")) return "Claude";
                 if (m.Contains("codex")) return "Codex";
-                if (m.Contains("copilot")) return "Copilot";
-                if (m.Contains("opencode")) return "OpenCode";
+                if (m.Contains("copilot") || m.Contains("gh-copilot")) return "Copilot";
+                if (m.Contains("opencode") || m.Contains("open-code")) return "OpenCode";
                 if (m.Contains("gpt") || m.Contains("openai")) return "OpenAI";
                 if (m.Contains("deepseek")) return "DeepSeek";
                 return "Other";

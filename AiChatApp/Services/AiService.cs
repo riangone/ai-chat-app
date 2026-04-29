@@ -1526,211 +1526,11 @@ public class AiService
 
             if (string.IsNullOrWhiteSpace(output)) return new CliResult("No response received from AI.", provider, 0, 0, 0);
 
-            // JSONL path: Many modern CLIs (codex, opencode, claudecode, copilot) output one JSON object per line or as a stream
-            // We'll treat all as potential JSONL if they aren't a single valid JSON object.
-            bool isJsonl = provider == "codex" || provider == "opencode" || provider == "gh-copilot" || provider == "claude" || provider == "claudecode";
-            if (isJsonl)
+            var parsed = ParseCliOutput(output, provider);
+            if (parsed.TotalTokens > 0 || !string.IsNullOrEmpty(parsed.Output) && parsed.Output != output)
             {
-                string? jsonlContent = null;
-                string? jsonlModel = null;
-                int jsonlPt = 0, jsonlCt = 0, jsonlTt = 0;
-                foreach (var rawLine in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    try
-                    {
-                        using var lineDoc = JsonDocument.Parse(rawLine.Trim());
-                        var root = lineDoc.RootElement;
-                        
-                        // Extract Model
-                        if (root.TryGetProperty("model", out var mProp) || root.TryGetProperty("modelVersion", out mProp))
-                        {
-                            var mv = mProp.GetString();
-                            if (!string.IsNullOrEmpty(mv)) jsonlModel = mv;
-                        }
-
-                        // Extract Model from modelUsage
-                        if (root.TryGetProperty("modelUsage", out var muEl) && muEl.ValueKind == JsonValueKind.Object)
-                        {
-                            var names = new List<string>();
-                            foreach (var prop in muEl.EnumerateObject())
-                            {
-                                names.Add(prop.Name);
-                                if (prop.Value.TryGetProperty("input_tokens", out var mit)) jsonlPt += mit.GetInt32();
-                                if (prop.Value.TryGetProperty("output_tokens", out var mot)) jsonlCt += mot.GetInt32();
-                                if (prop.Value.TryGetProperty("total_tokens", out var mtt)) jsonlTt += mtt.GetInt32();
-                            }
-                            if (names.Any()) jsonlModel = string.Join("+", names);
-                        }
-
-                        // Extract Usage (Standard)
-                        JsonElement usageProp;
-                        bool hasUsage = root.TryGetProperty("usage", out usageProp) ||
-                                       root.TryGetProperty("usage_metadata", out usageProp) ||
-                                       root.TryGetProperty("usageMetadata", out usageProp);
-                        if (!hasUsage && root.TryGetProperty("message", out var msg) && msg.TryGetProperty("usage", out usageProp))
-                            hasUsage = true;
-                        
-                        if (hasUsage)
-                        {
-                            if (usageProp.TryGetProperty("input_tokens", out var it) || usageProp.TryGetProperty("prompt_tokens", out it) || usageProp.TryGetProperty("prompt_token_count", out it) || usageProp.TryGetProperty("promptTokenCount", out it) || usageProp.TryGetProperty("inputTokenCount", out it)) jsonlPt += it.GetInt32();
-                            if (usageProp.TryGetProperty("output_tokens", out var ot) || usageProp.TryGetProperty("completion_tokens", out ot) || usageProp.TryGetProperty("completion_token_count", out ot) || usageProp.TryGetProperty("candidate_token_count", out ot) || usageProp.TryGetProperty("candidatesTokenCount", out ot) || usageProp.TryGetProperty("candidateTokenCount", out ot) || usageProp.TryGetProperty("outputTokenCount", out ot)) jsonlCt += ot.GetInt32();
-                            if (usageProp.TryGetProperty("total_tokens", out var tt) || usageProp.TryGetProperty("total_token_count", out tt) || usageProp.TryGetProperty("totalTokenCount", out tt)) jsonlTt += tt.GetInt32();
-                        }
-
-                        // Extract Stats (Gemini style)
-                        if (root.TryGetProperty("stats", out var statsEl))
-                        {
-                            if (statsEl.TryGetProperty("input_tokens", out var sit)) jsonlPt += sit.GetInt32();
-                            if (statsEl.TryGetProperty("output_tokens", out var sot)) jsonlCt += sot.GetInt32();
-                            if (statsEl.TryGetProperty("total_tokens", out var stt)) jsonlTt += stt.GetInt32();
-                            if (statsEl.TryGetProperty("models", out var modelsEl) && modelsEl.ValueKind == JsonValueKind.Object)
-                            {
-                                var names = new List<string>();
-                                foreach (var m in modelsEl.EnumerateObject())
-                                {
-                                    names.Add(m.Name);
-                                    if (m.Value.TryGetProperty("tokens", out var tEl))
-                                    {
-                                        if (tEl.TryGetProperty("input", out var ti)) jsonlPt += ti.GetInt32();
-                                        if (tEl.TryGetProperty("candidates", out var tc)) jsonlCt += tc.GetInt32();
-                                        if (tEl.TryGetProperty("total", out var tt2)) jsonlTt += tt2.GetInt32();
-                                    }
-                                }
-                                if (names.Any()) jsonlModel = string.Join("+", names);
-                            }
-                        }
-
-                        // Extract Content
-                        if (root.TryGetProperty("type", out var tProp))
-                        {
-                            var t = tProp.GetString();
-                            if (t == "text" && root.TryGetProperty("part", out var op) && op.TryGetProperty("text", out var ot))
-                                jsonlContent = (jsonlContent ?? "") + ot.GetString();
-                            else if (t == "message" && root.TryGetProperty("content", out var mc))
-                                jsonlContent = (jsonlContent ?? "") + mc.GetString();
-                            else if (t == "result" && root.TryGetProperty("result", out var rc))
-                                jsonlContent = rc.GetString(); // Final result often contains full text
-                            else if (t == "item.completed" && root.TryGetProperty("item", out var itm) &&
-                                     itm.TryGetProperty("type", out var itmType) && itmType.GetString() == "agent_message" &&
-                                     itm.TryGetProperty("text", out var itmText))
-                                jsonlContent = itmText.GetString();
-                            else if (t == "step_finish" && root.TryGetProperty("part", out var of))
-                            {
-                                if (of.TryGetProperty("model", out var om)) { var mv = om.GetString(); if (!string.IsNullOrEmpty(mv)) jsonlModel = mv; }
-                            }
-                        }
-                        else if (root.TryGetProperty("response", out var res)) jsonlContent = res.GetString();
-                        else if (root.TryGetProperty("result", out var res2)) jsonlContent = res2.GetString();
-                        else if (root.TryGetProperty("content", out var res3)) jsonlContent = res3.GetString();
-                    }
-                    catch (JsonException) { }
-                }
-                if (jsonlTt == 0 && (jsonlPt > 0 || jsonlCt > 0)) jsonlTt = jsonlPt + jsonlCt;
-                if (!string.IsNullOrEmpty(jsonlContent))
-                    return new CliResult(CleanResponse(jsonlContent), jsonlModel ?? provider, jsonlPt, jsonlCt, jsonlTt);
+                return parsed;
             }
-
-            try
-            {
-                var jsonText = ExtractJson(output);
-                if (!string.IsNullOrEmpty(jsonText) && jsonText != "{}")
-                {
-                    using var doc = JsonDocument.Parse(jsonText);
-                    string? extractedModel = null;
-                    int pt = 0, ct = 0, tt = 0;
-
-                    // Model: root "model"/"modelVersion" (Gemini), nested "message.model", or "modelUsage" keys (Claude CLI)
-                    if (doc.RootElement.TryGetProperty("model", out var mProp) ||
-                        doc.RootElement.TryGetProperty("modelVersion", out mProp))
-                    {
-                        var mv = mProp.GetString();
-                        if (!string.IsNullOrEmpty(mv)) extractedModel = mv;
-                    }
-                    else if (doc.RootElement.TryGetProperty("message", out var msgForModel2) &&
-                             msgForModel2.TryGetProperty("model", out var nestedMProp2))
-                    {
-                        var mv = nestedMProp2.GetString();
-                        if (!string.IsNullOrEmpty(mv)) extractedModel = mv;
-                    }
-                    else if (doc.RootElement.TryGetProperty("modelUsage", out var muEl2) && muEl2.ValueKind == JsonValueKind.Object)
-                    {
-                        var muNames2 = new List<string>();
-                        foreach (var prop in muEl2.EnumerateObject())
-                        {
-                            muNames2.Add(prop.Name);
-                            if (prop.Value.TryGetProperty("input_tokens", out var mit)) pt += mit.GetInt32();
-                            if (prop.Value.TryGetProperty("output_tokens", out var mot)) ct += mot.GetInt32();
-                            if (prop.Value.TryGetProperty("total_tokens", out var mtt)) tt += mtt.GetInt32();
-                        }
-                        if (muNames2.Any()) extractedModel = string.Join("+", muNames2);
-                        if (tt == 0 && (pt > 0 || ct > 0)) tt = pt + ct;
-                    }
-
-                    // Usage: Claude (input_tokens/output_tokens), OpenAI (prompt_tokens), Anthropic API (usageMetadata)
-                    JsonElement usageProp2;
-                    bool hasUsage2 = doc.RootElement.TryGetProperty("usage", out usageProp2) ||
-                                    doc.RootElement.TryGetProperty("usage_metadata", out usageProp2) ||
-                                    doc.RootElement.TryGetProperty("usageMetadata", out usageProp2);
-                    if (!hasUsage2 && doc.RootElement.TryGetProperty("message", out var msgForUsage2) &&
-                        msgForUsage2.TryGetProperty("usage", out usageProp2))
-                        hasUsage2 = true;
-                    if (hasUsage2)
-                    {
-                        if (usageProp2.TryGetProperty("input_tokens", out var itProp2) || usageProp2.TryGetProperty("prompt_tokens", out itProp2) || usageProp2.TryGetProperty("prompt_token_count", out itProp2) || usageProp2.TryGetProperty("promptTokenCount", out itProp2) || usageProp2.TryGetProperty("inputTokenCount", out itProp2)) pt = itProp2.GetInt32();
-                        if (usageProp2.TryGetProperty("output_tokens", out var otProp2) || usageProp2.TryGetProperty("completion_tokens", out otProp2) || usageProp2.TryGetProperty("completion_token_count", out otProp2) || usageProp2.TryGetProperty("candidate_token_count", out otProp2) || usageProp2.TryGetProperty("candidatesTokenCount", out otProp2) || usageProp2.TryGetProperty("candidateTokenCount", out otProp2) || usageProp2.TryGetProperty("outputTokenCount", out otProp2)) ct = otProp2.GetInt32();
-                        if (usageProp2.TryGetProperty("total_tokens", out var ttProp2) || usageProp2.TryGetProperty("total_token_count", out ttProp2) || usageProp2.TryGetProperty("totalTokenCount", out ttProp2)) tt = ttProp2.GetInt32();
-                        if (tt == 0 && (pt > 0 || ct > 0)) tt = pt + ct;
-                    }
-                    // Gemini CLI non-streaming: {"response":"text","stats":{"models":{"gemini-X":{"tokens":{"input":N,"candidates":K,"total":M}}}}}
-                    if (doc.RootElement.TryGetProperty("stats", out var stats2El))
-                    {
-                        if (stats2El.TryGetProperty("input_tokens", out var sit2)) pt = sit2.GetInt32();
-                        if (stats2El.TryGetProperty("output_tokens", out var sot2)) ct = sot2.GetInt32();
-                        if (stats2El.TryGetProperty("total_tokens", out var stt2)) tt = stt2.GetInt32();
-
-                        if (stats2El.TryGetProperty("models", out var models2El) && models2El.ValueKind == JsonValueKind.Object)
-                        {
-                            var modelNames2 = new List<string>();
-                            foreach (var modelEntry in models2El.EnumerateObject())
-                            {
-                                modelNames2.Add(modelEntry.Name);
-                                if (pt == 0 || ct == 0)
-                                {
-                                    if (modelEntry.Value.TryGetProperty("tokens", out var tokEl))
-                                    {
-                                        if (tokEl.TryGetProperty("input", out var tit)) pt += tit.GetInt32();
-                                        if (tokEl.TryGetProperty("candidates", out var tct)) ct += tct.GetInt32();
-                                        if (tokEl.TryGetProperty("total", out var ttt)) tt += ttt.GetInt32();
-                                    }
-                                }
-                            }
-                            if (modelNames2.Any() && string.IsNullOrEmpty(extractedModel))
-                                extractedModel = string.Join("+", modelNames2);
-                        }
-                        if (tt == 0 && (pt > 0 || ct > 0)) tt = pt + ct;
-                    }
-
-                    string? content = null;
-                    if (doc.RootElement.TryGetProperty("result", out var resultProp2)) content = resultProp2.GetString();       // Claude CLI
-                    else if (doc.RootElement.TryGetProperty("response", out var resProp)) content = resProp.GetString();
-                    else if (doc.RootElement.TryGetProperty("content", out var contentProp)) content = contentProp.GetString();
-                    else if (doc.RootElement.TryGetProperty("text", out var textProp)) content = textProp.GetString();
-                    // Gemini API format: candidates[0].content.parts[0].text
-                    else if (doc.RootElement.TryGetProperty("candidates", out var candidates) &&
-                             candidates.ValueKind == JsonValueKind.Array && candidates.GetArrayLength() > 0 &&
-                             candidates[0].TryGetProperty("content", out var cContent) &&
-                             cContent.TryGetProperty("parts", out var parts) &&
-                             parts.ValueKind == JsonValueKind.Array && parts.GetArrayLength() > 0 &&
-                             parts[0].TryGetProperty("text", out var partText))
-                    {
-                        content = partText.GetString();
-                    }
-
-                    if (content != null)
-                        return new CliResult(CleanResponse(content), extractedModel ?? provider, pt, ct, tt);
-                }
-            }
-            catch (JsonException) { }
 
             return new CliResult(CleanResponse(output), provider, 0, 0, 0);
         }
@@ -1742,5 +1542,126 @@ public class AiService
             }
             return new CliResult($"[Exception]: {ex.Message}", provider, 0, 0, 0);
         }
+    }
+
+    private CliResult ParseCliOutput(string output, string provider)
+    {
+        string? finalContent = null;
+        string? finalModel = null;
+        int totalPt = 0, totalCt = 0, totalTt = 0;
+
+        // Diagnostic log
+        Console.WriteLine($"[AiService] Parsing output from {provider} ({output.Length} chars). Head: {(output.Length > 100 ? output.Substring(0, 100).Replace("\n", " ") : output.Replace("\n", " "))}");
+
+        // Strategy 1: Treat as JSONL (one or more JSON objects per line, possibly with text noise)
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        bool foundAnyJson = false;
+
+        foreach (var line in lines)
+        {
+            var jsonText = ExtractJson(line);
+            if (string.IsNullOrEmpty(jsonText) || jsonText == "{}") continue;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(jsonText);
+                var root = doc.RootElement;
+                foundAnyJson = true;
+
+                // Model
+                if (root.TryGetProperty("model", out var mProp) || root.TryGetProperty("modelVersion", out mProp))
+                {
+                    var mv = mProp.GetString();
+                    if (!string.IsNullOrEmpty(mv)) finalModel = mv;
+                }
+                if (root.TryGetProperty("modelUsage", out var muEl) && muEl.ValueKind == JsonValueKind.Object)
+                {
+                    var names = muEl.EnumerateObject().Select(p => p.Name).ToList();
+                    if (names.Any()) finalModel = string.Join("+", names);
+                    
+                    foreach (var prop in muEl.EnumerateObject())
+                    {
+                        if (prop.Value.TryGetProperty("input_tokens", out var mit)) totalPt += mit.GetInt32();
+                        if (prop.Value.TryGetProperty("output_tokens", out var mot)) totalCt += mot.GetInt32();
+                        if (prop.Value.TryGetProperty("total_tokens", out var mtt)) totalTt += mtt.GetInt32();
+                    }
+                }
+
+                // Usage
+                JsonElement usageProp;
+                bool hasUsage = root.TryGetProperty("usage", out usageProp) ||
+                                root.TryGetProperty("usage_metadata", out usageProp) ||
+                                root.TryGetProperty("usageMetadata", out usageProp);
+                if (!hasUsage && root.TryGetProperty("message", out var msg) && msg.TryGetProperty("usage", out usageProp))
+                    hasUsage = true;
+                
+                if (hasUsage)
+                {
+                    if (usageProp.TryGetProperty("input_tokens", out var it) || usageProp.TryGetProperty("prompt_tokens", out it) || usageProp.TryGetProperty("prompt_token_count", out it) || usageProp.TryGetProperty("promptTokenCount", out it) || usageProp.TryGetProperty("inputTokenCount", out it)) totalPt += it.GetInt32();
+                    if (usageProp.TryGetProperty("output_tokens", out var ot) || usageProp.TryGetProperty("completion_tokens", out ot) || usageProp.TryGetProperty("completion_token_count", out ot) || usageProp.TryGetProperty("candidate_token_count", out ot) || usageProp.TryGetProperty("candidatesTokenCount", out ot) || usageProp.TryGetProperty("candidateTokenCount", out ot) || usageProp.TryGetProperty("outputTokenCount", out ot)) totalCt += ot.GetInt32();
+                    if (usageProp.TryGetProperty("total_tokens", out var tt) || usageProp.TryGetProperty("total_token_count", out tt) || usageProp.TryGetProperty("totalTokenCount", out tt)) totalTt += tt.GetInt32();
+                }
+
+                // Stats
+                if (root.TryGetProperty("stats", out var statsEl))
+                {
+                    if (statsEl.TryGetProperty("input_tokens", out var sit)) totalPt += sit.GetInt32();
+                    if (statsEl.TryGetProperty("output_tokens", out var sot)) totalCt += sot.GetInt32();
+                    if (statsEl.TryGetProperty("total_tokens", out var stt)) totalTt += stt.GetInt32();
+                    if (statsEl.TryGetProperty("models", out var modelsEl) && modelsEl.ValueKind == JsonValueKind.Object)
+                    {
+                        var names = new List<string>();
+                        foreach (var m in modelsEl.EnumerateObject())
+                        {
+                            names.Add(m.Name);
+                            if (m.Value.TryGetProperty("tokens", out var tEl))
+                            {
+                                if (tEl.TryGetProperty("input", out var ti)) totalPt += ti.GetInt32();
+                                if (tEl.TryGetProperty("candidates", out var tc)) totalCt += tc.GetInt32();
+                                if (tEl.TryGetProperty("total", out var tt2)) totalTt += tt2.GetInt32();
+                            }
+                        }
+                        if (names.Any()) finalModel = string.Join("+", names);
+                    }
+                }
+
+                // Content
+                if (root.TryGetProperty("type", out var tProp))
+                {
+                    var t = tProp.GetString();
+                    if (t == "text" && root.TryGetProperty("part", out var op) && op.TryGetProperty("text", out var ot))
+                        finalContent = (finalContent ?? "") + ot.GetString();
+                    else if (t == "message" && root.TryGetProperty("content", out var mc))
+                        finalContent = (finalContent ?? "") + mc.GetString();
+                    else if (t == "result" && root.TryGetProperty("result", out var rc))
+                        finalContent = rc.GetString();
+                    else if (t == "item.completed" && root.TryGetProperty("item", out var itm) &&
+                             itm.TryGetProperty("type", out var itmType) && itmType.GetString() == "agent_message" &&
+                             itm.TryGetProperty("text", out var itmText))
+                        finalContent = itmText.GetString();
+                    else if (t == "step_finish" && root.TryGetProperty("part", out var of))
+                    {
+                        if (of.TryGetProperty("model", out var om)) { var mv = om.GetString(); if (!string.IsNullOrEmpty(mv)) finalModel = mv; }
+                    }
+                }
+                else if (root.TryGetProperty("response", out var res)) finalContent = res.GetString();
+                else if (root.TryGetProperty("result", out var res2)) finalContent = res2.GetString();
+                else if (root.TryGetProperty("content", out var res3)) finalContent = res3.GetString();
+                else if (root.TryGetProperty("text", out var res4)) finalContent = res4.GetString();
+            }
+            catch (JsonException) { }
+        }
+
+        if (totalTt == 0 && (totalPt > 0 || totalCt > 0)) totalTt = totalPt + totalCt;
+
+        if (foundAnyJson)
+        {
+            var res = new CliResult(CleanResponse(finalContent ?? output), finalModel ?? provider, totalPt, totalCt, totalTt);
+            Console.WriteLine($"[AiService] Successfully parsed JSON from {provider}. Model: {res.Model}, Tokens: {res.TotalTokens}");
+            return res;
+        }
+
+        Console.WriteLine($"[AiService] No JSON found in output from {provider}.");
+        return new CliResult(CleanResponse(output), provider, 0, 0, 0);
     }
 }
