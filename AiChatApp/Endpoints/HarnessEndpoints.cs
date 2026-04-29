@@ -284,7 +284,19 @@ public static class HarnessEndpoints
         });
 
         group.MapGet("/visualizer/model-stats-html", async (AppDbContext db) => {
+            // Join AgentSteps → Messages → ChatSessions to recover provider info for old records where Model is empty
+            var providerByMessageId = await db.Messages
+                .Join(db.ChatSessions, m => m.ChatSessionId, s => s.Id, (m, s) => new { m.Id, Provider = s.PreferredProvider ?? "gemini" })
+                .ToDictionaryAsync(x => x.Id, x => x.Provider);
+
             var steps = await db.AgentSteps.Include(s => s.Evaluations).ToListAsync();
+
+            // Fill in missing Model field using session's PreferredProvider
+            foreach (var step in steps.Where(s => string.IsNullOrEmpty(s.Model)))
+            {
+                if (providerByMessageId.TryGetValue(step.MessageId, out var sessionProvider))
+                    step.Model = sessionProvider;
+            }
             
             // 1. 定义提供商映射逻辑 (严格匹配用户要求的 gemini, claudecode, codex, copilot, opencode)
             string GetProvider(string? model) {
@@ -329,16 +341,20 @@ public static class HarnessEndpoints
                 };
             }
 
-            // 4. 聚合数据
-            var modelStats = steps.GroupBy(s => s.Model)
+            // 4. 聚合数据 — 按 Model 分组（空 Model 归入 Role 名；同时忽略纯 role 名分组以减少噪音）
+            var knownRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+                "Assistant","Orchestrator","Executor","Reviewer","Architect","Developer","Coder",
+                "Researcher","Planner","SkillCoder","Backend-Dev","UI-Specialist","API-Architect",
+                "Logic-Architect","Architect-Agent","Developer-Agent","assistant"
+            };
+
+            var modelStats = steps
+                .GroupBy(s => string.IsNullOrEmpty(s.Model) ? s.Role : s.Model)
                 .Select(g => {
                     var promptT = g.Sum(s => (long)s.PromptTokens);
                     var completionT = g.Sum(s => (long)s.CompletionTokens);
                     var totalT = g.Sum(s => (long)s.TotalTokens);
-                    
-                    // Fallback if TotalTokens is 0 but prompt/completion are not
                     if (totalT == 0 && (promptT > 0 || completionT > 0)) totalT = promptT + completionT;
-
                     return new {
                         Model = g.Key,
                         Provider = GetProvider(g.Key),
@@ -353,13 +369,16 @@ public static class HarnessEndpoints
                     };
                 }).OrderByDescending(s => s.TotalTokens).ToList();
 
-            var providerStats = modelStats.GroupBy(s => s.Provider)
-                .Select(g => {
-                    var provider = g.Key;
+            // 5. 按提供商聚合 — 始终显示所有已知提供商（即使使用量为 0）
+            var allProviders = new[] { "Gemini", "Claude", "ClaudeCode", "Codex", "Copilot", "OpenCode" };
+            var usageByProvider = modelStats.GroupBy(s => s.Provider).ToDictionary(g => g.Key, g => g);
+
+            var providerStats = allProviders.Select(providerName => {
+                var quota = quotas.ContainsKey(providerName) ? quotas[providerName] : 1000000;
+                if (usageByProvider.TryGetValue(providerName, out var g)) {
                     var used = g.Sum(s => s.TotalTokens);
-                    var quota = quotas.ContainsKey(provider) ? quotas[provider] : 1000000;
                     return new {
-                        Provider = provider,
+                        Provider = providerName,
                         Used = used,
                         Quota = quota,
                         Remaining = Math.Max(0, quota - used),
@@ -367,9 +386,22 @@ public static class HarnessEndpoints
                         AvgSuccess = g.Average(s => s.SuccessRate),
                         ModelCount = g.Count(),
                         TotalCalls = g.Sum(s => s.Count),
-                        Color = GetColor(provider)
+                        Color = GetColor(providerName)
                     };
-                }).OrderByDescending(s => s.Used).ToList();
+                }
+                // Provider exists in config but no usage yet
+                return new {
+                    Provider = providerName,
+                    Used = 0L,
+                    Quota = quota,
+                    Remaining = quota,
+                    Percent = 0.0,
+                    AvgSuccess = 1.0,
+                    ModelCount = 0,
+                    TotalCalls = 0,
+                    Color = GetColor(providerName)
+                };
+            }).OrderByDescending(s => s.Used).ToList();
 
             var totalTokensAll = modelStats.Sum(s => s.TotalTokens);
             var totalCallsAll = modelStats.Sum(s => s.Count);
@@ -482,23 +514,23 @@ public static class HarnessEndpoints
                                         <div class='flex-1 space-y-4 bg-base-200/30 p-4 rounded-2xl border border-base-content/5'>
                                             <div class='flex items-center justify-between'>
                                                 <span class='text-[10px] font-black uppercase tracking-widest opacity-40'>Consumption Breakdown</span>
-                                                <span class='text-xs font-mono font-bold text-primary'>{s.TotalTokens:N0} Total</span>
+                                                <span class='text-xs font-mono font-bold text-primary'>{(s.TotalTokens > 0 ? s.TotalTokens.ToString("N0") + " Total" : "Tokens N/A")}</span>
                                             </div>
-                                            
+
                                             <div class='space-y-3'>
                                                 <div>
                                                     <div class='flex justify-between text-[10px] font-bold mb-1'>
                                                         <span>INPUT (PROMPT)</span>
-                                                        <span class='opacity-50'>{s.PromptTokens:N0}</span>
+                                                        <span class='opacity-50'>{(s.PromptTokens > 0 ? s.PromptTokens.ToString("N0") : "—")}</span>
                                                     </div>
-                                                    <progress class='progress progress-primary h-2 w-full' value='{s.PromptTokens}' max='{s.TotalTokens}'></progress>
+                                                    <progress class='progress progress-primary h-2 w-full' value='{s.PromptTokens}' max='{Math.Max(1, s.TotalTokens)}'></progress>
                                                 </div>
                                                 <div>
                                                     <div class='flex justify-between text-[10px] font-bold mb-1'>
                                                         <span>OUTPUT (COMPLETION)</span>
-                                                        <span class='opacity-50'>{s.CompletionTokens:N0}</span>
+                                                        <span class='opacity-50'>{(s.CompletionTokens > 0 ? s.CompletionTokens.ToString("N0") : "—")}</span>
                                                     </div>
-                                                    <progress class='progress progress-secondary h-2 w-full' value='{s.CompletionTokens}' max='{s.TotalTokens}'></progress>
+                                                    <progress class='progress progress-secondary h-2 w-full' value='{s.CompletionTokens}' max='{Math.Max(1, s.TotalTokens)}'></progress>
                                                 </div>
                                             </div>
 

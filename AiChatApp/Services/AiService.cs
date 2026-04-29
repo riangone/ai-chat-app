@@ -114,8 +114,9 @@ public class AiService
         var result = await ExecuteCliAsync(fullPrompt, targetProvider, systemPrompt, workingDir);
         sw.Stop();
 
-        // ログを記録
-        await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", result.Model, systemPrompt ?? "Default Assistant", fullPrompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
+        // ログを記録 — Model が空のときは provider 名を使用して統計ページで正しく分類できるようにする
+        var modelName = string.IsNullOrEmpty(result.Model) ? targetProvider : result.Model;
+        await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", modelName, systemPrompt ?? "Default Assistant", fullPrompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
 
         return result.Output;
     }
@@ -385,10 +386,12 @@ public class AiService
             "opencode" => "opencode",
             _ => DefaultProvider
         };
-        var useJsonStreaming = targetProvider == "gemini" || fileName == "gemini" || 
+        var useJsonStreaming = targetProvider == "gemini" || fileName == "gemini" ||
                               targetProvider == "claude" || fileName == "claude" ||
                               targetProvider == "claudecode" || fileName == "claudecode" ||
-                              targetProvider == "gh-copilot" || fileName == "copilot";
+                              targetProvider == "gh-copilot" || fileName == "copilot" ||
+                              targetProvider == "codex" || fileName == "codex" ||
+                              targetProvider == "opencode" || fileName == "opencode";
 
         var processInfo = SetupProcessInfo(targetProvider, workingDir, useJsonStreaming ? "stream-json" : null);
 
@@ -401,7 +404,6 @@ public class AiService
 
         if (targetProvider == "opencode")
         {
-            processInfo.ArgumentList.Add("--yolo");
             processInfo.ArgumentList.Add(inputToStdin);
             inputToStdin = string.Empty;
         }
@@ -470,6 +472,7 @@ public class AiService
 
         var fullResponse = new StringBuilder();
         string? extractedModel = null;
+        string? lastAssistantContent = null; // Claude CLI fallback: full text from last assistant event
         int pt = 0, ct = 0, tt = 0;
 
         // Buffer for detecting and stripping echoed System:/User: prefix at stream start
@@ -489,52 +492,182 @@ public class AiService
                 {
                     using var doc = JsonDocument.Parse(line);
                     
-                    // Capture model if available
-                    if (doc.RootElement.TryGetProperty("model", out var mProp))
-                        extractedModel = mProp.GetString();
-
-                    // Capture usage if available (Handle variations like usage, usage_metadata, or direct properties)
-                    if (doc.RootElement.TryGetProperty("usage", out var usageProp) || 
-                        doc.RootElement.TryGetProperty("usage_metadata", out usageProp))
+                    // Capture model — root "model"/"modelVersion" (Gemini), or nested "message.model" (Claude CLI)
+                    if (doc.RootElement.TryGetProperty("model", out var mProp) ||
+                        doc.RootElement.TryGetProperty("modelVersion", out mProp))
                     {
-                        if (usageProp.TryGetProperty("prompt_tokens", out var ptProp) || usageProp.TryGetProperty("prompt_token_count", out ptProp)) pt = ptProp.GetInt32();
-                        if (usageProp.TryGetProperty("completion_tokens", out var ctProp) || usageProp.TryGetProperty("completion_token_count", out ctProp) || usageProp.TryGetProperty("candidate_token_count", out ctProp)) ct = ctProp.GetInt32();
-                        if (usageProp.TryGetProperty("total_tokens", out var ttProp) || usageProp.TryGetProperty("total_token_count", out ttProp)) tt = ttProp.GetInt32();
-                        
+                        var mv = mProp.GetString();
+                        if (!string.IsNullOrEmpty(mv)) extractedModel = mv;
+                    }
+                    else if (doc.RootElement.TryGetProperty("message", out var msgForModel) &&
+                             msgForModel.TryGetProperty("model", out var nestedMProp))
+                    {
+                        var mv = nestedMProp.GetString();
+                        if (!string.IsNullOrEmpty(mv)) extractedModel = mv;
+                    }
+
+                    // Capture usage — multi-provider:
+                    //   Gemini streaming: stats.{input_tokens,output_tokens,total_tokens} on type=="result" line
+                    //   Gemini non-streaming: no top-level usage (handled separately in non-streaming path)
+                    //   Claude CLI: usage.{input_tokens,output_tokens} at root or message.usage
+                    //   OpenAI / Copilot: usage.{prompt_tokens,completion_tokens}
+                    //   Anthropic API: usageMetadata camelCase
+                    JsonElement usageProp;
+                    bool hasUsage = doc.RootElement.TryGetProperty("usage", out usageProp) ||
+                                   doc.RootElement.TryGetProperty("usage_metadata", out usageProp) ||
+                                   doc.RootElement.TryGetProperty("usageMetadata", out usageProp);
+                    if (!hasUsage && doc.RootElement.TryGetProperty("message", out var msgForUsage) &&
+                        msgForUsage.TryGetProperty("usage", out usageProp))
+                        hasUsage = true;
+
+                    if (hasUsage)
+                    {
+                        if (usageProp.TryGetProperty("input_tokens", out var itProp) || usageProp.TryGetProperty("prompt_tokens", out itProp) || usageProp.TryGetProperty("prompt_token_count", out itProp) || usageProp.TryGetProperty("promptTokenCount", out itProp) || usageProp.TryGetProperty("inputTokenCount", out itProp)) pt = itProp.GetInt32();
+                        if (usageProp.TryGetProperty("output_tokens", out var otProp) || usageProp.TryGetProperty("completion_tokens", out otProp) || usageProp.TryGetProperty("completion_token_count", out otProp) || usageProp.TryGetProperty("candidate_token_count", out otProp) || usageProp.TryGetProperty("candidatesTokenCount", out otProp) || usageProp.TryGetProperty("candidateTokenCount", out otProp) || usageProp.TryGetProperty("outputTokenCount", out otProp)) ct = otProp.GetInt32();
+                        if (usageProp.TryGetProperty("total_tokens", out var ttProp) || usageProp.TryGetProperty("total_token_count", out ttProp) || usageProp.TryGetProperty("totalTokenCount", out ttProp)) tt = ttProp.GetInt32();
                         if (tt == 0 && (pt > 0 || ct > 0)) tt = pt + ct;
                     }
 
-                    // Standard message format (Gemini/Claude CLI)
+                    // Gemini streaming result line: {"type":"result","stats":{"input_tokens":N,"output_tokens":K,"total_tokens":M,"models":{...}}}
+                    if (doc.RootElement.TryGetProperty("stats", out var statsEl))
+                    {
+                        if (statsEl.TryGetProperty("input_tokens", out var sitProp)) pt = sitProp.GetInt32();
+                        if (statsEl.TryGetProperty("output_tokens", out var sotProp)) ct = sotProp.GetInt32();
+                        if (statsEl.TryGetProperty("total_tokens", out var sttProp)) tt = sttProp.GetInt32();
+                        
+                        // Extract actual model names from stats.models keys
+                        if (statsEl.TryGetProperty("models", out var modelsEl) && modelsEl.ValueKind == JsonValueKind.Object)
+                        {
+                            var names = new List<string>();
+                            foreach (var modelEntry in modelsEl.EnumerateObject())
+                            {
+                                names.Add(modelEntry.Name);
+                                // Also sum tokens from individual models if top-level stats were 0
+                                if (pt == 0 || ct == 0)
+                                {
+                                    if (modelEntry.Value.TryGetProperty("tokens", out var tokEl))
+                                    {
+                                        if (tokEl.TryGetProperty("input", out var tit)) pt += tit.GetInt32();
+                                        if (tokEl.TryGetProperty("candidates", out var tct)) ct += tct.GetInt32();
+                                        if (tokEl.TryGetProperty("total", out var ttt)) tt += ttt.GetInt32();
+                                    }
+                                }
+                            }
+                            if (names.Any()) extractedModel = string.Join("+", names);
+                        }
+                        if (tt == 0 && (pt > 0 || ct > 0)) tt = pt + ct;
+                    }
+
+                    // Extract tokens and model names from modelUsage keys (Claude CLI)
+                    // {"modelUsage":{"claude-sonnet-4-6":{"input_tokens":N,"output_tokens":K}}}
+                    if (doc.RootElement.TryGetProperty("modelUsage", out var modelUsageEl) && modelUsageEl.ValueKind == JsonValueKind.Object)
+                    {
+                        var muNames = new List<string>();
+                        foreach (var prop in modelUsageEl.EnumerateObject())
+                        {
+                            muNames.Add(prop.Name);
+                            if (prop.Value.TryGetProperty("input_tokens", out var mit)) pt += mit.GetInt32();
+                            if (prop.Value.TryGetProperty("output_tokens", out var mot)) ct += mot.GetInt32();
+                            if (prop.Value.TryGetProperty("total_tokens", out var mtt)) tt += mtt.GetInt32();
+                        }
+                        if (tt == 0 && (pt > 0 || ct > 0)) tt = pt + ct;
+                        if (muNames.Any()) extractedModel = string.Join("+", muNames);
+                    }
+
+                    // Text extraction — ordered by provider format
                     if (doc.RootElement.TryGetProperty("type", out var typeProp))
                     {
                         var type = typeProp.GetString();
                         if (type == "message")
                         {
-                            // Skip messages from user or system to avoid echoing the prompt
+                            // Gemini CLI: {"type":"message","role":"assistant","content":"chunk","delta":true}
                             bool isAssistant = true;
                             if (doc.RootElement.TryGetProperty("role", out var roleProp))
                             {
                                 var role = roleProp.GetString();
                                 if (role == "user" || role == "system") isAssistant = false;
                             }
-
                             if (isAssistant && doc.RootElement.TryGetProperty("content", out var contentProp))
-                            {
                                 chunk = contentProp.GetString() ?? "";
-                            }
                         }
                         else if (type == "content_block_delta" || type == "text_delta")
                         {
+                            // Claude CLI / Anthropic API streaming delta
                             if (doc.RootElement.TryGetProperty("delta", out var deltaProp) &&
                                 deltaProp.TryGetProperty("text", out var textProp))
-                            {
                                 chunk = textProp.GetString() ?? "";
+                        }
+                        else if (type == "assistant" && doc.RootElement.TryGetProperty("message", out var aMsg))
+                        {
+                            // Claude CLI verbose streaming: {"type":"assistant","message":{"content":[{"type":"text","text":"..."}],...}}
+                            // Content is the FULL accumulated text so far — only use as fallback if no delta chunks yet
+                            if (aMsg.TryGetProperty("content", out var aContentArr) && aContentArr.ValueKind == JsonValueKind.Array)
+                            {
+                                var sb2 = new StringBuilder();
+                                foreach (var block in aContentArr.EnumerateArray())
+                                {
+                                    if (block.TryGetProperty("type", out var blockType) && blockType.GetString() == "text" &&
+                                        block.TryGetProperty("text", out var blockText))
+                                        sb2.Append(blockText.GetString());
+                                }
+                                lastAssistantContent = sb2.Length > 0 ? sb2.ToString() : null;
                             }
+                        }
+                        else if (type == "result" && doc.RootElement.TryGetProperty("result", out var resultProp))
+                        {
+                            // Claude CLI final event: {"type":"result","result":"full text","usage":{...}}
+                            var resultText = resultProp.GetString() ?? "";
+                            if (fullResponse.Length == 0 && !string.IsNullOrEmpty(resultText))
+                                chunk = resultText;
+                        }
+                        else if (type == "item.completed" && doc.RootElement.TryGetProperty("item", out var codexItem))
+                        {
+                            // Codex: {"type":"item.completed","item":{"type":"agent_message","text":"Hi"}}
+                            if (codexItem.TryGetProperty("type", out var itemType) && itemType.GetString() == "agent_message" &&
+                                codexItem.TryGetProperty("text", out var itemText))
+                                chunk = itemText.GetString() ?? "";
+                        }
+                        else if (type == "turn.completed" && doc.RootElement.TryGetProperty("usage", out var codexUsage))
+                        {
+                            // Codex: {"type":"turn.completed","usage":{"input_tokens":N,"output_tokens":K}}
+                            // Token extraction already handled by generic "usage" property check above.
+                            // Model name not provided by codex CLI — will use provider name as fallback.
+                            if (string.IsNullOrEmpty(extractedModel)) extractedModel = "codex";
+                        }
+                        else if (type == "text" && doc.RootElement.TryGetProperty("part", out var ocPart))
+                        {
+                            // OpenCode: {"type":"text","part":{"text":"Hi",...}}
+                            if (ocPart.TryGetProperty("text", out var ocText))
+                                chunk = ocText.GetString() ?? "";
+                        }
+                        else if (type == "step_finish" && doc.RootElement.TryGetProperty("part", out var ocFinish))
+                        {
+                            // OpenCode: {"type":"step_finish","part":{"tokens":{"total":N,"input":M,"output":K},...}}
+                            if (ocFinish.TryGetProperty("tokens", out var ocTokens))
+                            {
+                                if (ocTokens.TryGetProperty("input", out var ocIn)) pt = ocIn.GetInt32();
+                                if (ocTokens.TryGetProperty("output", out var ocOut)) ct = ocOut.GetInt32();
+                                if (ocTokens.TryGetProperty("total", out var ocTot)) tt = ocTot.GetInt32();
+                                if (tt == 0 && (pt > 0 || ct > 0)) tt = pt + ct;
+                            }
+                            // Extract model from part if available
+                            if (ocFinish.TryGetProperty("model", out var ocModel)) { var mv = ocModel.GetString(); if (!string.IsNullOrEmpty(mv)) extractedModel = mv; }
+                            if (string.IsNullOrEmpty(extractedModel)) extractedModel = "opencode";
                         }
                     }
                     else if (doc.RootElement.TryGetProperty("content", out var directContent))
                     {
                         chunk = directContent.GetString() ?? "";
+                    }
+                    // Gemini API streaming format: candidates[0].content.parts[0].text
+                    else if (doc.RootElement.TryGetProperty("candidates", out var streamCandidates) &&
+                             streamCandidates.ValueKind == JsonValueKind.Array && streamCandidates.GetArrayLength() > 0 &&
+                             streamCandidates[0].TryGetProperty("content", out var sCContent) &&
+                             sCContent.TryGetProperty("parts", out var sParts) &&
+                             sParts.ValueKind == JsonValueKind.Array && sParts.GetArrayLength() > 0 &&
+                             sParts[0].TryGetProperty("text", out var sPartText))
+                    {
+                        chunk = sPartText.GetString() ?? "";
                     }
                 }
                 catch (JsonException) { /* Skip invalid JSON lines */ }
@@ -598,6 +731,13 @@ public class AiService
         sw.Stop();
 
         var stderrOutput = await stderrTask;
+
+        // Claude CLI verbose streaming: if no content_block_delta chunks, fall back to last assistant event content
+        if (fullResponse.Length == 0 && !string.IsNullOrEmpty(lastAssistantContent))
+        {
+            fullResponse.Append(lastAssistantContent);
+            yield return lastAssistantContent;
+        }
 
         // stderr フォールバック: stdout が空の場合は gemini に切り替え、またはエラーを表示
         if (fullResponse.Length == 0)
@@ -796,7 +936,7 @@ public class AiService
         {
             MessageId = messageId,
             Role = role,
-            Model = result.Model,
+            Model = string.IsNullOrEmpty(result.Model) ? provider : result.Model,
             PromptTokens = result.PromptTokens,
             CompletionTokens = result.CompletionTokens,
             TotalTokens = result.TotalTokens,
@@ -998,6 +1138,7 @@ public class AiService
         string[] promptPrefixes = { 
             "System:", "User:", "Assistant:", "Context:", "History:", 
             "Thought:", "Thinking:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:", 
+            "[相关的长期记忆]:", "[当前会话上下文]:",
             "[追加スキル指示]:", "[MEMORY INSTRUCTION]:", "[ENVIRONMENTAL POLICIES & CONSTRAINTS]:", 
             "--- Policy:", "Role:", "Persona:", "Input:", "Output:"
         };
@@ -1005,13 +1146,16 @@ public class AiService
 
         string[] systemPromptFragments = { 
             "あなたは高度なAIアシスタントです", 
+            "你是高度进化的自主 AI 代理",
             "現在はソフトウェア開発プロジェクトのコンテキストで動作しています",
+            "你目前运行在 AiChatApp 项目的上下文中",
             "あなたはタスク分解の専門家",
             "あなたは実装の専門家",
             "あなたは評審の専門家",
             "[MEMORY INSTRUCTION]",
             "[会話履歴]:",
             "[ユーザーの既知情報・長期記憶]:",
+            "[相关的长期记忆]:",
             "重要な発見や制約があれば"
         };
 
@@ -1040,6 +1184,12 @@ public class AiService
                 var contentAfter = trimmedLine.Substring(matchedPrefix!.Length).Trim();
                 if (!string.IsNullOrEmpty(contentAfter))
                 {
+                    // If the content after the prefix is also a known system fragment, skip it
+                    if (systemPromptFragments.Any(f => contentAfter.Contains(f)))
+                    {
+                        continue;
+                    }
+
                     // This is likely the start of the actual response
                     firstContentLine = i;
                     firstLineContent = contentAfter;
@@ -1259,14 +1409,13 @@ public class AiService
             processInfo.ArgumentList.Add("--dangerously-bypass-approvals-and-sandbox");
             processInfo.ArgumentList.Add("--color");
             processInfo.ArgumentList.Add("never");
-            processInfo.ArgumentList.Add("--output-format");
-            processInfo.ArgumentList.Add(outputFormat ?? "json");
+            processInfo.ArgumentList.Add("--json"); // JSONL streaming output with token usage
         }
         else if (provider == "opencode")
         {
             processInfo.ArgumentList.Add("run");
-            processInfo.ArgumentList.Add("--dangerously-skip-permissions");
-            processInfo.ArgumentList.Add("--yolo");
+            processInfo.ArgumentList.Add("--format");
+            processInfo.ArgumentList.Add("json"); // JSONL output with token usage
         }
         else if (provider == "gh-copilot")
         {
@@ -1286,6 +1435,9 @@ public class AiService
                 processInfo.ArgumentList.Add("false");
                 processInfo.ArgumentList.Add("--output-format");
                 processInfo.ArgumentList.Add(outputFormat ?? "json");
+                // stream-json requires --verbose for Claude CLI
+                if (outputFormat == "stream-json")
+                    processInfo.ArgumentList.Add("--verbose");
             }
             else
             {
@@ -1374,6 +1526,110 @@ public class AiService
 
             if (string.IsNullOrWhiteSpace(output)) return new CliResult("No response received from AI.", provider, 0, 0, 0);
 
+            // JSONL path: Many modern CLIs (codex, opencode, claudecode, copilot) output one JSON object per line or as a stream
+            // We'll treat all as potential JSONL if they aren't a single valid JSON object.
+            bool isJsonl = provider == "codex" || provider == "opencode" || provider == "gh-copilot" || provider == "claude" || provider == "claudecode";
+            if (isJsonl)
+            {
+                string? jsonlContent = null;
+                string? jsonlModel = null;
+                int jsonlPt = 0, jsonlCt = 0, jsonlTt = 0;
+                foreach (var rawLine in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    try
+                    {
+                        using var lineDoc = JsonDocument.Parse(rawLine.Trim());
+                        var root = lineDoc.RootElement;
+                        
+                        // Extract Model
+                        if (root.TryGetProperty("model", out var mProp) || root.TryGetProperty("modelVersion", out mProp))
+                        {
+                            var mv = mProp.GetString();
+                            if (!string.IsNullOrEmpty(mv)) jsonlModel = mv;
+                        }
+
+                        // Extract Model from modelUsage
+                        if (root.TryGetProperty("modelUsage", out var muEl) && muEl.ValueKind == JsonValueKind.Object)
+                        {
+                            var names = new List<string>();
+                            foreach (var prop in muEl.EnumerateObject())
+                            {
+                                names.Add(prop.Name);
+                                if (prop.Value.TryGetProperty("input_tokens", out var mit)) jsonlPt += mit.GetInt32();
+                                if (prop.Value.TryGetProperty("output_tokens", out var mot)) jsonlCt += mot.GetInt32();
+                                if (prop.Value.TryGetProperty("total_tokens", out var mtt)) jsonlTt += mtt.GetInt32();
+                            }
+                            if (names.Any()) jsonlModel = string.Join("+", names);
+                        }
+
+                        // Extract Usage (Standard)
+                        JsonElement usageProp;
+                        bool hasUsage = root.TryGetProperty("usage", out usageProp) ||
+                                       root.TryGetProperty("usage_metadata", out usageProp) ||
+                                       root.TryGetProperty("usageMetadata", out usageProp);
+                        if (!hasUsage && root.TryGetProperty("message", out var msg) && msg.TryGetProperty("usage", out usageProp))
+                            hasUsage = true;
+                        
+                        if (hasUsage)
+                        {
+                            if (usageProp.TryGetProperty("input_tokens", out var it) || usageProp.TryGetProperty("prompt_tokens", out it) || usageProp.TryGetProperty("prompt_token_count", out it) || usageProp.TryGetProperty("promptTokenCount", out it) || usageProp.TryGetProperty("inputTokenCount", out it)) jsonlPt += it.GetInt32();
+                            if (usageProp.TryGetProperty("output_tokens", out var ot) || usageProp.TryGetProperty("completion_tokens", out ot) || usageProp.TryGetProperty("completion_token_count", out ot) || usageProp.TryGetProperty("candidate_token_count", out ot) || usageProp.TryGetProperty("candidatesTokenCount", out ot) || usageProp.TryGetProperty("candidateTokenCount", out ot) || usageProp.TryGetProperty("outputTokenCount", out ot)) jsonlCt += ot.GetInt32();
+                            if (usageProp.TryGetProperty("total_tokens", out var tt) || usageProp.TryGetProperty("total_token_count", out tt) || usageProp.TryGetProperty("totalTokenCount", out tt)) jsonlTt += tt.GetInt32();
+                        }
+
+                        // Extract Stats (Gemini style)
+                        if (root.TryGetProperty("stats", out var statsEl))
+                        {
+                            if (statsEl.TryGetProperty("input_tokens", out var sit)) jsonlPt += sit.GetInt32();
+                            if (statsEl.TryGetProperty("output_tokens", out var sot)) jsonlCt += sot.GetInt32();
+                            if (statsEl.TryGetProperty("total_tokens", out var stt)) jsonlTt += stt.GetInt32();
+                            if (statsEl.TryGetProperty("models", out var modelsEl) && modelsEl.ValueKind == JsonValueKind.Object)
+                            {
+                                var names = new List<string>();
+                                foreach (var m in modelsEl.EnumerateObject())
+                                {
+                                    names.Add(m.Name);
+                                    if (m.Value.TryGetProperty("tokens", out var tEl))
+                                    {
+                                        if (tEl.TryGetProperty("input", out var ti)) jsonlPt += ti.GetInt32();
+                                        if (tEl.TryGetProperty("candidates", out var tc)) jsonlCt += tc.GetInt32();
+                                        if (tEl.TryGetProperty("total", out var tt2)) jsonlTt += tt2.GetInt32();
+                                    }
+                                }
+                                if (names.Any()) jsonlModel = string.Join("+", names);
+                            }
+                        }
+
+                        // Extract Content
+                        if (root.TryGetProperty("type", out var tProp))
+                        {
+                            var t = tProp.GetString();
+                            if (t == "text" && root.TryGetProperty("part", out var op) && op.TryGetProperty("text", out var ot))
+                                jsonlContent = (jsonlContent ?? "") + ot.GetString();
+                            else if (t == "message" && root.TryGetProperty("content", out var mc))
+                                jsonlContent = (jsonlContent ?? "") + mc.GetString();
+                            else if (t == "result" && root.TryGetProperty("result", out var rc))
+                                jsonlContent = rc.GetString(); // Final result often contains full text
+                            else if (t == "item.completed" && root.TryGetProperty("item", out var itm) &&
+                                     itm.TryGetProperty("type", out var itmType) && itmType.GetString() == "agent_message" &&
+                                     itm.TryGetProperty("text", out var itmText))
+                                jsonlContent = itmText.GetString();
+                            else if (t == "step_finish" && root.TryGetProperty("part", out var of))
+                            {
+                                if (of.TryGetProperty("model", out var om)) { var mv = om.GetString(); if (!string.IsNullOrEmpty(mv)) jsonlModel = mv; }
+                            }
+                        }
+                        else if (root.TryGetProperty("response", out var res)) jsonlContent = res.GetString();
+                        else if (root.TryGetProperty("result", out var res2)) jsonlContent = res2.GetString();
+                        else if (root.TryGetProperty("content", out var res3)) jsonlContent = res3.GetString();
+                    }
+                    catch (JsonException) { }
+                }
+                if (jsonlTt == 0 && (jsonlPt > 0 || jsonlCt > 0)) jsonlTt = jsonlPt + jsonlCt;
+                if (!string.IsNullOrEmpty(jsonlContent))
+                    return new CliResult(CleanResponse(jsonlContent), jsonlModel ?? provider, jsonlPt, jsonlCt, jsonlTt);
+            }
+
             try
             {
                 var jsonText = ExtractJson(output);
@@ -1383,23 +1639,92 @@ public class AiService
                     string? extractedModel = null;
                     int pt = 0, ct = 0, tt = 0;
 
-                    if (doc.RootElement.TryGetProperty("model", out var mProp))
-                        extractedModel = mProp.GetString();
-                    
-                    if (doc.RootElement.TryGetProperty("usage", out var usageProp) || 
-                        doc.RootElement.TryGetProperty("usage_metadata", out usageProp))
+                    // Model: root "model"/"modelVersion" (Gemini), nested "message.model", or "modelUsage" keys (Claude CLI)
+                    if (doc.RootElement.TryGetProperty("model", out var mProp) ||
+                        doc.RootElement.TryGetProperty("modelVersion", out mProp))
                     {
-                        if (usageProp.TryGetProperty("prompt_tokens", out var ptProp) || usageProp.TryGetProperty("prompt_token_count", out ptProp)) pt = ptProp.GetInt32();
-                        if (usageProp.TryGetProperty("completion_tokens", out var ctProp) || usageProp.TryGetProperty("completion_token_count", out ctProp) || usageProp.TryGetProperty("candidate_token_count", out ctProp)) ct = ctProp.GetInt32();
-                        if (usageProp.TryGetProperty("total_tokens", out var ttProp) || usageProp.TryGetProperty("total_token_count", out ttProp)) tt = ttProp.GetInt32();
-                        
+                        var mv = mProp.GetString();
+                        if (!string.IsNullOrEmpty(mv)) extractedModel = mv;
+                    }
+                    else if (doc.RootElement.TryGetProperty("message", out var msgForModel2) &&
+                             msgForModel2.TryGetProperty("model", out var nestedMProp2))
+                    {
+                        var mv = nestedMProp2.GetString();
+                        if (!string.IsNullOrEmpty(mv)) extractedModel = mv;
+                    }
+                    else if (doc.RootElement.TryGetProperty("modelUsage", out var muEl2) && muEl2.ValueKind == JsonValueKind.Object)
+                    {
+                        var muNames2 = new List<string>();
+                        foreach (var prop in muEl2.EnumerateObject())
+                        {
+                            muNames2.Add(prop.Name);
+                            if (prop.Value.TryGetProperty("input_tokens", out var mit)) pt += mit.GetInt32();
+                            if (prop.Value.TryGetProperty("output_tokens", out var mot)) ct += mot.GetInt32();
+                            if (prop.Value.TryGetProperty("total_tokens", out var mtt)) tt += mtt.GetInt32();
+                        }
+                        if (muNames2.Any()) extractedModel = string.Join("+", muNames2);
+                        if (tt == 0 && (pt > 0 || ct > 0)) tt = pt + ct;
+                    }
+
+                    // Usage: Claude (input_tokens/output_tokens), OpenAI (prompt_tokens), Anthropic API (usageMetadata)
+                    JsonElement usageProp2;
+                    bool hasUsage2 = doc.RootElement.TryGetProperty("usage", out usageProp2) ||
+                                    doc.RootElement.TryGetProperty("usage_metadata", out usageProp2) ||
+                                    doc.RootElement.TryGetProperty("usageMetadata", out usageProp2);
+                    if (!hasUsage2 && doc.RootElement.TryGetProperty("message", out var msgForUsage2) &&
+                        msgForUsage2.TryGetProperty("usage", out usageProp2))
+                        hasUsage2 = true;
+                    if (hasUsage2)
+                    {
+                        if (usageProp2.TryGetProperty("input_tokens", out var itProp2) || usageProp2.TryGetProperty("prompt_tokens", out itProp2) || usageProp2.TryGetProperty("prompt_token_count", out itProp2) || usageProp2.TryGetProperty("promptTokenCount", out itProp2) || usageProp2.TryGetProperty("inputTokenCount", out itProp2)) pt = itProp2.GetInt32();
+                        if (usageProp2.TryGetProperty("output_tokens", out var otProp2) || usageProp2.TryGetProperty("completion_tokens", out otProp2) || usageProp2.TryGetProperty("completion_token_count", out otProp2) || usageProp2.TryGetProperty("candidate_token_count", out otProp2) || usageProp2.TryGetProperty("candidatesTokenCount", out otProp2) || usageProp2.TryGetProperty("candidateTokenCount", out otProp2) || usageProp2.TryGetProperty("outputTokenCount", out otProp2)) ct = otProp2.GetInt32();
+                        if (usageProp2.TryGetProperty("total_tokens", out var ttProp2) || usageProp2.TryGetProperty("total_token_count", out ttProp2) || usageProp2.TryGetProperty("totalTokenCount", out ttProp2)) tt = ttProp2.GetInt32();
+                        if (tt == 0 && (pt > 0 || ct > 0)) tt = pt + ct;
+                    }
+                    // Gemini CLI non-streaming: {"response":"text","stats":{"models":{"gemini-X":{"tokens":{"input":N,"candidates":K,"total":M}}}}}
+                    if (doc.RootElement.TryGetProperty("stats", out var stats2El))
+                    {
+                        if (stats2El.TryGetProperty("input_tokens", out var sit2)) pt = sit2.GetInt32();
+                        if (stats2El.TryGetProperty("output_tokens", out var sot2)) ct = sot2.GetInt32();
+                        if (stats2El.TryGetProperty("total_tokens", out var stt2)) tt = stt2.GetInt32();
+
+                        if (stats2El.TryGetProperty("models", out var models2El) && models2El.ValueKind == JsonValueKind.Object)
+                        {
+                            var modelNames2 = new List<string>();
+                            foreach (var modelEntry in models2El.EnumerateObject())
+                            {
+                                modelNames2.Add(modelEntry.Name);
+                                if (pt == 0 || ct == 0)
+                                {
+                                    if (modelEntry.Value.TryGetProperty("tokens", out var tokEl))
+                                    {
+                                        if (tokEl.TryGetProperty("input", out var tit)) pt += tit.GetInt32();
+                                        if (tokEl.TryGetProperty("candidates", out var tct)) ct += tct.GetInt32();
+                                        if (tokEl.TryGetProperty("total", out var ttt)) tt += ttt.GetInt32();
+                                    }
+                                }
+                            }
+                            if (modelNames2.Any() && string.IsNullOrEmpty(extractedModel))
+                                extractedModel = string.Join("+", modelNames2);
+                        }
                         if (tt == 0 && (pt > 0 || ct > 0)) tt = pt + ct;
                     }
 
                     string? content = null;
-                    if (doc.RootElement.TryGetProperty("response", out var resProp)) content = resProp.GetString();
+                    if (doc.RootElement.TryGetProperty("result", out var resultProp2)) content = resultProp2.GetString();       // Claude CLI
+                    else if (doc.RootElement.TryGetProperty("response", out var resProp)) content = resProp.GetString();
                     else if (doc.RootElement.TryGetProperty("content", out var contentProp)) content = contentProp.GetString();
                     else if (doc.RootElement.TryGetProperty("text", out var textProp)) content = textProp.GetString();
+                    // Gemini API format: candidates[0].content.parts[0].text
+                    else if (doc.RootElement.TryGetProperty("candidates", out var candidates) &&
+                             candidates.ValueKind == JsonValueKind.Array && candidates.GetArrayLength() > 0 &&
+                             candidates[0].TryGetProperty("content", out var cContent) &&
+                             cContent.TryGetProperty("parts", out var parts) &&
+                             parts.ValueKind == JsonValueKind.Array && parts.GetArrayLength() > 0 &&
+                             parts[0].TryGetProperty("text", out var partText))
+                    {
+                        content = partText.GetString();
+                    }
 
                     if (content != null)
                         return new CliResult(CleanResponse(content), extractedModel ?? provider, pt, ct, tt);

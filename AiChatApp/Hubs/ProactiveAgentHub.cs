@@ -28,11 +28,11 @@ public class ProactiveAgentHub : Hub
         {
             await Groups.AddToGroupAsync(Context.ConnectionId, $"user-{userIdStr}");
             
-            // 触发欢迎洞察
-            if (int.TryParse(userIdStr, out int userId))
-            {
-                await _proactiveBrain.ProcessWelcomeInsightAsync(userId);
-            }
+            // DISABLED: Background scanning welcome insight (PROACTIVE_ENHANCEMENT_V2)
+            // if (int.TryParse(userIdStr, out int userId))
+            // {
+            //     await _proactiveBrain.ProcessWelcomeInsightAsync(userId);
+            // }
         }
         await base.OnConnectedAsync();
     }

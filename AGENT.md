@@ -1,4 +1,4 @@
-# AGENTS.md
+# AGENT.md
 
 Agent 行为约束与规则，所有 AI Agent 必须严格遵守。
 
