@@ -37,6 +37,46 @@ public class ProactiveBrainService
     }
 
     /// <summary>
+    /// 当用户连接时触发，生成“断点续传”洞察。
+    /// </summary>
+    public async Task ProcessWelcomeInsightAsync(int userId)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var aiService = scope.ServiceProvider.GetRequiredService<AiService>();
+                
+                // 1. 哨兵扫描：获取最近状态（演示：获取最近完成的任务和未完成任务）
+                // 实际实现中这里会更复杂
+                var summaryInput = "请根据当前项目状态生成一份欢迎报告。重点：最近的进展和接下来的关键任务。";
+                
+                // 2. 记录员总结 (Summarizer)
+                var summary = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.Summarizer, summaryInput, userId);
+
+                // 3. 主脑生成建议 (Hyperion Brain)
+                var insight = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.HyperionBrain, summary, userId);
+
+                await SendSuggestionAsync(new ProactiveSuggestion
+                {
+                    Title = "Hyperion 欢迎洞察",
+                    Content = insight,
+                    Type = "insight",
+                    Actions = new List<SuggestionAction>
+                    {
+                        new() { Label = "开始工作", Command = "dismiss", Style = "btn-primary" }
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error generating welcome insight");
+            }
+        });
+    }
+
+    /// <summary>
     /// 当 Todo 更新时触发后台分析
     /// </summary>
     public void ProcessTodoChange(TodoItem item, string action)
@@ -51,8 +91,23 @@ public class ProactiveBrainService
                 
                 if (action == "created")
                 {
-                    // Hyperion 思考新任务
-                    await HandleNewTodoAnalysis(item, aiService);
+                    // 使用记录员进行初步分析
+                    var analysis = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.Summarizer, $"新任务: {item.Title}. 描述: {item.Description}", item.UserId);
+                    
+                    // 使用主脑生成具体建议
+                    var advice = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.HyperionBrain, $"用户创建了一个新任务，请给出建议：{analysis}", item.UserId);
+
+                    await SendSuggestionAsync(new ProactiveSuggestion
+                    {
+                        Title = "任务建议",
+                        Content = advice,
+                        Type = "task",
+                        Actions = new List<SuggestionAction>
+                        {
+                            new() { Label = "查看详情", Command = "view-todo", Payload = item.Id.ToString(), Style = "btn-primary" },
+                            new() { Label = "忽略", Command = "dismiss", Style = "btn-ghost" }
+                        }
+                    });
                 }
                 else if (action == "completed")
                 {

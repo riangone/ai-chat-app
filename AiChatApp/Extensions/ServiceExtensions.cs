@@ -45,6 +45,7 @@ public static class ServiceExtensions
 
         services.AddSignalR();
         services.AddHostedService<FileWatcherService>();
+        services.AddHostedService<ProjectPulseService>();
 
         return services;
     }

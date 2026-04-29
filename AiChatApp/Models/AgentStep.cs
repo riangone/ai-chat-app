@@ -5,6 +5,10 @@ public class AgentStep
     public int Id { get; set; }
     public int MessageId { get; set; }                      // 紐づくAIメッセージ
     public string Role { get; set; } = string.Empty;        // "Orchestrator" | "Executor" | "Reviewer"
+    public string Model { get; set; } = string.Empty;       // 使用したモデル名 (e.g. gemini-1.5-pro, claude-3-opus)
+    public int PromptTokens { get; set; }                   // プロンプトToken
+    public int CompletionTokens { get; set; }               // 回答Token
+    public int TotalTokens { get; set; }                    // 合計Token
     public string Persona { get; set; } = string.Empty;     // 使用したシステムプロンプト
     public string Input { get; set; } = string.Empty;       // このエージェントへの入力
     public string Output { get; set; } = string.Empty;      // このエージェントの出力

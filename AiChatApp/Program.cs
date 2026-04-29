@@ -31,6 +31,7 @@ app.MapInputHistoryEndpoints();
 app.MapTodoEndpoints();
 app.MapNotesEndpoints();
 app.MapFileManagerEndpoints();
+app.MapStatsEndpoints();
 
 app.MapHub<ProactiveAgentHub>("/hub/proactive-agent");
 

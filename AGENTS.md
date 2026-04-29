@@ -9,8 +9,11 @@ dotnet build AiChatApp
 # Run (http://localhost:5000)
 dotnet run --project AiChatApp
 
-# Reset database on schema change
-rm AiChatApp/chat.db && dotnet run --project AiChatApp
+# Run (http://localhost:5000)
+dotnet run --project AiChatApp
+
+# Reset database on schema change (backup first)
+cp AiChatApp/chat.db AiChatApp/chat.db.bak && rm AiChatApp/chat.db && dotnet run --project AiChatApp
 ```
 
 ## Architecture

@@ -268,6 +268,264 @@ public static class HarnessEndpoints
         });
 
         // Add advanced visualizer and A/B test endpoints
+        group.MapGet("/visualizer/model-stats", async (AppDbContext db) => {
+            var steps = await db.AgentSteps.Include(s => s.Evaluations).ToListAsync();
+            var stats = steps.GroupBy(s => new { s.Role, s.Model })
+                .Select(g => new {
+                    Role = g.Key.Role,
+                    Model = g.Key.Model,
+                    Count = g.Count(),
+                    AvgScore = g.SelectMany(s => s.Evaluations).Any() ? g.SelectMany(s => s.Evaluations).Average(e => e.Score) : 0,
+                    AvgDuration = g.Average(s => s.DurationMs),
+                    SuccessRate = (double)g.Count(s => s.WasAccepted) / g.Count()
+                }).OrderBy(s => s.Role).ThenBy(s => s.Model).ToList();
+            
+            return Results.Ok(stats);
+        });
+
+        group.MapGet("/visualizer/model-stats-html", async (AppDbContext db) => {
+            var steps = await db.AgentSteps.Include(s => s.Evaluations).ToListAsync();
+            
+            // 1. 定义提供商映射逻辑 (严格匹配用户要求的 gemini, claudecode, codex, copilot, opencode)
+            string GetProvider(string? model) {
+                if (string.IsNullOrEmpty(model)) return "Other";
+                var m = model.ToLower();
+                if (m.Contains("gemini")) return "Gemini";
+                if (m.Contains("claudecode")) return "ClaudeCode";
+                if (m.Contains("claude") || m.Contains("anthropic")) return "Claude";
+                if (m.Contains("codex")) return "Codex";
+                if (m.Contains("copilot")) return "Copilot";
+                if (m.Contains("opencode")) return "OpenCode";
+                if (m.Contains("gpt") || m.Contains("openai")) return "OpenAI";
+                if (m.Contains("deepseek")) return "DeepSeek";
+                return "Other";
+            }
+
+            // 2. 提供商配额设定 (软配额) - 为每个请求的工具设定独立配额
+            var quotas = new Dictionary<string, long> {
+                { "Gemini", 10000000 },
+                { "ClaudeCode", 5000000 },
+                { "Claude", 5000000 },
+                { "Codex", 2000000 },
+                { "Copilot", 2000000 },
+                { "OpenCode", 5000000 },
+                { "OpenAI", 2000000 },
+                { "DeepSeek", 20000000 },
+                { "Other", 1000000 }
+            };
+
+            // 3. UI 辅助逻辑
+            string GetColor(string provider) {
+                return provider switch {
+                    "Gemini" => "text-blue-400",
+                    "Claude" => "text-orange-400",
+                    "ClaudeCode" => "text-orange-500",
+                    "Codex" => "text-emerald-400",
+                    "Copilot" => "text-indigo-400",
+                    "OpenCode" => "text-yellow-400",
+                    "OpenAI" => "text-emerald-500",
+                    "DeepSeek" => "text-cyan-400",
+                    _ => "text-primary"
+                };
+            }
+
+            // 4. 聚合数据
+            var modelStats = steps.GroupBy(s => s.Model)
+                .Select(g => {
+                    var promptT = g.Sum(s => (long)s.PromptTokens);
+                    var completionT = g.Sum(s => (long)s.CompletionTokens);
+                    var totalT = g.Sum(s => (long)s.TotalTokens);
+                    
+                    // Fallback if TotalTokens is 0 but prompt/completion are not
+                    if (totalT == 0 && (promptT > 0 || completionT > 0)) totalT = promptT + completionT;
+
+                    return new {
+                        Model = g.Key,
+                        Provider = GetProvider(g.Key),
+                        Count = g.Count(),
+                        AvgScore = g.SelectMany(s => s.Evaluations).Any() ? g.SelectMany(s => s.Evaluations).Average(e => e.Score) : 0,
+                        AvgDuration = g.Average(s => s.DurationMs),
+                        PromptTokens = promptT,
+                        CompletionTokens = completionT,
+                        TotalTokens = totalT,
+                        SuccessRate = (double)g.Count(s => s.WasAccepted) / g.Count(),
+                        Roles = g.GroupBy(s => s.Role).Select(rg => new { Role = rg.Key, Count = rg.Count() }).ToList()
+                    };
+                }).OrderByDescending(s => s.TotalTokens).ToList();
+
+            var providerStats = modelStats.GroupBy(s => s.Provider)
+                .Select(g => {
+                    var provider = g.Key;
+                    var used = g.Sum(s => s.TotalTokens);
+                    var quota = quotas.ContainsKey(provider) ? quotas[provider] : 1000000;
+                    return new {
+                        Provider = provider,
+                        Used = used,
+                        Quota = quota,
+                        Remaining = Math.Max(0, quota - used),
+                        Percent = Math.Min(100, (double)used / quota * 100),
+                        AvgSuccess = g.Average(s => s.SuccessRate),
+                        ModelCount = g.Count(),
+                        TotalCalls = g.Sum(s => s.Count),
+                        Color = GetColor(provider)
+                    };
+                }).OrderByDescending(s => s.Used).ToList();
+
+            var totalTokensAll = modelStats.Sum(s => s.TotalTokens);
+            var totalCallsAll = modelStats.Sum(s => s.Count);
+
+            var html = $@"
+                <div class='space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20'>
+                    <!-- Header -->
+                    <div class='flex flex-col md:flex-row md:items-center justify-between gap-4'>
+                        <div>
+                            <h2 class='text-2xl font-black uppercase tracking-tighter'>Global Provider Status</h2>
+                            <p class='text-xs opacity-50 font-medium font-mono'>Last updated: {DateTime.Now:yyyy-MM-dd HH:mm:ss} (Real-time)</p>
+                        </div>
+                        <div class='flex items-center gap-3'>
+                            <button onclick='htmx.trigger(""#agent-stats-container"", ""loadStats"")' class='btn btn-ghost btn-xs gap-2 opacity-50 hover:opacity-100 uppercase font-black'>
+                                <svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='2.5' stroke='currentColor' class='w-3 h-3'><path stroke-linecap='round' stroke-linejoin='round' d='M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99' /></svg>
+                                Refresh Data
+                            </button>
+                            <div class='bg-base-300/50 px-4 py-2 rounded-2xl border border-base-content/5 backdrop-blur-xl'>
+                                <div class='text-[10px] font-black opacity-30 uppercase'>Global Consumption</div>
+                                <div class='text-xl font-black font-mono text-primary'>{totalTokensAll:N0}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Provider Overview Grid -->
+                    <div class='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
+                        {string.Concat(providerStats.Select(p => $@"
+                            <div class='card bg-base-100 border border-base-content/10 shadow-xl overflow-hidden group hover:border-primary/30 transition-all'>
+                                <div class='absolute top-0 right-0 p-3'>
+                                    <div class='flex items-center gap-1'>
+                                        <div class='w-2 h-2 rounded-full {(p.AvgSuccess > 0.9 ? "bg-success" : p.AvgSuccess > 0.7 ? "bg-warning" : "bg-error")} animate-pulse'></div>
+                                        <span class='text-[8px] font-black uppercase opacity-40'>{(p.AvgSuccess > 0.9 ? "Healthy" : "Degraded")}</span>
+                                    </div>
+                                </div>
+                                <div class='card-body p-5'>
+                                    <div class='flex items-center gap-3 mb-4'>
+                                        <div class='w-12 h-12 rounded-2xl bg-base-200 flex items-center justify-center {p.Color} font-black text-2xl shadow-inner border border-base-content/5'>
+                                            {p.Provider[0]}
+                                        </div>
+                                        <div>
+                                            <h3 class='font-black uppercase tracking-tight'>{p.Provider}</h3>
+                                            <div class='text-[10px] opacity-40 font-bold'>{p.ModelCount} Active Models</div>
+                                        </div>
+                                    </div>
+
+                                    <div class='space-y-3'>
+                                        <div>
+                                            <div class='flex justify-between text-[10px] font-black mb-1 opacity-60'>
+                                                <span>TOKEN QUOTA</span>
+                                                <span>{p.Percent:F1}%</span>
+                                            </div>
+                                            <progress class='progress {(p.Percent > 90 ? "progress-error" : p.Percent > 70 ? "progress-warning" : "progress-primary")} h-2 w-full' value='{p.Percent}' max='100'></progress>
+                                        </div>
+                                        <div class='grid grid-cols-2 gap-4 pt-2'>
+                                            <div>
+                                                <div class='text-[9px] font-black opacity-30 uppercase'>Used</div>
+                                                <div class='text-sm font-black font-mono'>{p.Used:N0}</div>
+                                            </div>
+                                            <div>
+                                                <div class='text-[9px] font-black opacity-30 uppercase'>Remaining</div>
+                                                <div class='text-sm font-black font-mono text-success'>{p.Remaining:N0}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class='bg-base-200/50 px-5 py-2 flex justify-between items-center border-t border-base-content/5'>
+                                    <span class='text-[9px] font-black opacity-40 uppercase'>Success Rate</span>
+                                    <span class='text-xs font-black font-mono'>{p.AvgSuccess:P0}</span>
+                                </div>
+                            </div>
+                        "))}
+                    </div>
+
+                    <!-- Detailed Model Stats -->
+                    <div class='mt-12 space-y-6'>
+                        <h3 class='text-lg font-black uppercase tracking-widest opacity-50 pl-2 border-l-4 border-primary'>Detailed Model Analysis</h3>
+                        <div class='grid grid-cols-1 gap-6'>
+                            {string.Concat(modelStats.Select(s => $@"
+                                <div class='settings-card group overflow-hidden border border-base-content/5'>
+                                    <div class='flex flex-col lg:flex-row gap-6'>
+                                        <!-- Left: Model Info & Success -->
+                                        <div class='lg:w-1/3 space-y-4'>
+                                            <div class='flex items-start justify-between'>
+                                                <div>
+                                                    <div class='badge badge-outline badge-xs font-black uppercase mb-1 opacity-50'>{s.Provider}</div>
+                                                    <h3 class='text-xl font-black font-mono tracking-tighter text-primary group-hover:text-secondary transition-colors'>{s.Model}</h3>
+                                                </div>
+                                                <div class='radial-progress text-primary' style='--value:{s.SuccessRate * 100:F0}; --size:3.5rem; --thickness: 4px;'>
+                                                    <span class='text-xs font-black'>{s.SuccessRate:P0}</span>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class='grid grid-cols-2 gap-2'>
+                                                <div class='bg-base-200/50 p-2 rounded-xl border border-base-content/5 text-center'>
+                                                    <div class='text-[8px] font-black opacity-40 uppercase'>Avg Score</div>
+                                                    <div class='text-lg font-black'>{(s.AvgScore > 0 ? s.AvgScore.ToString("P0") : "N/A")}</div>
+                                                </div>
+                                                <div class='bg-base-200/50 p-2 rounded-xl border border-base-content/5 text-center'>
+                                                    <div class='text-[8px] font-black opacity-40 uppercase'>Avg Latency</div>
+                                                    <div class='text-lg font-black font-mono text-xs'>{s.AvgDuration:F0}ms</div>
+                                                </div>
+                                            </div>
+
+                                            <div class='flex flex-wrap gap-1'>
+                                                {string.Concat(s.Roles.Select(r => $@"<span class='badge badge-ghost badge-xs opacity-50 font-bold'>{r.Role} ({r.Count})</span>"))}
+                                            </div>
+                                        </div>
+
+                                        <!-- Right: Token Usage Breakdown -->
+                                        <div class='flex-1 space-y-4 bg-base-200/30 p-4 rounded-2xl border border-base-content/5'>
+                                            <div class='flex items-center justify-between'>
+                                                <span class='text-[10px] font-black uppercase tracking-widest opacity-40'>Consumption Breakdown</span>
+                                                <span class='text-xs font-mono font-bold text-primary'>{s.TotalTokens:N0} Total</span>
+                                            </div>
+                                            
+                                            <div class='space-y-3'>
+                                                <div>
+                                                    <div class='flex justify-between text-[10px] font-bold mb-1'>
+                                                        <span>INPUT (PROMPT)</span>
+                                                        <span class='opacity-50'>{s.PromptTokens:N0}</span>
+                                                    </div>
+                                                    <progress class='progress progress-primary h-2 w-full' value='{s.PromptTokens}' max='{s.TotalTokens}'></progress>
+                                                </div>
+                                                <div>
+                                                    <div class='flex justify-between text-[10px] font-bold mb-1'>
+                                                        <span>OUTPUT (COMPLETION)</span>
+                                                        <span class='opacity-50'>{s.CompletionTokens:N0}</span>
+                                                    </div>
+                                                    <progress class='progress progress-secondary h-2 w-full' value='{s.CompletionTokens}' max='{s.TotalTokens}'></progress>
+                                                </div>
+                                            </div>
+
+                                            <div class='mt-6 pt-4 border-t border-base-content/5 grid grid-cols-3 gap-4'>
+                                                <div class='text-center'>
+                                                    <div class='text-xl font-black font-mono'>{s.Count}</div>
+                                                    <div class='text-[8px] font-black opacity-30 uppercase'>Total Calls</div>
+                                                </div>
+                                                <div class='text-center'>
+                                                    <div class='text-xl font-black font-mono'>{(s.Count > 0 ? (s.TotalTokens / (double)s.Count).ToString("N0") : "0")}</div>
+                                                    <div class='text-[8px] font-black opacity-30 uppercase'>Tkn/Call</div>
+                                                </div>
+                                                <div class='text-center'>
+                                                    <div class='text-xl font-black font-mono'>{((double)s.PromptTokens / Math.Max(1, s.TotalTokens)):P0}</div>
+                                                    <div class='text-[8px] font-black opacity-30 uppercase'>Input Ratio</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            "))}
+                        </div>
+                    </div>
+                </div>";
+            return Results.Content(html, "text/html");
+        });
+
         group.MapGet("/visualizer/stats", async (AppDbContext db) => {
             var steps = await db.AgentSteps.Include(s => s.Evaluations).ToListAsync();
             var stats = steps.GroupBy(s => s.Role)

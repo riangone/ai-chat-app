@@ -1,9 +1,9 @@
 using AiChatApp.Data;
+using AiChatApp.Models;
 using AiChatApp.Services.Harness;
 using Microsoft.EntityFrameworkCore;
 
 namespace AiChatApp.Extensions;
-
 public static class ApplicationExtensions
 {
     public static async Task InitializeDatabaseAsync(this WebApplication app)
@@ -11,6 +11,14 @@ public static class ApplicationExtensions
         using var scope = app.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         db.Database.EnsureCreated();
+
+        // Seed default admin user if not exists
+        if (!await db.Users.AnyAsync(u => u.Username == "admin"))
+        {
+            var admin = new User { Username = "admin", PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin123"), DefaultProvider = "" };
+            db.Users.Add(admin);
+            await db.SaveChangesAsync();
+        }
 
         // Ensure database connection is open for manual schema updates
         db.Database.OpenConnection();
@@ -55,7 +63,35 @@ public static class ApplicationExtensions
             command.ExecuteNonQuery();
         }
 
-        // 4. Explicitly create Notes table if it doesn't exist (Existing logic)
+        // 4. Add Model to AgentSteps if missing
+        command.CommandText = "PRAGMA table_info(AgentSteps);";
+        var agentStepColumns = new List<string>();
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read()) agentStepColumns.Add(reader.GetString(1));
+        }
+        if (!agentStepColumns.Contains("Model"))
+        {
+            command.CommandText = "ALTER TABLE AgentSteps ADD COLUMN Model TEXT NOT NULL DEFAULT '';";
+            command.ExecuteNonQuery();
+        }
+        if (!agentStepColumns.Contains("PromptTokens"))
+        {
+            command.CommandText = "ALTER TABLE AgentSteps ADD COLUMN PromptTokens INTEGER NOT NULL DEFAULT 0;";
+            command.ExecuteNonQuery();
+        }
+        if (!agentStepColumns.Contains("CompletionTokens"))
+        {
+            command.CommandText = "ALTER TABLE AgentSteps ADD COLUMN CompletionTokens INTEGER NOT NULL DEFAULT 0;";
+            command.ExecuteNonQuery();
+        }
+        if (!agentStepColumns.Contains("TotalTokens"))
+        {
+            command.CommandText = "ALTER TABLE AgentSteps ADD COLUMN TotalTokens INTEGER NOT NULL DEFAULT 0;";
+            command.ExecuteNonQuery();
+        }
+
+        // 5. Explicitly create Notes table if it doesn't exist (Existing logic)
         command.CommandText = @"
             CREATE TABLE IF NOT EXISTS Notes (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,18 +104,41 @@ public static class ApplicationExtensions
             );";
         command.ExecuteNonQuery();
 
-        // 4. Explicitly create TodoItems table if it doesn't exist
+        // 4. Ensure TodoItems table exists and add missing columns
         command.CommandText = @"
             CREATE TABLE IF NOT EXISTS TodoItems (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Title TEXT NOT NULL,
+                Description TEXT,
                 IsCompleted INTEGER NOT NULL DEFAULT 0,
                 CreatedAt DATETIME NOT NULL,
-                UserId INTEGER NOT NULL DEFAULT 0
+                UserId INTEGER
             );";
         command.ExecuteNonQuery();
 
+        command.CommandText = "PRAGMA table_info(TodoItems);";
+        var todoColumns = new List<string>();
+        using (var reader = command.ExecuteReader()) { while (reader.Read()) todoColumns.Add(reader.GetString(1)); }
+        if (!todoColumns.Contains("Description"))
+        {
+            command.CommandText = "ALTER TABLE TodoItems ADD COLUMN Description TEXT;";
+            command.ExecuteNonQuery();
+        }
+        if (!todoColumns.Contains("UserId"))
+        {
+            command.CommandText = "ALTER TABLE TodoItems ADD COLUMN UserId INTEGER;";
+            command.ExecuteNonQuery();
+        }
+
         // 5. Explicitly create InputHistories table if it doesn't exist
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS InputHistories (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                UserId INTEGER NOT NULL,
+                Content TEXT NOT NULL,
+                UsedAt TEXT NOT NULL
+            );";
+        command.ExecuteNonQuery();
 
         // Initialize PipelineLoaderService
         var pipelineLoader = scope.ServiceProvider.GetRequiredService<PipelineLoaderService>();
