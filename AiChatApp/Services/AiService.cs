@@ -1278,8 +1278,6 @@ public class AiService
             if (provider == "claude" || fileName == "claude" || provider == "claudecode" || fileName == "claudecode")
             {
                 processInfo.ArgumentList.Add("--dangerously-skip-permissions");
-                processInfo.ArgumentList.Add("--sandbox");
-                processInfo.ArgumentList.Add("false");
                 processInfo.ArgumentList.Add("--output-format");
                 processInfo.ArgumentList.Add(outputFormat ?? "json");
                 // stream-json requires --verbose for Claude CLI
@@ -1481,9 +1479,13 @@ public class AiService
             
             foreach (var prop in muEl.EnumerateObject())
             {
-                if (prop.Value.TryGetProperty("input_tokens", out var mit)) { if (isIncremental) pt += mit.GetInt32(); else pt = mit.GetInt32(); }
-                if (prop.Value.TryGetProperty("output_tokens", out var mot)) { if (isIncremental) ct += mot.GetInt32(); else ct = mot.GetInt32(); }
+                // snake_case (generic) or camelCase (Claude CLI)
+                if (prop.Value.TryGetProperty("input_tokens", out var mit) || prop.Value.TryGetProperty("inputTokens", out mit)) { if (isIncremental) pt += mit.GetInt32(); else pt = mit.GetInt32(); }
+                if (prop.Value.TryGetProperty("output_tokens", out var mot) || prop.Value.TryGetProperty("outputTokens", out mot)) { if (isIncremental) ct += mot.GetInt32(); else ct = mot.GetInt32(); }
                 if (prop.Value.TryGetProperty("total_tokens", out var mtt)) { if (isIncremental) tt += mtt.GetInt32(); else tt = mtt.GetInt32(); }
+                // Claude cache tokens — count as prompt tokens for usage totals
+                if (prop.Value.TryGetProperty("cacheReadInputTokens", out var crit)) { if (isIncremental) pt += crit.GetInt32(); else pt += crit.GetInt32(); }
+                if (prop.Value.TryGetProperty("cacheCreationInputTokens", out var ccit)) { if (isIncremental) pt += ccit.GetInt32(); else pt += ccit.GetInt32(); }
             }
         }
 
@@ -1513,8 +1515,12 @@ public class AiService
             if (usageProp.TryGetProperty("output_tokens", out var ot) || usageProp.TryGetProperty("completion_tokens", out ot) || usageProp.TryGetProperty("completion_token_count", out ot) || usageProp.TryGetProperty("candidate_token_count", out ot) || usageProp.TryGetProperty("candidatesTokenCount", out ot) || usageProp.TryGetProperty("candidateTokenCount", out ot) || usageProp.TryGetProperty("outputTokenCount", out ot)) 
             { if (isIncremental) ct += ot.GetInt32(); else ct = ot.GetInt32(); }
             
-            if (usageProp.TryGetProperty("total_tokens", out var tot) || usageProp.TryGetProperty("total_token_count", out tot) || usageProp.TryGetProperty("totalTokenCount", out tot)) 
+            if (usageProp.TryGetProperty("total_tokens", out var tot) || usageProp.TryGetProperty("total_token_count", out tot) || usageProp.TryGetProperty("totalTokenCount", out tot))
             { if (isIncremental) tt += tot.GetInt32(); else tt = tot.GetInt32(); }
+
+            // Claude cache tokens — add to prompt token total for accurate usage accounting
+            if (usageProp.TryGetProperty("cache_read_input_tokens", out var crit)) { if (isIncremental) pt += crit.GetInt32(); else pt += crit.GetInt32(); }
+            if (usageProp.TryGetProperty("cache_creation_input_tokens", out var ccit)) { if (isIncremental) pt += ccit.GetInt32(); else pt += ccit.GetInt32(); }
         }
 
         // 3. Extract Stats (Gemini)
