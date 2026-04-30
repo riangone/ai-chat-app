@@ -306,9 +306,6 @@ public static class HarnessEndpoints
                 // If provider is gemini or model contains gemini
                 if (p.Contains("gemini") || m.Contains("gemini")) return "Gemini";
                 
-                // If it's claudecode
-                if (p.Contains("claudecode") || p.Contains("claude-code") || m.Contains("claudecode")) return "ClaudeCode";
-                
                 // If it's claude or model contains claude/anthropic/sonnet/haiku
                 if (p.Contains("claude") || p.Contains("anthropic") || m.Contains("claude") || m.Contains("anthropic") || m.Contains("sonnet") || m.Contains("haiku") || m.Contains("opus")) return "Claude";
                 
@@ -342,7 +339,6 @@ public static class HarnessEndpoints
             // 2. 提供商配额设定 (软配额) - 为每个请求的工具设定独立配额
             var quotas = new Dictionary<string, long> {
                 { "Gemini", 10000000 },
-                { "ClaudeCode", 5000000 },
                 { "Claude", 5000000 },
                 { "Codex", 2000000 },
                 { "Copilot", 2000000 },
@@ -357,7 +353,6 @@ public static class HarnessEndpoints
                 return provider switch {
                     "Gemini" => "text-blue-400",
                     "Claude" => "text-orange-400",
-                    "ClaudeCode" => "text-orange-500",
                     "Codex" => "text-emerald-400",
                     "Copilot" => "text-indigo-400",
                     "OpenCode" => "text-yellow-400",
@@ -391,7 +386,7 @@ public static class HarnessEndpoints
                 }).OrderByDescending(s => s.TotalTokens).ToList();
 
             // 5. 按提供商聚合 — 始终显示所有已知提供商（即使使用量为 0）
-            var allProviders = new[] { "Gemini", "Claude", "ClaudeCode", "Codex", "Copilot", "OpenCode" };
+            var allProviders = new[] { "Gemini", "Claude", "Codex", "Copilot", "OpenCode" };
             var usageByProvider = modelStats.GroupBy(s => s.Provider).ToDictionary(g => g.Key, g => g);
 
             var providerStats = allProviders.Select(providerName => {

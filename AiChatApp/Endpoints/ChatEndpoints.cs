@@ -93,8 +93,15 @@ public static class ChatEndpoints
                 .ToListAsync();
 
             var stepsLookup = allSteps.GroupBy(s => s.MessageId).ToDictionary(g => g.Key, g => g.ToList());
-            var messagesHtml = string.Concat(messages.Select(m => {
-                stepsLookup.TryGetValue(m.Id, out var steps);
+            var messagesHtml = string.Concat(messages.Select((m, idx) => {
+                List<AgentStep>? steps = null;
+                if (m.IsAi) {
+                    stepsLookup.TryGetValue(m.Id, out steps);
+                    if (steps == null || !steps.Any()) {
+                        var prevId = idx > 0 ? messages[idx - 1].Id : 0;
+                        stepsLookup.TryGetValue(prevId, out steps);
+                    }
+                }
                 return RenderMessage(m, steps);
             }));
 
@@ -105,9 +112,9 @@ public static class ChatEndpoints
                 if (hasMore) {
                     loadMoreBtn = $@"
                     <div id='load-more-container' class='flex justify-center py-4'>
-                        <button class='btn btn-ghost btn-xs opacity-50 hover:opacity-100' 
-                                hx-get='/api/chat/{id}/older-messages?beforeId={oldestId}' 
-                                hx-target='#load-more-container' 
+                        <button class='btn btn-ghost btn-xs opacity-50 hover:opacity-100'
+                                hx-get='/api/chat/{id}/older-messages?beforeId={oldestId}'
+                                hx-target='#load-more-container'
                                 hx-swap='outerHTML'>
                             Load Older Messages...
                         </button>
@@ -144,8 +151,15 @@ public static class ChatEndpoints
                 .ToListAsync();
 
             var stepsLookup = allSteps.GroupBy(s => s.MessageId).ToDictionary(g => g.Key, g => g.ToList());
-            var messagesHtml = string.Concat(messages.Select(m => {
-                stepsLookup.TryGetValue(m.Id, out var steps);
+            var messagesHtml = string.Concat(messages.Select((m, idx) => {
+                List<AgentStep>? steps = null;
+                if (m.IsAi) {
+                    stepsLookup.TryGetValue(m.Id, out steps);
+                    if (steps == null || !steps.Any()) {
+                        var prevId = idx > 0 ? messages[idx - 1].Id : 0;
+                        stepsLookup.TryGetValue(prevId, out steps);
+                    }
+                }
                 return RenderMessage(m, steps);
             }));
 
@@ -156,9 +170,9 @@ public static class ChatEndpoints
                 if (hasMore) {
                     loadMoreBtn = $@"
                     <div id='load-more-container' class='flex justify-center py-4'>
-                        <button class='btn btn-ghost btn-xs opacity-50 hover:opacity-100' 
-                                hx-get='/api/chat/{id}/older-messages?beforeId={oldestId}' 
-                                hx-target='#load-more-container' 
+                        <button class='btn btn-ghost btn-xs opacity-50 hover:opacity-100'
+                                hx-get='/api/chat/{id}/older-messages?beforeId={oldestId}'
+                                hx-target='#load-more-container'
                                 hx-swap='outerHTML'>
                             Load Older Messages...
                         </button>
@@ -275,7 +289,8 @@ public static class ChatEndpoints
                 }
                 await db.SaveChangesAsync();
 
-                return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg), "text/html");
+                var aSteps1 = await db.AgentSteps.Where(s => s.MessageId == aMsg.Id || s.MessageId == uMsg.Id).ToListAsync();
+                return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg, aSteps1), "text/html");
             } else {
                 aiResponse = await ai.GetResponseAsync(content, userId, session.Id, provider, agentId);
                 string agentName = provider;
@@ -295,7 +310,8 @@ public static class ChatEndpoints
                 }
                 await db.SaveChangesAsync();
 
-                return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg), "text/html");
+                var aSteps2 = await db.AgentSteps.Where(s => s.MessageId == uMsg.Id).ToListAsync();
+                return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg, aSteps2), "text/html");
             }
         }).DisableAntiforgery();
 
@@ -375,7 +391,12 @@ public static class ChatEndpoints
                 }
                 
                 await db.SaveChangesAsync();
-                await context.Response.WriteAsync("data: [DONE]\n\n");
+                var streamSteps = await db.AgentSteps.Where(s => s.MessageId == uMsg.Id).ToListAsync();
+                var spt = streamSteps.Sum(s => s.PromptTokens);
+                var sct = streamSteps.Sum(s => s.CompletionTokens);
+                var stt = streamSteps.Sum(s => s.TotalTokens);
+                if (stt == 0) stt = spt + sct;
+                await context.Response.WriteAsync($"data: [DONE:{spt}:{sct}:{stt}]\n\n");
 
                 // 記憶の抽出をバックグラウンドで実行
             _ = Task.Run(() => consolidation.TryConsolidateAsync(content, fullResponse.ToString(), userId));
@@ -483,7 +504,15 @@ public static class ChatEndpoints
         }).DisableAntiforgery();
     }
 
-    public static string RenderMessage(Message m, List<AgentStep>? steps = null) => $@"
+    public static string RenderMessage(Message m, List<AgentStep>? steps = null) {
+        var promptT = steps?.Sum(s => s.PromptTokens) ?? 0;
+        var completionT = steps?.Sum(s => s.CompletionTokens) ?? 0;
+        var totalT = steps?.Sum(s => s.TotalTokens) ?? 0;
+        if (totalT == 0) totalT = promptT + completionT;
+        var tokenHtml = m.IsAi && totalT > 0
+            ? $"<span class='text-[10px] opacity-30 font-mono'>↑{promptT:N0} ↓{completionT:N0}</span>"
+            : "";
+        return $@"
     <div class='chat {(m.IsAi ? "chat-start" : "chat-end")} group message-bubble-container'>
         <div class='chat-bubble shadow-sm {(m.IsAi ? "bg-base-200 text-base-content border border-base-300" : "bg-primary text-primary-content")} markdown leading-relaxed p-3 md:p-4 rounded-[18px] {(m.IsAi ? "rounded-bl-none" : "rounded-tr-none")}'>
             <div class='content-body'>{WebUtility.HtmlEncode(m.Content)}</div>
@@ -491,6 +520,7 @@ public static class ChatEndpoints
         <div class='chat-footer flex items-center gap-3 pt-1 px-1'>
             {(m.IsAi && !string.IsNullOrEmpty(m.AgentName) ? $"<span class='badge badge-ghost badge-xs opacity-50 font-bold uppercase tracking-wider'>{m.AgentName}</span>" : "")}
             <time class='text-[10px] opacity-40 font-mono'>{m.Timestamp.ToLocalTime().ToString("yyyy/MM/dd HH:mm")}</time>
+            {tokenHtml}
             <div class='opacity-0 group-hover:opacity-100 transition-opacity flex gap-3'>
                 <button class='hover:text-primary transition-colors' onclick='copyText(this)' title='Copy'>
                     <svg xmlns=""http://www.w3.org/2000/svg"" fill=""none"" viewBox=""0 0 24 24"" stroke-width=""1.5"" stroke=""currentColor"" class=""w-3.5 h-3.5""><path stroke-linecap=""round"" stroke-linejoin=""round"" d=""M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5 1.5h6.375a1.125 1.125 0 0 1 1.125 1.125v9.375Zm3 3V6.75a1.125 1.125 0 0 0-1.125-1.125h-1.5a3.375 3.375 0 0 1-3.375-3.375V2.125c0-.621-.504-1.125-1.125-1.125H9.75a1.125 1.125 0 0 0-1.125 1.125V4.5a9.06 9.06 0 0 1 1.5 1.5h6.75a1.125 1.125 0 0 1 1.125 1.125v13.125a1.125 1.125 0 0 1-1.125 1.125H15"" /></svg>
@@ -505,4 +535,5 @@ public static class ChatEndpoints
             {(steps != null && steps.Any() ? "<span class='ml-auto text-[10px] opacity-30 font-semibold'>MULTI-AGENT</span>" : "")}
         </div>
     </div>";
+    }
 }
