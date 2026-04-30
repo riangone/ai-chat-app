@@ -133,7 +133,24 @@
         const themes = ["light", "dark", "cupcake", "bumblebee", "emerald", "corporate", "synthwave", "retro", "cyberpunk", "valentine", "halloween", "garden", "forest", "aqua", "lofi", "pastel", "fantasy", "wireframe", "black", "luxury", "dracula", "cmyk", "autumn", "business", "acid", "lemonade", "night", "coffee", "winter"];
         let currentUser = null, swiper = null, notesSwiper = null, selectedProjectId = null, selectedAgentId = null, editingAgentId = null, isSending = false, currentLang = localStorage.getItem('lang') || 'en';
         function setTheme(t) { document.documentElement.setAttribute('data-theme', t); localStorage.setItem('theme', t); }
-        function initTheme() { const s = localStorage.getItem('theme') || 'light'; setTheme(s); document.querySelectorAll('.theme-controller').forEach(c => { if(c.value===s) c.checked=true; c.addEventListener('change', e=>setTheme(e.target.value)); }); }
+        function initTheme() { 
+            const s = localStorage.getItem('theme') || 'light'; 
+            setTheme(s); 
+            
+            const grid = document.getElementById('settings-theme-grid');
+            if (grid) {
+                grid.innerHTML = themes.map(t => `
+                    <label class="label cursor-pointer settings-theme-item btn btn-ghost border border-base-content/10 rounded-2xl px-4">
+                        <input type="radio" name="theme-settings" class="theme-controller sr-only" value="${t}" aria-label="${t}" ${t === s ? 'checked' : ''} />
+                        <span class="label-text font-semibold">${t}</span>
+                    </label>
+                `).join('');
+            }
+
+            document.querySelectorAll('.theme-controller').forEach(c => { 
+                c.addEventListener('change', e => setTheme(e.target.value)); 
+            }); 
+        }
         function setLanguage(l) { currentLang = l; localStorage.setItem('lang', l); updateUI(); }
         function i18n(k) { return (translations[currentLang] && translations[currentLang][k]) || k; }
         function updateUI() { 
@@ -751,9 +768,7 @@ function handleSuggestionAction(command, payload) {
             switchMainTab(0);
             break;
         case 'copy-to-chat':
-...
-
-                    const chatInput = document.getElementById('chat-input');
+            const chatInput = document.getElementById('chat-input');
                     if (chatInput) {
                         chatInput.value = decodeURIComponent(payload);
                         chatInput.focus();
@@ -1689,8 +1704,8 @@ function handleSuggestionAction(command, payload) {
                                     <section class="settings-card space-y-4">
                                         <div class="settings-section-title" data-i18n="theme">Theme</div>
                                         <p class="text-sm opacity-60" data-i18n="theme-desc">Choose the look and feel of the app. The selected theme is saved in your browser.</p>
-                                        <div class="settings-theme-grid">
-                                            <script>themes.forEach(t=>document.write(`<label class="label cursor-pointer settings-theme-item btn btn-ghost border border-base-content/10 rounded-2xl px-4"><input type="radio" name="theme-settings" class="theme-controller sr-only" value="${t}" aria-label="${t}" /><span class="label-text font-semibold">${t}</span></label>`));</script>
+                                        <div class="settings-theme-grid" id="settings-theme-grid">
+                                            <!-- Themes will be injected here by initTheme() -->
                                         </div>
                                     </section>
                                 </div>
