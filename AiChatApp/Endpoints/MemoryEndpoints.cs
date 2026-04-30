@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Microsoft.AspNetCore.Mvc;
 using AiChatApp.Models;
 using AiChatApp.Services;
 
@@ -10,11 +11,15 @@ public static class MemoryEndpoints
     {
         var group = app.MapGroup("/api/memories").RequireAuthorization();
 
-        group.MapGet("/", (ClaimsPrincipal user, MemoryFileService fileService) => {
+        group.MapGet("/", (ClaimsPrincipal user, MemoryFileService fileService, [FromQuery] int? page, [FromQuery] int? pageSize) => {
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var memories = fileService.GetMemoriesForUser(userId);
+            var p = page ?? 1;
+            var ps = pageSize ?? 20;
 
-            if (!memories.Any())
+            var memories = fileService.GetMemoriesForUser(userId);
+            var paginatedMemories = memories.Skip((p - 1) * ps).Take(ps + 1).ToList();
+
+            if (!memories.Any() && p == 1)
                 return Results.Content(@"
                     <div class='flex flex-col items-center justify-center py-20 opacity-40'>
                         <svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='currentColor' class='w-16 h-16 mb-4'>
@@ -24,7 +29,14 @@ public static class MemoryEndpoints
                         <p class='text-sm'>The AI will automatically remember important facts from your conversations.</p>
                     </div>", "text/html");
 
-            return Results.Content(string.Concat(memories.Select(RenderMemoryCard)), "text/html");
+            var hasMore = paginatedMemories.Count > ps;
+            var memoriesToReturn = paginatedMemories.Take(ps).ToList();
+
+            return Results.Content(string.Concat(memoriesToReturn.Select((m, index) => {
+                var isLast = index == memoriesToReturn.Count - 1 && hasMore;
+                var scrollAttr = isLast ? $"hx-get='/api/memories?page={p + 1}&pageSize={ps}' hx-trigger='revealed' hx-swap='afterend'" : "";
+                return RenderMemoryCard(m, scrollAttr);
+            })), "text/html");
         });
 
         group.MapPost("/", async (HttpContext context, ClaimsPrincipal user, MemoryFileService fileService) => {
@@ -52,7 +64,7 @@ public static class MemoryEndpoints
         });
     }
 
-    private static string RenderMemoryCard(LongTermMemory m)
+    private static string RenderMemoryCard(LongTermMemory m, string extraAttrs = "")
     {
         var tags = m.Tags ?? "";
         var fileName = Uri.EscapeDataString(m.SourceFile ?? "");
@@ -67,7 +79,7 @@ public static class MemoryEndpoints
         var content = System.Net.WebUtility.HtmlEncode(m.Content);
 
         return $@"
-        <div class='card bg-base-200 shadow-sm border border-base-300 group hover:border-primary/30 transition-all duration-200'>
+        <div class='card bg-base-200 shadow-sm border border-base-300 group hover:border-primary/30 transition-all duration-200' {extraAttrs}>
             <div class='card-body p-4'>
                 <div class='flex justify-between items-start mb-2'>
                     <div class='flex flex-wrap gap-1'>{tagBadges}</div>

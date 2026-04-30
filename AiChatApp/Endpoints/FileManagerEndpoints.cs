@@ -13,11 +13,15 @@ public static class FileManagerEndpoints
         var group = app.MapGroup("/api/files").RequireAuthorization();
 
         // GET /api/files?path=/home/user/...&root=/path/to/root → list directory contents as HTML
-        group.MapGet("/", async (HttpContext ctx, [FromQuery] string? path, [FromQuery] string? root) =>
+        group.MapGet("/", async (HttpContext ctx, [FromQuery] string? path, [FromQuery] string? root, [FromQuery] int? page, [FromQuery] int? pageSize) =>
         {
+            var userId = int.Parse(ctx.User.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var safePath = GetSafePath(path, root);
             if (!Directory.Exists(safePath))
                 return Results.Content(BuildErrorHtml($"Directory not found: {safePath}"), "text/html");
+
+            var p = page ?? 1;
+            var ps = pageSize ?? 20;
 
             var entries = new List<FileEntry>();
             try
@@ -52,7 +56,13 @@ public static class FileManagerEndpoints
                 return Results.Content(BuildErrorHtml("Access denied"), "text/html");
             }
 
-            return Results.Content(BuildFileListHtml(entries, safePath, root), "text/html");
+            var sortedEntries = entries.OrderByDescending(e => e.IsDirectory).ThenBy(e => e.Name).ToList();
+            var paginatedEntries = sortedEntries.Skip((p - 1) * ps).Take(ps + 1).ToList();
+            
+            var hasMore = paginatedEntries.Count > ps;
+            var entriesToReturn = paginatedEntries.Take(ps).ToList();
+
+            return Results.Content(BuildFileListHtml(entriesToReturn, safePath, root, p, ps, hasMore), "text/html");
         });
 
         // GET /api/files/content?path=...&root=... → read file content as HTML
@@ -163,7 +173,7 @@ public static class FileManagerEndpoints
         _ => "plaintext"
     };
 
-    private static string BuildFileListHtml(List<FileEntry> entries, string currentPath, string? root)
+    private static string BuildFileListHtml(List<FileEntry> entries, string currentPath, string? root, int page, int pageSize, bool hasMore)
     {
         var baseDir = !string.IsNullOrWhiteSpace(root) ? root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) : AppContext.BaseDirectory;
         var parentPath = Directory.GetParent(currentPath)?.FullName ?? currentPath;
@@ -176,68 +186,76 @@ public static class FileManagerEndpoints
         if (relPath == ".") relPath = "";
 
         var sb = new StringBuilder();
-        sb.Append($"""
-            <div class="p-4 border-b border-base-content/5 space-y-3 bg-base-100/50 backdrop-blur">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <div class="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0A2.25 2.25 0 0 0 4.5 15h15a2.25 2.25 0 0 0 2.25-2.25m-19.5 0v.243a2.25 2.25 0 0 1 1.5 2.121v.001a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-.001a2.25 2.25 0 0 1 1.5-2.121V12.75" /></svg>
-                        </div>
-                        <div>
-                            <h3 class="text-[10px] font-black uppercase tracking-[0.2em] opacity-40" data-i18n="files">File Manager</h3>
-                            <div class="text-[9px] opacity-20 font-mono truncate max-w-[150px] md:max-w-xs">{baseDir}</div>
-                        </div>
-                    </div>
-                    <div class="flex gap-2">
-                        <button onclick="showRootSettings()" class="btn btn-ghost btn-sm btn-circle" title="Set Root Directory">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 opacity-50"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.127c-.332.183-.582.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.222-.127c-.324-.196-.72-.257-1.075-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
-                        </button>
-                        <button onclick="createFileOrDir()" class="btn btn-primary btn-sm rounded-xl px-4 shadow-lg shadow-primary/20 border-none">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4 mr-1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-                            <span data-i18n="new">New</span>
-                        </button>
-                    </div>
-                </div>
-                <div class="flex items-center gap-1 text-[11px] font-mono bg-base-300/30 rounded-xl px-3 py-2.5 overflow-x-auto custom-scrollbar no-scrollbar border border-base-content/5">
-                    <button onclick="browsePath('')" class="whitespace-nowrap hover:text-primary transition-colors flex items-center gap-1.5 px-1">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3 opacity-40"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg>
-                        <span data-i18n="root">root</span>
-                    </button>
-        """);
-
-        var parts = relPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        var accumulated = "";
-        foreach (var part in parts)
+        
+        // Only render header and breadcrumbs on page 1
+        if (page == 1)
         {
-            accumulated += (accumulated.Length > 0 ? "/" : "") + part;
-            var p = accumulated;
-            sb.Append($"""<span class="opacity-20 text-xs">/</span><button onclick="browsePath('{p}')" class="whitespace-nowrap hover:text-primary transition-colors px-1">{part}</button>""");
-        }
-
-        sb.Append("""
-                </div>
-            </div>
-            <div class="flex-1 overflow-y-auto p-3 custom-scrollbar">
-                <div class="max-w-4xl mx-auto space-y-1">
-        """);
-
-        // Parent directory link
-        if (!string.IsNullOrEmpty(relPath))
-        {
-            var parentRel = Path.GetRelativePath(baseDir, parentPath).Replace('\\', '/');
-            if (parentRel == ".") parentRel = "";
             sb.Append($"""
-                    <button onclick="browsePath('{parentRel}')" class="w-full flex items-center gap-3 p-3.5 rounded-2xl hover:bg-base-100 transition-all text-left group border border-transparent hover:border-base-content/5">
-                        <div class="w-9 h-9 rounded-xl bg-base-300/50 flex items-center justify-center group-hover:bg-base-300 transition-colors">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4 opacity-40 group-hover:opacity-70"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 15.75 3 12m0 0 3.75-3.75M3 12h12" /></svg>
+                <div class="p-4 border-b border-base-content/5 space-y-3 bg-base-100/50 backdrop-blur">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0A2.25 2.25 0 0 0 4.5 15h15a2.25 2.25 0 0 0 2.25-2.25m-19.5 0v.243a2.25 2.25 0 0 1 1.5 2.121v.001a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-.001a2.25 2.25 0 0 1 1.5-2.121V12.75" /></svg>
+                            </div>
+                            <div>
+                                <h3 class="text-[10px] font-black uppercase tracking-[0.2em] opacity-40" data-i18n="files">File Manager</h3>
+                                <div class="text-[9px] opacity-20 font-mono truncate max-w-[150px] md:max-w-xs">{baseDir}</div>
+                            </div>
                         </div>
-                        <span class="text-[11px] font-black uppercase tracking-widest opacity-30 group-hover:opacity-60">.. / (Parent Directory)</span>
-                    </button>
+                        <div class="flex gap-2">
+                            <button onclick="showRootSettings()" class="btn btn-ghost btn-sm btn-circle" title="Set Root Directory">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 opacity-50"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.127c-.332.183-.582.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.222-.127c-.324-.196-.72-.257-1.075-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+                            </button>
+                            <button onclick="createFileOrDir()" class="btn btn-primary btn-sm rounded-xl px-4 shadow-lg shadow-primary/20 border-none">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4 mr-1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                <span data-i18n="new">New</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-1 text-[11px] font-mono bg-base-300/30 rounded-xl px-3 py-2.5 overflow-x-auto custom-scrollbar no-scrollbar border border-base-content/5">
+                        <button onclick="browsePath('')" class="whitespace-nowrap hover:text-primary transition-colors flex items-center gap-1.5 px-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3 opacity-40"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg>
+                            <span data-i18n="root">root</span>
+                        </button>
             """);
+
+            var parts = relPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var accumulated = "";
+            foreach (var part in parts)
+            {
+                accumulated += (accumulated.Length > 0 ? "/" : "") + part;
+                var p = accumulated;
+                sb.Append($"""<span class="opacity-20 text-xs">/</span><button onclick="browsePath('{p}')" class="whitespace-nowrap hover:text-primary transition-colors px-1">{part}</button>""");
+            }
+
+            sb.Append("""
+                    </div>
+                </div>
+                <div class="flex-1 overflow-y-auto p-3 custom-scrollbar">
+                    <div class="max-w-4xl mx-auto space-y-1">
+            """);
+
+            // Parent directory link
+            if (!string.IsNullOrEmpty(relPath))
+            {
+                var parentRel = Path.GetRelativePath(baseDir, parentPath).Replace('\\', '/');
+                if (parentRel == ".") parentRel = "";
+                sb.Append($"""
+                        <button onclick="browsePath('{parentRel}')" class="w-full flex items-center gap-3 p-3.5 rounded-2xl hover:bg-base-100 transition-all text-left group border border-transparent hover:border-base-content/5">
+                            <div class="w-9 h-9 rounded-xl bg-base-300/50 flex items-center justify-center group-hover:bg-base-300 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4 opacity-40 group-hover:opacity-70"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 15.75 3 12m0 0 3.75-3.75M3 12h12" /></svg>
+                            </div>
+                            <span class="text-[11px] font-black uppercase tracking-widest opacity-30 group-hover:opacity-60">.. / (Parent Directory)</span>
+                        </button>
+                """);
+            }
         }
 
-        foreach (var entry in entries.OrderByDescending(e => e.IsDirectory).ThenBy(e => e.Name))
+        foreach (var (entry, index) in entries.Select((e, i) => (e, i)))
         {
+            var isLast = index == entries.Count - 1 && hasMore;
+            var scrollAttr = isLast ? $"hx-get='/api/files?path={Uri.EscapeDataString(relPath)}&root={Uri.EscapeDataString(root ?? "")}&page={page + 1}&pageSize={pageSize}' hx-trigger='revealed' hx-swap='afterend'" : "";
+
             var relEntryPath = Path.GetRelativePath(baseDir, entry.FullPath).Replace('\\', '/');
             var icon = entry.IsDirectory 
                 ? """<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5 text-primary"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0A2.25 2.25 0 0 0 4.5 15h15a2.25 2.25 0 0 0 2.25-2.25m-19.5 0v.243a2.25 2.25 0 0 1 1.5 2.121v.001a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-.001a2.25 2.25 0 0 1 1.5-2.121V12.75" /></svg>"""
@@ -248,7 +266,7 @@ public static class FileManagerEndpoints
             var infoText = entry.IsDirectory ? $"{entry.ModifiedAt:yyyy-MM-dd HH:mm}" : $"{(entry.Size < 1024 ? $"{entry.Size} B" : entry.Size < 1024 * 1024 ? $"{entry.Size / 1024:F1} KB" : $"{entry.Size / (1024 * 1024):F1} MB")} · {entry.ModifiedAt:yyyy-MM-dd HH:mm}";
 
             sb.Append($"""
-                <div class="group relative flex items-center gap-3 p-3 rounded-2xl hover:bg-base-100 transition-all border border-transparent hover:border-base-content/5">
+                <div class="group relative flex items-center gap-3 p-3 rounded-2xl hover:bg-base-100 transition-all border border-transparent hover:border-base-content/5" {scrollAttr}>
                     <button onclick="{clickFn}" class="flex-1 flex items-center gap-3 text-left min-w-0">
                         <div class="w-10 h-10 rounded-xl {bgClass} flex items-center justify-center transition-colors">
                             {icon}
@@ -271,13 +289,16 @@ public static class FileManagerEndpoints
             """);
         }
 
-        if (entries.Count == 0 && string.IsNullOrEmpty(relPath))
+        if (entries.Count == 0 && string.IsNullOrEmpty(relPath) && page == 1)
             sb.Append("""<div class="flex flex-col items-center justify-center py-20 opacity-20"><div class="w-16 h-16 border-2 border-dashed border-current rounded-full mb-4 animate-pulse"></div><p class="text-xs font-black uppercase tracking-widest">Empty directory</p></div>""");
 
-        sb.Append("""
+        if (page == 1)
+        {
+            sb.Append("""
+                    </div>
                 </div>
-            </div>
-        """);
+            """);
+        }
 
         return sb.ToString();
     }

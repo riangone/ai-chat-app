@@ -15,15 +15,23 @@ public static class NotesEndpoints
         var group = app.MapGroup("/api/notes").RequireAuthorization();
 
         // GET /api/notes → return HTML list fragment
-        group.MapGet("/", async (AppDbContext db, ClaimsPrincipal user) =>
+        group.MapGet("/", async (AppDbContext db, ClaimsPrincipal user, [FromQuery] int? page, [FromQuery] int? pageSize) =>
         {
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var p = page ?? 1;
+            var ps = pageSize ?? 20;
+
             var notes = await db.Notes
                 .Where(n => n.UserId == userId)
                 .OrderByDescending(n => n.UpdatedAt)
+                .Skip((p - 1) * ps)
+                .Take(ps + 1)
                 .ToListAsync();
 
-            var html = BuildNoteListHtml(notes);
+            var hasMore = notes.Count > ps;
+            var notesToReturn = notes.Take(ps).ToList();
+
+            var html = BuildNoteListHtml(notesToReturn, p, ps, hasMore);
             return Results.Content(html, "text/html");
         });
 
@@ -87,15 +95,20 @@ public static class NotesEndpoints
         }).DisableAntiforgery();
     }
 
-    private static string BuildNoteListHtml(List<Note> notes)
+    private static string BuildNoteListHtml(List<Note> notes, int page, int pageSize, bool hasMore)
     {
-        if (!notes.Any())
+        if (!notes.Any() && page == 1)
             return "<div class='text-center py-20 opacity-20'><div class='text-4xl mb-4 text-primary/50'>📔</div><p class='text-xs font-bold uppercase tracking-widest' data-i18n='no-notes-yet'>Empty Library</p></div>";
 
-        var items = notes.Select(n => $"""
+        var items = notes.Select((n, index) => {
+            var isLast = index == notes.Count - 1 && hasMore;
+            var scrollAttr = isLast ? $"hx-get='/api/notes?page={page + 1}&pageSize={pageSize}' hx-trigger='revealed' hx-swap='afterend'" : "";
+
+            return $"""
             <button hx-get="/api/notes/{n.Id}" 
                     hx-target="#note-content" 
                     onclick="selectNote(this)"
+                    {scrollAttr}
                     class="note-item w-full text-left p-3 rounded-xl transition-all hover:bg-base-content/5 group relative mb-1 border border-transparent flex flex-col gap-0.5">
                 <div class="flex items-center gap-2">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3.5 h-3.5 opacity-40 group-[.active]:opacity-100"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
@@ -114,7 +127,8 @@ public static class NotesEndpoints
                     </div>
                 </div>
             </button>
-            """);
+            """;
+        });
 
         return string.Join("", items);
     }
@@ -260,7 +274,7 @@ public class HtmlWithTriggerResult : IResult
 
     public async Task ExecuteAsync(HttpContext httpContext)
     {
-        httpContext.Response.Headers.Add("HX-Trigger", _triggerName);
+        httpContext.Response.Headers.Append("HX-Trigger", _triggerName);
         httpContext.Response.ContentType = "text/html";
         await httpContext.Response.WriteAsync(_html);
     }

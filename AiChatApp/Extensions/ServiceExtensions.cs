@@ -44,9 +44,10 @@ public static class ServiceExtensions
         services.AddAuthorization();
 
         services.AddSignalR();
-        // DISABLED: Background scanning (PROACTIVE_ENHANCEMENT_V2)
-        // services.AddHostedService<FileWatcherService>();
-        // services.AddHostedService<ProjectPulseService>();
+        
+        // ENABLED: Proactive Scanning (Sentinel Phase)
+        services.AddHostedService<FileWatcherService>();
+        services.AddHostedService<ProjectPulseService>();
 
         return services;
     }

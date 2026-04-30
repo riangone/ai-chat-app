@@ -13,7 +13,7 @@ public static class InputHistoryEndpoints
     {
         var group = app.MapGroup("/api/input-history").RequireAuthorization();
 
-        group.MapGet("/", async (AppDbContext db, ClaimsPrincipal user, ILogger<AppDbContext> logger) => {
+        group.MapGet("/", async (AppDbContext db, ClaimsPrincipal user, ILogger<AppDbContext> logger, [FromQuery] int? page, [FromQuery] int? pageSize) => {
             try 
             {
                 var userIdClaim = user.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -23,19 +23,29 @@ public static class InputHistoryEndpoints
                 }
 
                 var userId = int.Parse(userIdClaim);
+                var p = page ?? 1;
+                var ps = pageSize ?? 20;
+
                 var histories = await db.InputHistories
                     .Where(h => h.UserId == userId)
                     .OrderByDescending(h => h.UsedAt)
-                    .Take(20)
+                    .Skip((p - 1) * ps)
+                    .Take(ps + 1)
                     .ToListAsync();
                 
-                if (!histories.Any())
+                if (!histories.Any() && p == 1)
                 {
                     return Results.Content("<li class='px-4 py-3 text-sm opacity-40 text-center'>No history yet</li>", "text/html");
                 }
 
+                var hasMore = histories.Count > ps;
+                var historiesToReturn = histories.Take(ps).ToList();
+
                 // HTMX用の一覧表示を生成
-                var html = string.Join("", histories.Select(h => {
+                var html = string.Join("", historiesToReturn.Select((h, index) => {
+                    var isLast = index == historiesToReturn.Count - 1 && hasMore;
+                    var scrollAttr = isLast ? $"hx-get='/api/input-history?page={p + 1}&pageSize={ps}' hx-trigger='revealed' hx-swap='afterend'" : "";
+
                     // JavaScriptで安全に扱えるようにエスケープ。改行、バックスラッシュ、引用符を処理。
                     var escaped = h.Content
                         .Replace("\\", "\\\\")
@@ -47,7 +57,7 @@ public static class InputHistoryEndpoints
                     var displayContent = WebUtility.HtmlEncode(h.Content);
                     if (displayContent.Length > 100) displayContent = displayContent.Substring(0, 97) + "...";
 
-                    return $"<li><button type='button' class='btn btn-ghost btn-sm w-full text-left justify-start overflow-hidden whitespace-nowrap' onclick=\"const input=document.getElementById('chat-input'); input.value='{escaped}'; input.dispatchEvent(new Event('input')); document.getElementById('history-modal').close();\">{displayContent}</button></li>";
+                    return $"<li {scrollAttr}><button type='button' class='btn btn-ghost btn-sm w-full text-left justify-start overflow-hidden whitespace-nowrap' onclick=\"const input=document.getElementById('chat-input'); input.value='{escaped}'; input.dispatchEvent(new Event('input')); document.getElementById('history-modal').close();\">{displayContent}</button></li>";
                 }));
                 
                 return Results.Content(html, "text/html");

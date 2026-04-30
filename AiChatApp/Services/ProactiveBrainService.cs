@@ -50,15 +50,14 @@ public class ProactiveBrainService
                 using var scope = _serviceProvider.CreateScope();
                 var aiService = scope.ServiceProvider.GetRequiredService<AiService>();
                 
-                // 1. 哨兵扫描：获取最近状态（演示：获取最近完成的任务和未完成任务）
-                // 实际实现中这里会更复杂
+                // 1. 哨兵扫描：获取最近状态
                 var summaryInput = "请根据当前项目状态生成一份欢迎报告。重点：最近的进展和接下来的关键任务。";
                 
-                // 2. 记录员总结 (Summarizer)
-                var summary = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.Summarizer, summaryInput, userId);
+                // 2. 记录员总结 (Summarizer) - 使用 opencode 节省 Token
+                var summary = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.Summarizer, summaryInput, userId, provider: "opencode");
 
-                // 3. 主脑生成建议 (Hyperion Brain)
-                var insight = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.HyperionBrain, summary, userId);
+                // 3. 主脑生成建议 (Hyperion Brain) - 强制简短
+                var insight = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.HyperionBrain, $"请根据以下总结给出一句简短的欢迎建议（30字以内）：{summary}", userId, provider: "opencode");
 
                 await SendSuggestionAsync(new ProactiveSuggestion
                 {
@@ -74,6 +73,70 @@ public class ProactiveBrainService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error generating welcome insight");
+            }
+        });
+    }
+
+    /// <summary>
+    /// 定期扫描项目脉搏（基于增量变更）
+    /// </summary>
+    public async Task AnalyzeProjectPulseAsync(string diffSummary, int? userId = null)
+    {
+        if (string.IsNullOrWhiteSpace(diffSummary)) return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var aiService = scope.ServiceProvider.GetRequiredService<AiService>();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                // 使用 opencode 这种免费模型进行扫描
+                var prompt = $"作为项目哨兵，请分析以下代码变更并给出一条精炼的工程建议。要求：不要超过50字，使用 Markdown。变更内容：\n{diffSummary}";
+                
+                var advice = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.HyperionBrain, prompt, userId, provider: "opencode");
+
+                if (string.IsNullOrWhiteSpace(advice) || advice.Contains("no significant changes", StringComparison.OrdinalIgnoreCase)) return;
+
+                // 持久化到 Hyperion 会话
+                if (userId.HasValue)
+                {
+                    var session = await db.ChatSessions.FirstOrDefaultAsync(s => s.UserId == userId.Value && s.Title == "Hyperion 任务洞察");
+                    if (session == null)
+                    {
+                        session = new ChatSession { Title = "Hyperion 任务洞察", UserId = userId.Value };
+                        db.ChatSessions.Add(session);
+                        await db.SaveChangesAsync();
+                    }
+
+                    var message = new Message
+                    {
+                        ChatSessionId = session.Id,
+                        Content = advice,
+                        IsAi = true,
+                        Timestamp = DateTime.UtcNow,
+                        AgentName = "Hyperion (Sentinel)"
+                    };
+                    db.Messages.Add(message);
+                    await db.SaveChangesAsync();
+
+                    await SendSuggestionAsync(new ProactiveSuggestion
+                    {
+                        Title = "项目脉搏洞察",
+                        Content = advice,
+                        Type = "insight",
+                        Actions = new List<SuggestionAction>
+                        {
+                            new() { Label = "查看建议", Command = "open-session", Payload = session.Id.ToString(), Style = "btn-primary" },
+                            new() { Label = "忽略", Command = "dismiss", Style = "btn-ghost" }
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in project pulse analysis");
             }
         });
     }

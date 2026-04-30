@@ -617,9 +617,9 @@ public class AiService
     /// <summary>
     /// 使用主动式代理配置执行 AI 任务（哨兵、记录员、主脑）。
     /// </summary>
-    public async Task<string> ExecuteProactiveAgentAsync(ProactiveAgentProfile profile, string prompt, int? userId = null, int? chatSessionId = null)
+    public async Task<string> ExecuteProactiveAgentAsync(ProactiveAgentProfile profile, string prompt, int? userId = null, int? chatSessionId = null, string? provider = null)
     {
-        var targetProvider = profile.PreferredProvider ?? DefaultProvider;
+        var targetProvider = provider ?? profile.PreferredProvider ?? DefaultProvider;
         var workingDir = await GetProjectRootAsync(chatSessionId);
         
         var sb = new StringBuilder(profile.SystemPrompt);

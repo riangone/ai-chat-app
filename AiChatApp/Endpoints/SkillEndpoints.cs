@@ -1,4 +1,5 @@
 using AiChatApp.Services;
+using Microsoft.AspNetCore.Mvc;
 
 namespace AiChatApp.Endpoints;
 
@@ -8,18 +9,30 @@ public static class SkillEndpoints
     {
         var group = app.MapGroup("/api/skills").RequireAuthorization();
 
-        group.MapGet("/", async (SkillManagerService skillManager) => {
-            var skills = await skillManager.GetAllSkillsAsync();
-            return Results.Content(string.Concat(skills.Select(s => {
+        group.MapGet("/", async (SkillManagerService skillManager, [FromQuery] int? page, [FromQuery] int? pageSize) => {
+            var p = page ?? 1;
+            var ps = pageSize ?? 20;
+            var allSkills = await skillManager.GetAllSkillsAsync();
+            var paged = allSkills.Skip((p - 1) * ps).Take(ps + 1).ToList();
+
+            if (!allSkills.Any() && p == 1)
+                return Results.Content("<div class='text-center py-10 opacity-40'>No skills defined yet.</div>", "text/html");
+
+            var hasMore = paged.Count > ps;
+            var skills = paged.Take(ps).ToList();
+
+            return Results.Content(string.Concat(skills.Select((s, index) => {
                 var systemBadge = s.IsSystem ? "<span class='badge badge-neutral badge-xs mb-1'>System</span>" : "<span class='badge badge-primary badge-xs mb-1'>User</span>";
+                var isLast = index == skills.Count - 1 && hasMore;
+                var scrollAttr = isLast ? $"hx-get='/api/skills?page={p + 1}&pageSize={ps}' hx-trigger='revealed' hx-swap='afterend'" : "";
                 return $@"
-                <div class='flex flex-col p-3 bg-base-200 rounded-lg group'>
+                <div class='flex flex-col p-3 bg-base-200 rounded-lg group' {scrollAttr}>
                     <div class='items-start justify-between flex'>
                         <div class='flex-1'>
                             {systemBadge}
                             <div class='font-bold text-sm'>{s.DisplayName}</div>
                             <div class='text-[10px] opacity-60 mb-2'>{s.Description}</div>
-                            <textarea class='textarea textarea-bordered textarea-xs w-full h-24 font-mono text-[10px] bg-base-300' 
+                            <textarea class='textarea textarea-bordered textarea-xs w-full h-24 font-mono text-[10px] bg-base-300'
                                       id='prompt-{s.Name}' readonly>{s.Prompt}</textarea>
                         </div>
                         <div class='flex flex-col items-end gap-2 ml-2'>
