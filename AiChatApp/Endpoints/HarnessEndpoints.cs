@@ -295,30 +295,48 @@ public static class HarnessEndpoints
                 })
                 .ToListAsync();
 
-            // 辅助：标准化 provider 名称为显示名称（仅支持 gemini/claude/codex/copilot/opencode）
-            string NormalizeProvider(string provider) {
+            // 辅助：标准化 provider 名称为显示名称
+            string NormalizeProvider(string provider, string? model = null) {
                 var p = provider.ToLower();
-                if (p.Contains("gemini")) return "Gemini";
-                if (p.Contains("claudecode") || p.Contains("claude-code")) return "ClaudeCode";
-                if (p.Contains("claude") || p.Contains("anthropic") || p.Contains("sonnet") || p.Contains("haiku")) return "Claude";
-                if (p.Contains("codex")) return "Codex";
-                if (p.Contains("copilot") || p.Contains("gh-copilot")) return "Copilot";
-                if (p.Contains("opencode") || p.Contains("open-code")) return "OpenCode";
-                if (p.Contains("gpt") || p.Contains("openai")) return "OpenAI";
-                if (p.Contains("deepseek")) return "DeepSeek";
+                var m = model?.ToLower() ?? "";
+                
+                // If the provider is explicitly copilot, return Copilot
+                if (p.Contains("copilot")) return "Copilot";
+                
+                // If provider is gemini or model contains gemini
+                if (p.Contains("gemini") || m.Contains("gemini")) return "Gemini";
+                
+                // If it's claudecode
+                if (p.Contains("claudecode") || p.Contains("claude-code") || m.Contains("claudecode")) return "ClaudeCode";
+                
+                // If it's claude or model contains claude/anthropic/sonnet/haiku
+                if (p.Contains("claude") || p.Contains("anthropic") || m.Contains("claude") || m.Contains("anthropic") || m.Contains("sonnet") || m.Contains("haiku") || m.Contains("opus")) return "Claude";
+                
+                // If it's codex
+                if (p.Contains("codex") || m.Contains("codex")) return "Codex";
+                
+                // If it's opencode
+                if (p.Contains("opencode") || p.Contains("open-code") || m.Contains("opencode") || m.Contains("open-code")) return "OpenCode";
+                
+                // If it's deepseek
+                if (p.Contains("deepseek") || m.Contains("deepseek")) return "DeepSeek";
+
+                // Special case for Copilot returning gpt-4 models but provider field being empty/incorrect
+                if (p.Contains("gh-copilot") || m.Contains("gpt-4") && p == "copilot") return "Copilot";
+
+                // If it's gpt/openai
+                if (p.Contains("gpt") || p.Contains("openai") || m.Contains("gpt-") || m.Contains("o1-") || m.Contains("o3-")) return "OpenAI";
+                
                 return "Other";
             }
 
-            // 确定每个 step 的显示名称：优先使用 Provider 字段，否则从 Model 解析，最后 fallback 到 SessionProvider
+            // 确定每个 step 的显示名称
             string GetProviderDisplayName(AgentStep step, string sessionProvider) {
-                // 优先使用新的 Provider 字段
-                if (!string.IsNullOrEmpty(step.Provider))
-                    return NormalizeProvider(step.Provider);
-                // 旧记录：从 Model 字段解析
-                if (!string.IsNullOrEmpty(step.Model))
-                    return NormalizeProvider(step.Model);
-                // Fallback 到 session 的 PreferredProvider
-                return NormalizeProvider(sessionProvider);
+                // 优先使用新的 Provider 字段，并同时参考 Model
+                return NormalizeProvider(
+                    !string.IsNullOrEmpty(step.Provider) ? step.Provider : sessionProvider, 
+                    step.Model
+                );
             }
 
             // 2. 提供商配额设定 (软配额) - 为每个请求的工具设定独立配额

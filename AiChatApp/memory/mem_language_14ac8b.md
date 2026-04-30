@@ -5,9 +5,9 @@ type: user
 userId: 1
 tags: language,chinese,communication
 relevanceScore: 80
-accessCount: 46
+accessCount: 47
 createdAt: 2026-04-27T04:27:55.6801029Z
-lastAccessedAt: 2026-04-29T12:24:34.1785724Z
+lastAccessedAt: 2026-04-29T16:22:05.9331423Z
 ---
 
 ユーザーは中国語でも会話することがある（「我的名字叫oneriang」と中国語で自己紹介した）。
