@@ -1,54 +1,53 @@
-# AiChatApp 全方位主动式智能助手 (Hyperion) 设计文档
+# AI Proactive Brain Design & Logic
 
-## 1. 愿景 (Vision)
-将 AiChatApp 进化为用户的**数字双子**与**项目管家**。Hyperion（智能助手）不再仅仅被动等待指令，而是通过深度集成系统各个模块，主动感知用户的意图、任务进度、知识积累以及代码健康状态，提供及时的、具有前瞻性的协作支持。
+## 1. Overview
+The Proactive Brain system is a core feature of AiChatApp that enables AI agents (primarily **Hyperion**) to observe user activities and provide autonomous, context-aware suggestions. Unlike standard chatbots, this system can initiate conversations based on data changes.
 
-## 2. 核心架构 (Architecture)
+## 2. Technical Architecture
 
-### A. 传感器层 (Sensing Layer)
-Hyperion 的“神经末梢”分布在系统的各个关键节点：
-*   **文件系统传感器 (`FileWatcherService`)**: 实时监控代码库的物理变动。
-*   **任务传感器 (`TodoEndpoints`)**: 捕捉用户的计划变更（新增、完成、切换任务）。
-*   **知识传感器 (`NotesEndpoints`)**: 感知用户的思考过程与记录行为。
-*   **系统状态监控 (Future)**: 监听编译状态与测试覆盖率。
+### 2.1 Backend Components
+- **`ProactiveBrainService` (Singleton)**: The orchestrator that manages background tasks and AI orchestration.
+- **`ProactiveAgentHub` (SignalR)**: Real-time communication bridge between server and client.
+- **`AiService`**: Executes specific agent profiles (Summarizer, Hyperion) to generate insights.
+- **`AppDbContext`**: Handles persistence of proactive messages into standard chat sessions.
 
-### B. 智能中枢层 (Proactive Brain)
-*   **`ProactiveBrainService`**: 系统的指挥中心。
-    *   **异步思考**: 接收到传感器信号后，在后台启动异步 AI 分析任务，不干扰用户主流程。
-    *   **多维度分析**: 将“任务”与“代码”关联，将“笔记”与“记忆”关联。
-    *   **节流与分级**: 智能控制推送频率，避免过度打扰。
+### 2.2 Trigger Logic
+Proactive analysis is currently triggered by:
+- **Todo Changes**:
+    - `POST /api/todos`: Triggers initial task analysis and decomposition suggestions.
+    - `PUT /api/todos/{id}/toggle`: Triggers completion celebration and "next step" planning.
+- **Note Changes**:
+    - `POST /api/notes`: Triggers summary generation and long-term memory proposals.
 
-### C. 实时通讯层 (Communication Layer)
-*   **`ProactiveAgentHub` (SignalR)**: 建立服务端向前端主动推送的“高速公路”。
-*   **富建议协议 (Rich Suggestion Protocol)**: 
-    *   支持 `info`, `warning`, `task`, `insight`, `success` 等多种建议类型。
-    *   支持携带**操作按钮 (Actions)**，实现“建议即操作”。
+## 3. The "Hyperion" Logic Flow
 
-### D. 表现层 (Interactive UI)
-*   **智能建议面板**: 位于界面右下角的动态卡片容器。
-*   **交互式反馈**: 
-    *   **一键执行**: 按钮可直接触发“生成代码”、“诊断 Bug”、“存入记忆”等复杂命令。
-    *   **视觉反馈**: 根据建议类型自动切换图标与配色风格。
+When a trigger (e.g., New Todo) occurs:
+1. **Backgrounding**: The endpoint fires a non-blocking `Task.Run` call.
+2. **Context Compression**: The `Summarizer` agent shrinks the task/note content to a one-sentence core goal.
+3. **Insight Generation**: The `HyperionBrain` agent receives the summary and generates a professional engineering tip (strict < 60 words, Markdown formatted).
+4. **Session Persistence**:
+    - Looks for a session titled **"Hyperion 任务洞察"**.
+    - Creates it if it doesn't exist.
+    - Adds the insight as a `Message` (`IsAi = true`).
+5. **Real-time Push**: Broadcasts a `ProactiveMessage` via SignalR containing the content and action buttons.
 
-## 3. 典型应用场景 (Scenarios)
+## 4. Frontend Interaction
 
-1.  **任务智能辅助**:
-    *   *动作*: 用户新增 Todo "实现文件上传"。
-    *   *主动行为*: Hyperion 感知到该任务，5秒后推送：“检测到新任务，需要我为你生成 ASP.NET Core 文件上传的技术方案和代码框架吗？”
-2.  **代码健康守护**:
-    *   *动作*: 用户保存了包含逻辑矛盾的代码。
-    *   *主动行为*: Hyperion 通过后台扫描发现潜在风险，弹出警告提示并附带修复建议按钮。
-3.  **知识沉淀提醒**:
-    *   *动作*: 用户撰写了一篇关于项目架构的长笔记。
-    *   *主动行为*: Hyperion 建议：“这篇笔记非常有价值，是否需要我将其总结并存入长期记忆库，以便在后续对话中召回？”
-4.  **里程碑回顾**:
-    *   *动作*: 用户勾选完成了一组关键任务。
-    *   *主动行为*: Hyperion 弹出成功提示：“干得漂亮！本阶段任务已全部达成。建议下一步进行集成测试或更新 README 进度。”
+### 4.1 Proactive UI Components
+- **Floating Cards**: Displayed in the bottom-right. Features backdrop blur and Markdown rendering via `marked.js`.
+- **Insight Center (Sidebar)**: A dedicated history panel in the sidebar that persists insights in `localStorage` for quick access.
 
-## 4. 进化路线 (Roadmap)
-*   [x] 建立 SignalR 实时推送链路。
-*   [x] 实现 `ProactiveBrainService` 智能中枢。
-*   [x] 集成 `Todo` 与 `Notes` 感知器。
-*   [x] 升级交互式 UI 面板。
-*   [ ] 集成后台自动编译与测试感知。
-*   [ ] 引入基于用户活跃度的“疲劳度评估”算法。
+### 4.2 Interaction Actions
+- **Open Session**: Navigates the user directly to the persistent "Hyperion Insights" chat.
+- **Use in Chat**: Injects the AI's suggestion into the current chat input for further discussion.
+- **Dismiss**: Clears the notification while keeping it in history.
+
+## 5. Configuration & Future Services
+
+The system is designed to be extensible. Currently disabled services in `ServiceExtensions.cs` include:
+- `FileWatcherService`: For proactive coding assistance on file save.
+- `ProjectPulseService`: For periodic project status reports.
+- `WelcomeInsight`: For "catch-up" summaries upon user login.
+
+---
+*Last Updated: April 30, 2026*
