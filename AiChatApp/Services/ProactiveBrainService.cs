@@ -1,6 +1,8 @@
 using AiChatApp.Hubs;
 using AiChatApp.Models;
+using AiChatApp.Data;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
 namespace AiChatApp.Services;
@@ -77,42 +79,73 @@ public class ProactiveBrainService
     }
 
     /// <summary>
-    /// 当 Todo 更新时触发后台分析
+    /// 当 Todo 更新时触发后台分析并存入聊天记录
     /// </summary>
     public void ProcessTodoChange(TodoItem item, string action)
     {
-        // 使用 Task.Run 进行火后即忘 (Fire-and-forget) 的后台 AI 分析
         _ = Task.Run(async () =>
         {
             try
             {
                 using var scope = _serviceProvider.CreateScope();
                 var aiService = scope.ServiceProvider.GetRequiredService<AiService>();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                 
                 if (action == "created")
                 {
-                    // 使用记录员进行初步分析
-                    var analysis = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.Summarizer, $"新任务: {item.Title}. 描述: {item.Description}", item.UserId);
-                    
-                    // 使用主脑生成具体建议
-                    var advice = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.HyperionBrain, $"用户创建了一个新任务，请给出建议：{analysis}", item.UserId);
+                    // 1. 分析与生成建议
+                    var analysis = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.Summarizer, $"任务: {item.Title}. 描述: {item.Description}. 请用一句话概括核心目标。", item.UserId);
+                    var advice = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.HyperionBrain, $"用户创建了新任务，请给出一条专业的工程建议。要求：不要超过60字，使用 Markdown 加粗重点。内容：{analysis}", item.UserId);
 
-                    await SendSuggestionAsync(new ProactiveSuggestion
+                    // 2. 持久化到聊天记录 (AI 发起的会话)
+                    if (item.UserId.HasValue)
                     {
-                        Title = "任务建议",
-                        Content = advice,
-                        Type = "task",
-                        Actions = new List<SuggestionAction>
+                        var session = await db.ChatSessions
+                            .FirstOrDefaultAsync(s => s.UserId == item.UserId.Value && s.Title == "Hyperion 任务洞察");
+                        
+                        if (session == null)
                         {
-                            new() { Label = "查看详情", Command = "view-todo", Payload = item.Id.ToString(), Style = "btn-primary" },
-                            new() { Label = "忽略", Command = "dismiss", Style = "btn-ghost" }
+                            session = new ChatSession 
+                            { 
+                                Title = "Hyperion 任务洞察", 
+                                UserId = item.UserId.Value,
+                                CreatedAt = DateTime.UtcNow,
+                                UpdatedAt = DateTime.UtcNow
+                            };
+                            db.ChatSessions.Add(session);
+                            await db.SaveChangesAsync();
                         }
-                    });
+
+                        var message = new Message
+                        {
+                            ChatSessionId = session.Id,
+                            Content = advice,
+                            IsAi = true,
+                            Timestamp = DateTime.UtcNow,
+                            AgentName = "Hyperion"
+                        };
+                        db.Messages.Add(message);
+                        session.UpdatedAt = DateTime.UtcNow;
+                        await db.SaveChangesAsync();
+
+                        // 3. 通知前端 (不仅发送弹窗，还通知有新消息)
+                        await SendSuggestionAsync(new ProactiveSuggestion
+                        {
+                            Title = "收到新洞察",
+                            Content = advice,
+                            Type = "task",
+                            Actions = new List<SuggestionAction>
+                            {
+                                new() { Label = "打开会话", Command = "open-session", Payload = session.Id.ToString(), Style = "btn-primary" },
+                                new() { Label = "忽略", Command = "dismiss", Style = "btn-ghost" }
+                            }
+                        });
+                    }
                 }
                 else if (action == "completed")
                 {
-                    // Hyperion 庆祝并建议下一步
-                    await HandleCompletedTodoAnalysis(item, aiService);
+                    // Hyperion 庆祝并建议下一步 - 存入数据库
+                    await HandleCompletedTodoAnalysis(item, aiService, db);
                 }
             }
             catch (Exception ex)
@@ -122,50 +155,48 @@ public class ProactiveBrainService
         });
     }
 
-    private async Task HandleNewTodoAnalysis(TodoItem item, AiService aiService)
+    private async Task HandleCompletedTodoAnalysis(TodoItem item, AiService aiService, AppDbContext db)
     {
-        // 模拟一个轻量级的分析，未来可以调用真正的 AI
-        // 这里我们先根据关键字做一些启发式建议，展示 Hyperion 的“主动性”
+        var title = "目标达成！";
+        var content = $"太棒了！你完成了任务: **{item.Title}**。基于目前的进度，建议下一步关注 **代码审查** 或 **更新文档**。";
         
-        var suggestion = new ProactiveSuggestion
+        if (item.UserId.HasValue)
         {
-            Title = "任务智能拆解",
-            Content = $"检测到新任务: **{item.Title}**。这个任务看起来需要多个步骤，需要我为你生成详细的子任务清单吗？",
-            Type = "task",
-            Actions = new List<SuggestionAction>
+            var session = await db.ChatSessions
+                .FirstOrDefaultAsync(s => s.UserId == item.UserId.Value && s.Title == "Hyperion 任务洞察");
+            
+            if (session == null)
             {
-                new() { Label = "生成子任务", Command = "generate-subtasks", Payload = item.Title, Style = "btn-primary" },
-                new() { Label = "忽略", Command = "dismiss", Style = "btn-ghost" }
+                session = new ChatSession { Title = "Hyperion 任务洞察", UserId = item.UserId.Value };
+                db.ChatSessions.Add(session);
+                await db.SaveChangesAsync();
             }
-        };
 
-        if (item.Title.ToLower().Contains("bug") || item.Title.ToLower().Contains("修复"))
-        {
-            suggestion.Title = "Bug 诊断辅助";
-            suggestion.Content = $"检测到 Bug 修复任务: **{item.Title}**。我可以帮你扫描相关代码并查找潜在原因。";
-            suggestion.Type = "warning";
-            suggestion.Actions[0].Label = "开始诊断";
-            suggestion.Actions[0].Command = "diagnose-bug";
+            var message = new Message
+            {
+                ChatSessionId = session.Id,
+                Content = content,
+                IsAi = true,
+                Timestamp = DateTime.UtcNow,
+                AgentName = "Hyperion"
+            };
+            db.Messages.Add(message);
+            session.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+
+            await SendSuggestionAsync(new ProactiveSuggestion
+            {
+                Title = title,
+                Content = content,
+                Type = "success",
+                Actions = new List<SuggestionAction>
+                {
+                    new() { Label = "打开会话", Command = "open-session", Payload = session.Id.ToString(), Style = "btn-primary" },
+                    new() { Label = "更新 README", Command = "update-docs", Style = "btn-outline" },
+                    new() { Label = "忽略", Command = "dismiss", Style = "btn-ghost" }
+                }
+            });
         }
-
-        await SendSuggestionAsync(suggestion);
-    }
-
-    private async Task HandleCompletedTodoAnalysis(TodoItem item, AiService aiService)
-    {
-        var suggestion = new ProactiveSuggestion
-        {
-            Title = "目标达成！",
-            Content = $"太棒了！你完成了: **{item.Title}**。基于目前的进度，建议下一步关注 **代码审查** 或 **更新文档**。",
-            Type = "success",
-            Actions = new List<SuggestionAction>
-            {
-                new() { Label = "更新 README", Command = "update-docs", Style = "btn-outline" },
-                new() { Label = "休息一下", Command = "dismiss", Style = "btn-ghost" }
-            }
-        };
-
-        await SendSuggestionAsync(suggestion);
     }
 
     /// <summary>

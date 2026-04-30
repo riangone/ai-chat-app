@@ -615,6 +615,7 @@
         // Proactive Agent SignalR Connection
         let proactiveConnection = null;
         let suggestionQueue = [];
+        let proactiveHistory = JSON.parse(localStorage.getItem('proactiveHistory') || '[]');
         let isShowingSuggestion = false;
 
         async function initProactiveAgent() {
@@ -641,7 +642,13 @@
 
             // Handle new rich proactive messages from ProactiveBrainService
             proactiveConnection.on('ProactiveMessage', (suggestion) => {
+                suggestion.id = Date.now();
+                suggestion.timestamp = new Date().toISOString();
+                proactiveHistory.unshift(suggestion);
+                if (proactiveHistory.length > 50) proactiveHistory.pop();
+                localStorage.setItem('proactiveHistory', JSON.stringify(proactiveHistory));
                 showProactiveSuggestion(suggestion);
+                updateProactiveHistoryUI();
             });
 
             try {
@@ -654,6 +661,28 @@
             } catch (err) {
                 console.error('Proactive connection failed: ', err);
             }
+        }
+
+        function updateProactiveHistoryUI() {
+            const container = document.getElementById('proactive-history-list');
+            if (!container) return;
+            if (proactiveHistory.length === 0) {
+                container.innerHTML = '<div class="text-center opacity-30 py-8 text-xs font-bold uppercase tracking-widest">No insights gathered yet</div>';
+                return;
+            }
+            container.innerHTML = proactiveHistory.map(s => `
+                <div class="p-3 bg-base-200/50 rounded-xl border border-base-content/5 mb-3 hover:border-primary/30 transition-all group relative overflow-hidden">
+                    <div class="flex justify-between items-start mb-2">
+                        <span class="badge badge-xs font-black uppercase tracking-tighter ${s.type === 'warning' ? 'badge-warning' : (s.type === 'insight' ? 'bg-indigo-500 text-white border-none' : 'badge-primary')}">${s.type}</span>
+                        <span class="text-[9px] opacity-30 font-mono">${new Date(s.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <h4 class="text-xs font-black truncate mb-1 pr-8">${s.title}</h4>
+                    <div class="text-[10px] opacity-70 leading-relaxed line-clamp-3 markdown">${marked.parse(s.content)}</div>
+                    <div class="flex justify-end gap-1 mt-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button class="btn btn-ghost btn-xs text-primary font-bold uppercase tracking-tighter" onclick="handleSuggestionAction('copy-to-chat', '${encodeURIComponent(s.content)}')">Use in Chat</button>
+                    </div>
+                </div>
+            `).join('');
         }
 
         function showProactiveSuggestion(suggestion) {
@@ -675,26 +704,30 @@
             
             const typeConfig = {
                 'file-change': { color: 'alert-info', icon: 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
-                'insight': { color: 'bg-indigo-500 text-white border-none', icon: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z' },
-                'task': { color: 'alert-primary', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01' },
-                'warning': { color: 'alert-warning', icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 17c-.77 1.333.192 3 1.732 3z' },
-                'success': { color: 'alert-success', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' }
+                'insight': { color: 'bg-indigo-600 text-white border-none shadow-xl shadow-indigo-500/20', icon: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z' },
+                'task': { color: 'alert-primary shadow-xl shadow-primary/20', icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01' },
+                'warning': { color: 'alert-warning shadow-xl shadow-warning/20', icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 17c-.77 1.333.192 3 1.732 3z' },
+                'success': { color: 'alert-success shadow-xl shadow-success/20', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' }
             };
             
             const config = typeConfig[suggestion.type] || typeConfig['file-change'];
+            const renderedContent = marked.parse(suggestion.content);
             
             const html = `
-                <div class="alert ${config.color} suggestion-card mb-3 p-4 flex-col items-start gap-3" id="current-suggestion">
+                <div class="alert ${config.color} suggestion-card mb-3 p-4 flex-col items-start gap-3 shadow-2xl backdrop-blur-xl border border-white/10" id="current-suggestion">
                     <div class="flex items-start gap-3 w-full">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" class="shrink-0 w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="${config.icon}"></path></svg>
-                        <div class="flex-1">
-                            <h3 class="font-black text-sm uppercase tracking-wider">${suggestion.title || 'Hyperion Insight'}</h3>
-                            <div class="text-xs mt-1 leading-relaxed">${suggestion.content}</div>
+                        <div class="p-2 bg-white/10 rounded-xl">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" class="shrink-0 w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="${config.icon}"></path></svg>
                         </div>
+                        <div class="flex-1 overflow-hidden">
+                            <h3 class="font-black text-[10px] uppercase tracking-[0.2em] opacity-70">${suggestion.title || 'Hyperion Insight'}</h3>
+                            <div class="text-xs mt-1.5 leading-relaxed markdown max-h-32 overflow-y-auto no-scrollbar">${renderedContent}</div>
+                        </div>
+                        <button onclick="dismissSuggestion()" class="btn btn-ghost btn-xs btn-circle opacity-50 hover:opacity-100">✕</button>
                     </div>
                     <div class="flex justify-end gap-2 w-full mt-1">
                         ${suggestion.actions ? suggestion.actions.map(a => 
-                            `<button class="btn btn-xs rounded-lg ${a.style || 'btn-ghost'}" onclick="handleSuggestionAction('${a.command}', '${a.payload || ''}')">${a.label}</button>`
+                            `<button class="btn btn-xs rounded-lg ${a.style || 'btn-ghost bg-white/5 font-bold uppercase tracking-tighter'}" onclick="handleSuggestionAction('${a.command}', '${a.payload || ''}')">${a.label}</button>`
                         ).join('') : ''}
                     </div>
                 </div>
@@ -702,21 +735,35 @@
             
             container.innerHTML = html;
             
-            // Auto-dismiss after 15 seconds for rich suggestions
-            setTimeout(() => {
+            // Auto-dismiss after 15 seconds
+            if (container.dataset.timeoutId) clearTimeout(container.dataset.timeoutId);
+            const timeoutId = setTimeout(() => {
                 dismissSuggestion();
             }, 15000);
+            container.dataset.timeoutId = timeoutId;
         }
+function handleSuggestionAction(command, payload) {
+    console.log('Executing Hyperion Command:', command, payload);
 
-        function handleSuggestionAction(command, payload) {
-            console.log('Executing Hyperion Command:', command, payload);
-            
-            switch(command) {
+    switch(command) {
+        case 'open-session':
+            loadChatSession(payload);
+            switchMainTab(0);
+            break;
+        case 'copy-to-chat':
+...
+
+                    const chatInput = document.getElementById('chat-input');
+                    if (chatInput) {
+                        chatInput.value = decodeURIComponent(payload);
+                        chatInput.focus();
+                        autoExpand(chatInput);
+                    }
+                    break;
                 case 'view-file':
                     viewFile(payload);
                     break;
                 case 'generate-subtasks':
-                    // Just an example: put text into chat input
                     const input = document.getElementById('chat-input');
                     input.value = `请帮我拆解这个任务：${payload}`;
                     input.focus();
@@ -727,12 +774,10 @@
                     handleFormSubmit();
                     break;
                 case 'memorize-note':
-                    // Note memorization logic
                     alert('正在将笔记存入长期记忆...');
                     break;
                 case 'dismiss':
                 default:
-                    // Just dismiss
                     break;
             }
             dismissSuggestion();
@@ -1377,6 +1422,9 @@
         document.addEventListener('htmx:afterSwap', (evt) => {
             if (evt.detail.target.id === 'files-content' || evt.detail.target.id === 'notes-list' || evt.detail.target.id === 'chat-list') {
                 updateUI();
+            }
+            if (evt.detail.target.tagName === 'ASIDE' || evt.detail.target.querySelector('aside')) {
+                updateProactiveHistoryUI();
             }
         });
     </script>

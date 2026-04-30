@@ -4,6 +4,7 @@ using AiChatApp.Models;
 using AiChatApp.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Net;
+using System.Security.Claims;
 
 namespace AiChatApp.Endpoints;
 
@@ -12,28 +13,48 @@ public static class TodoEndpoints
     public static void MapTodoEndpoints(this IEndpointRouteBuilder app)
     {
         // GET /todo → serve the SPA page
-        app.MapGet("/todo", () => Results.File("todo/index.html", "text/html"));
+        app.MapGet("/todo", (ClaimsPrincipal user) => 
+        {
+            if (user.Identity?.IsAuthenticated != true) return Results.Redirect("/login");
+            return Results.File("todo/index.html", "text/html");
+        });
 
-        var group = app.MapGroup("/api/todos");
+        var group = app.MapGroup("/api/todos").RequireAuthorization();
 
         // GET /api/todos → return HTML list fragment
-        group.MapGet("/", async (AppDbContext db) =>
+        group.MapGet("/", async (ClaimsPrincipal user, AppDbContext db, [FromQuery] int? page, [FromQuery] int? pageSize) =>
         {
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var p = page ?? 1;
+            var ps = pageSize ?? 20;
+
             var items = await db.TodoItems
+                .Where(t => t.UserId == userId)
                 .OrderByDescending(t => t.CreatedAt)
+                .Skip((p - 1) * ps)
+                .Take(ps + 1)
                 .ToListAsync();
 
-            var html = BuildListHtml(items);
+            var hasMore = items.Count > ps;
+            var itemsToReturn = items.Take(ps).ToList();
+
+            var html = BuildListHtml(itemsToReturn, p, ps, hasMore);
             return Results.Content(html, "text/html");
         });
 
         // POST /api/todos → create item, return new item HTML fragment
-        group.MapPost("/", async ([FromForm] string title, AppDbContext db, ProactiveBrainService brain) =>
+        group.MapPost("/", async ([FromForm] string title, ClaimsPrincipal user, AppDbContext db, ProactiveBrainService brain) =>
         {
             if (string.IsNullOrWhiteSpace(title))
                 return Results.BadRequest();
 
-            var item = new TodoItem { Title = title.Trim() };
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var item = new TodoItem 
+            { 
+                Title = title.Trim(),
+                UserId = userId,
+                CreatedAt = DateTime.UtcNow
+            };
             db.TodoItems.Add(item);
             await db.SaveChangesAsync();
 
@@ -43,9 +64,10 @@ public static class TodoEndpoints
         }).DisableAntiforgery();
 
         // PUT /api/todos/{id}/toggle → toggle IsCompleted, return updated item HTML
-        group.MapPut("/{id}/toggle", async (int id, AppDbContext db, ProactiveBrainService brain) =>
+        group.MapPut("/{id}/toggle", async (int id, ClaimsPrincipal user, AppDbContext db, ProactiveBrainService brain) =>
         {
-            var item = await db.TodoItems.FindAsync(id);
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var item = await db.TodoItems.FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
             if (item is null) return Results.NotFound();
 
             item.IsCompleted = !item.IsCompleted;
@@ -60,9 +82,10 @@ public static class TodoEndpoints
         }).DisableAntiforgery();
 
         // DELETE /api/todos/{id} → delete item, return empty string (HTMX removes element)
-        group.MapDelete("/{id}", async (int id, AppDbContext db) =>
+        group.MapDelete("/{id}", async (int id, ClaimsPrincipal user, AppDbContext db) =>
         {
-            var item = await db.TodoItems.FindAsync(id);
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var item = await db.TodoItems.FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
             if (item is null) return Results.NotFound();
 
             db.TodoItems.Remove(item);
@@ -72,22 +95,26 @@ public static class TodoEndpoints
         }).DisableAntiforgery();
     }
 
-    private static string BuildListHtml(List<TodoItem> items)
+    private static string BuildListHtml(List<TodoItem> items, int page, int pageSize, bool hasMore)
     {
-        if (!items.Any())
+        if (!items.Any() && page == 1)
             return "<li id=\"no-todos-hint\" class=\"text-center py-8 opacity-40\">No todos yet. Add one above!</li>";
 
-        return string.Join("", items.Select(BuildItemHtml));
+        return string.Join("", items.Select((item, index) => {
+            var isLast = index == items.Count - 1 && hasMore;
+            var scrollAttr = isLast ? $"hx-get='/api/todos?page={page + 1}&pageSize={pageSize}' hx-trigger='revealed' hx-swap='afterend'" : "";
+            return BuildItemHtml(item, scrollAttr);
+        }));
     }
 
-    private static string BuildItemHtml(TodoItem item)
+    private static string BuildItemHtml(TodoItem item, string extraAttrs = "")
     {
         var encodedTitle = WebUtility.HtmlEncode(item.Title);
         var completedClass = item.IsCompleted ? "line-through opacity-50" : "";
         var checkboxChecked = item.IsCompleted ? "checked" : "";
 
         return $"""
-            <li id="todo-{item.Id}" class="flex items-center gap-3 p-3 bg-base-200 rounded-lg">
+            <li id="todo-{item.Id}" class="flex items-center gap-3 p-3 bg-base-200 rounded-lg" {extraAttrs}>
               <input type="checkbox"
                 class="checkbox checkbox-primary"
                 {checkboxChecked}

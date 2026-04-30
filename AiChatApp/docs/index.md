@@ -30,6 +30,7 @@
 
 ## Enhancements
 - [IMPROVEMENTS.md](./IMPROVEMENTS.md) - 改进建议
+- [PAGINATION_DESIGN.md](./PAGINATION_DESIGN.md) - 分页加载详细设计
 
 ## User Guide
 - [USER_GUIDE.md](./USER_GUIDE.md) - 用户指南
