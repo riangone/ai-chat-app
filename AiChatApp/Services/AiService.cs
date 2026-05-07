@@ -216,16 +216,21 @@ public class AiService
         var pipeline = _pipelineLoader.Get("default") ?? throw new Exception("Default pipeline not found.");
         string currentInput = task;
         string contextFromPreviousStages = "";
+        OrchestratorPlan? activePlan = null;       // set after Orchestrator produces a task graph
+        Dictionary<string, AgentStep>? graphResults = null;
 
         foreach (var stage in pipeline.Stages)
         {
             if (stage.IsOptional && string.IsNullOrEmpty(currentInput)) continue;
 
+            // If task graph was executed, skip all non-reviewer intermediate stages
+            if (activePlan != null && stage.Role != "reviewer") continue;
+
             AgentStep? stageStep = null;
-            string stagePersona = !string.IsNullOrEmpty(stage.SystemPromptTemplate) 
+            string stagePersona = !string.IsNullOrEmpty(stage.SystemPromptTemplate)
                 ? await _pipelineLoader.GetPromptTemplateAsync(stage.SystemPromptTemplate)
                 : stage.SystemPromptInline ?? "You are a helpful AI assistant.";
-            
+
             for (int attempt = 1; attempt <= stage.MaxAttempts; attempt++)
             {
                 string combinedInput = string.IsNullOrEmpty(contextFromPreviousStages)
@@ -297,6 +302,21 @@ public class AiService
             if (stageStep is null) continue;   // skip stage if somehow never ran
             steps.Add(stageStep);
             if (onStepComplete != null) await onStepComplete(stageStep.Role, BuildStepHtml(stageStep));
+
+            // --- Task Graph: after Orchestrator, attempt parallel DAG execution ---
+            if (stage.Role == "orchestrator" && stageStep.WasAccepted)
+            {
+                var plan = TryParseOrchestratorPlan(stageStep.Output);
+                if (plan != null)
+                {
+                    activePlan   = plan;
+                    graphResults = await ExecuteTaskGraphAsync(plan, task, messageId, targetProvider, userId, chatSessionId, onStepComplete, steps);
+                    // Build structured review input for the Reviewer stage
+                    currentInput = BuildTaskGraphReviewInput(plan, graphResults, task);
+                    contextFromPreviousStages = $"Orchestrator plan:\n{stageStep.Output}";
+                    continue; // advance to Reviewer
+                }
+            }
 
             contextFromPreviousStages += $"\n--- Stage: {stage.Name} ---\n{stageStep.Output}\n";
             currentInput = stageStep.Output;
@@ -1072,6 +1092,149 @@ public class AiService
         }
 
         return (null, false); // still buffering
+    }
+
+    // ─────────────────────────────────────────
+    // Task Graph (Orchestrator → parallel DAG execution)
+    // ─────────────────────────────────────────
+
+    private record SubtaskDef(string Id, string Title, string Agent, string Task, string ExpectedOutput, List<string> Deps);
+    private record OrchestratorPlan(string Goal, List<SubtaskDef> Subtasks, string ExecutionNote);
+
+    private OrchestratorPlan? TryParseOrchestratorPlan(string output)
+    {
+        var json = ExtractJson(output);
+        if (string.IsNullOrEmpty(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("subtasks", out var stEl)) return null;
+
+            var subtasks = new List<SubtaskDef>();
+            foreach (var st in stEl.EnumerateArray())
+            {
+                var id    = st.TryGetProperty("id",             out var v) ? v.GetString() ?? "" : "";
+                var title = st.TryGetProperty("title",          out v)     ? v.GetString() ?? id : id;
+                var agent = st.TryGetProperty("agent",          out v)     ? v.GetString() ?? "Executor" : "Executor";
+                var task  = st.TryGetProperty("task",           out v)     ? v.GetString() ?? "" : "";
+                var exp   = st.TryGetProperty("expectedOutput", out v)     ? v.GetString() ?? "" : "";
+                var deps  = new List<string>();
+                if (st.TryGetProperty("deps", out var depsEl))
+                    foreach (var d in depsEl.EnumerateArray())
+                        deps.Add(d.GetString() ?? "");
+                if (!string.IsNullOrEmpty(id))
+                    subtasks.Add(new SubtaskDef(id, title, agent, task, exp, deps));
+            }
+            if (!subtasks.Any()) return null;
+
+            var goal = root.TryGetProperty("goal",          out var gv) ? gv.GetString() ?? "" : "";
+            var note = root.TryGetProperty("executionNote", out var nv) ? nv.GetString() ?? "" : "";
+            return new OrchestratorPlan(goal, subtasks, note);
+        }
+        catch { return null; }
+    }
+
+    // Returns subtasks grouped into parallel layers via topological sort.
+    private static List<List<SubtaskDef>> TopologicalLayers(List<SubtaskDef> subtasks)
+    {
+        var remaining = subtasks.ToList();
+        var completed = new HashSet<string>();
+        var layers    = new List<List<SubtaskDef>>();
+
+        while (remaining.Count > 0)
+        {
+            var ready = remaining.Where(s => s.Deps.All(d => completed.Contains(d))).ToList();
+            if (!ready.Any()) break; // circular dependency guard
+            layers.Add(ready);
+            foreach (var s in ready) { remaining.Remove(s); completed.Add(s.Id); }
+        }
+        return layers;
+    }
+
+    private async Task<Dictionary<string, AgentStep>> ExecuteTaskGraphAsync(
+        OrchestratorPlan plan, string originalTask, int messageId,
+        string defaultProvider, int userId, int? chatSessionId,
+        Func<string, string, Task>? onStepComplete, List<AgentStep> steps)
+    {
+        var allAgents   = await GetAvailableAgentsAsync(userId);
+        var projectRoot = await GetProjectRootAsync(chatSessionId);
+        var results     = new Dictionary<string, AgentStep>(); // id → step
+        var layers      = TopologicalLayers(plan.Subtasks);
+
+        foreach (var layer in layers)
+        {
+            var layerTasks = layer.Select(async subtask =>
+            {
+                var agentDef = allAgents.FirstOrDefault(a =>
+                    a.Name.Equals(subtask.Agent, StringComparison.OrdinalIgnoreCase))
+                    ?? new AgentDefinition(subtask.Agent, subtask.Agent, "", "You are a helpful AI assistant.");
+
+                var sb = new StringBuilder();
+                sb.AppendLine($"## Your Assignment: {subtask.Title}");
+                sb.AppendLine($"**Task:** {subtask.Task}");
+                sb.AppendLine($"**Expected Output:** {subtask.ExpectedOutput}");
+
+                if (subtask.Deps.Any())
+                {
+                    sb.AppendLine("\n## Context from upstream tasks:");
+                    foreach (var dep in subtask.Deps)
+                    {
+                        if (results.TryGetValue(dep, out var depStep))
+                        {
+                            var depDef = plan.Subtasks.FirstOrDefault(s => s.Id == dep);
+                            sb.AppendLine($"\n### [{dep}] {depDef?.Title ?? dep}:\n{depStep.Output}");
+                        }
+                    }
+                }
+
+                var step = await RunAgentStepAsync(
+                    role: agentDef.Name,
+                    persona: agentDef.SystemPrompt,
+                    input: sb.ToString(),
+                    messageId: messageId,
+                    provider: defaultProvider,
+                    userId: userId,
+                    chatSessionId: chatSessionId
+                );
+
+                var toolOutput = await _toolExecutor.ExecuteToolsAsync(step.Output, projectRoot);
+                if (toolOutput != step.Output) { step.Output = toolOutput; await _db.SaveChangesAsync(); }
+
+                _ = Task.Run(async () => {
+                    try { await _evalService.EvaluateStepAsync(step.Id, subtask.Task, step.Output, defaultProvider); }
+                    catch (Exception ex) { _logger.LogError(ex, "EvaluateStepAsync failed for task-graph step {StepId}", step.Id); }
+                });
+
+                return (subtask.Id, step);
+            }).ToList();
+
+            var layerResults = await Task.WhenAll(layerTasks);
+            foreach (var (id, step) in layerResults)
+            {
+                results[id] = step;
+                steps.Add(step);
+                if (onStepComplete != null) await onStepComplete(step.Role, BuildStepHtml(step));
+            }
+        }
+        return results;
+    }
+
+    private string BuildTaskGraphReviewInput(OrchestratorPlan plan, Dictionary<string, AgentStep> results, string originalTask)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"## Original Task\n{originalTask}");
+        sb.AppendLine($"\n## Orchestrator Goal\n{plan.Goal}");
+        if (!string.IsNullOrEmpty(plan.ExecutionNote))
+            sb.AppendLine($"\n## Execution Note\n{plan.ExecutionNote}");
+        sb.AppendLine("\n## Subtask Results");
+        foreach (var subtask in plan.Subtasks)
+        {
+            sb.AppendLine($"\n### [{subtask.Id}] {subtask.Title} (agent: {subtask.Agent})");
+            sb.AppendLine($"**Expected:** {subtask.ExpectedOutput}");
+            sb.AppendLine($"**Output:**\n{(results.TryGetValue(subtask.Id, out var s) ? s.Output : "(no output)")}");
+        }
+        return sb.ToString();
     }
 
     private static string CleanResponse(string text)

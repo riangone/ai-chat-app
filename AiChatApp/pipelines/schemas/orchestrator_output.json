@@ -1,22 +1,50 @@
 {
   "$schema": "http://json-schema.org/draft/2020-12/schema#",
   "type": "object",
+  "required": ["goal", "subtasks"],
   "properties": {
-    "analysis": {
+    "goal": {
       "type": "string",
-      "description": "Overall analysis of the task"
+      "description": "One-sentence summary of the overall objective"
     },
     "subtasks": {
       "type": "array",
+      "minItems": 1,
       "items": {
-        "type": "string"
-      },
-      "description": "List of subtasks to be executed"
+        "type": "object",
+        "required": ["id", "title", "agent", "task", "expectedOutput", "deps"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique subtask identifier (e.g. t1, t2)"
+          },
+          "title": {
+            "type": "string",
+            "description": "Short label for display"
+          },
+          "agent": {
+            "type": "string",
+            "description": "Role name of the agent responsible for this subtask"
+          },
+          "task": {
+            "type": "string",
+            "description": "Detailed task description for the agent"
+          },
+          "expectedOutput": {
+            "type": "string",
+            "description": "Concrete, verifiable deliverable"
+          },
+          "deps": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "IDs of subtasks that must complete before this one"
+          }
+        }
+      }
     },
-    "executionPlan": {
+    "executionNote": {
       "type": "string",
-      "description": "Detailed execution plan for the task"
+      "description": "Optional cross-cutting constraint or coordination note"
     }
-  },
-  "required": ["analysis", "subtasks", "executionPlan"]
+  }
 }

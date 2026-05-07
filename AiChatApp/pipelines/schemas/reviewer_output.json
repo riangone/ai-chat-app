@@ -1,24 +1,54 @@
 {
   "$schema": "http://json-schema.org/draft/2020-12/schema#",
   "type": "object",
+  "required": ["overallVerdict", "finalScore", "subtaskReviews", "summary"],
   "properties": {
-    "feedback": {
+    "overallVerdict": {
       "type": "string",
-      "description": "Detailed feedback on task execution"
+      "enum": ["approved", "revision_needed", "failed"]
     },
     "finalScore": {
       "type": "number",
       "minimum": 0,
-      "maximum": 1,
-      "description": "Final quality score (0-1)"
+      "maximum": 1
     },
-    "suggestions": {
+    "subtaskReviews": {
       "type": "array",
       "items": {
-        "type": "string"
-      },
-      "description": "Suggestions for improvement"
+        "type": "object",
+        "required": ["subtaskId", "verdict", "score", "issues"],
+        "properties": {
+          "subtaskId": { "type": "string" },
+          "verdict": {
+            "type": "string",
+            "enum": ["approved", "revision_needed", "failed"]
+          },
+          "score": { "type": "number", "minimum": 0, "maximum": 1 },
+          "strengths": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["severity", "description", "suggestion"],
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": ["critical", "high", "medium", "low"]
+                },
+                "description": { "type": "string" },
+                "suggestion": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "description": "2-3 sentence overall assessment"
     }
-  },
-  "required": ["feedback", "finalScore"]
+  }
 }
