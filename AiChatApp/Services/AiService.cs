@@ -216,8 +216,8 @@ public class AiService
         var pipeline = _pipelineLoader.Get("default") ?? throw new Exception("Default pipeline not found.");
         string currentInput = task;
         string contextFromPreviousStages = "";
-        OrchestratorPlan? activePlan = null;       // set after Orchestrator produces a task graph
-        Dictionary<string, AgentStep>? graphResults = null;
+        OrchestratorPlan? activePlan = null;
+        TaskBlackboard?   activeBoard = null;
 
         foreach (var stage in pipeline.Stages)
         {
@@ -309,10 +309,9 @@ public class AiService
                 var plan = TryParseOrchestratorPlan(stageStep.Output);
                 if (plan != null)
                 {
-                    activePlan   = plan;
-                    graphResults = await ExecuteTaskGraphAsync(plan, task, messageId, targetProvider, userId, chatSessionId, onStepComplete, steps);
-                    // Build structured review input for the Reviewer stage
-                    currentInput = BuildTaskGraphReviewInput(plan, graphResults, task);
+                    activePlan  = plan;
+                    activeBoard = await ExecuteTaskGraphAsync(plan, task, messageId, targetProvider, userId, chatSessionId, onStepComplete, steps);
+                    currentInput = BuildTaskGraphReviewInput(plan, activeBoard, task);
                     contextFromPreviousStages = $"Orchestrator plan:\n{stageStep.Output}";
                     continue; // advance to Reviewer
                 }
@@ -326,6 +325,41 @@ public class AiService
 
         if (!steps.Any())
             return (BuildCooperativeHtml(new List<AgentStep>(), task), steps);
+
+        // ── Directed revision: if Reviewer requested changes, re-run only affected subtasks ──
+        if (activePlan != null && activeBoard != null)
+        {
+            var reviewerStep = steps.LastOrDefault(s =>
+                s.Role.Equals("Reviewer", StringComparison.OrdinalIgnoreCase));
+
+            if (reviewerStep != null)
+            {
+                var feedback = TryParseReviewerFeedback(reviewerStep.Output);
+                if (feedback?.OverallVerdict is "revision_needed" or "failed")
+                {
+                    var revised = await ReviseFailedSubtasksAsync(
+                        activePlan, feedback, activeBoard,
+                        messageId, targetProvider, userId, chatSessionId,
+                        onStepComplete, steps);
+
+                    if (revised)
+                    {
+                        // Re-run Reviewer with updated blackboard
+                        var reviewPersona = await _pipelineLoader.GetPromptTemplateAsync("stage_reviewer.md");
+                        var reviewInput   = BuildTaskGraphReviewInput(activePlan, activeBoard, task);
+                        var newReviewStep = await RunAgentStepAsync(
+                            "Reviewer", reviewPersona, reviewInput,
+                            messageId, targetProvider, userId, chatSessionId, attemptNumber: 2);
+                        newReviewStep.WasAccepted = true;
+                        await _db.SaveChangesAsync();
+                        steps.Add(newReviewStep);
+                        if (onStepComplete != null)
+                            await onStepComplete(newReviewStep.Role, BuildStepHtml(newReviewStep));
+                    }
+                }
+            }
+        }
+
         string finalResult = steps.Last().Output;
         if (chatSessionId.HasValue)
         {
@@ -1094,12 +1128,55 @@ public class AiService
         return (null, false); // still buffering
     }
 
-    // ─────────────────────────────────────────
-    // Task Graph (Orchestrator → parallel DAG execution)
-    // ─────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+    // Task Graph  —  Orchestrator → DAG parallel execution → Review
+    // ═══════════════════════════════════════════════════════════════
+
+    // ── Data model ──────────────────────────────────────────────────
 
     private record SubtaskDef(string Id, string Title, string Agent, string Task, string ExpectedOutput, List<string> Deps);
     private record OrchestratorPlan(string Goal, List<SubtaskDef> Subtasks, string ExecutionNote);
+
+    // Blackboard: shared typed workspace every agent reads from / writes to
+    private record BlackboardArtifact(string SubtaskId, string AgentRole, string Content,
+                                      string ArtifactType, int RevisionNumber, DateTime CreatedAt);
+
+    private sealed class TaskBlackboard
+    {
+        private readonly Dictionary<string, BlackboardArtifact> _store = new();
+
+        public void Write(string subtaskId, string agentRole, string content,
+                          string artifactType = "text", int revision = 0)
+            => _store[subtaskId] = new BlackboardArtifact(subtaskId, agentRole, content,
+                                                          artifactType, revision, DateTime.UtcNow);
+
+        public BlackboardArtifact? Read(string subtaskId)
+            => _store.TryGetValue(subtaskId, out var a) ? a : null;
+
+        // Builds the "upstream context" block shown to an agent for its listed deps.
+        public string BuildDepContext(List<string> deps, List<SubtaskDef> allSubtasks)
+        {
+            if (!deps.Any()) return "";
+            var sb = new StringBuilder("\n## Context from upstream tasks:");
+            foreach (var dep in deps)
+            {
+                var artifact = Read(dep);
+                if (artifact == null) continue;
+                var def = allSubtasks.FirstOrDefault(s => s.Id == dep);
+                sb.AppendLine($"\n### [{dep}] {def?.Title ?? dep} (by {artifact.AgentRole}):");
+                sb.AppendLine(artifact.Content);
+            }
+            return sb.ToString();
+        }
+    }
+
+    // Reviewer structured output
+    private record ReviewIssue(string Severity, string Description, string Suggestion);
+    private record SubtaskReview(string SubtaskId, string Verdict, double Score, List<ReviewIssue> Issues);
+    private record ReviewerFeedback(string OverallVerdict, double FinalScore,
+                                    List<SubtaskReview> SubtaskReviews, string Summary);
+
+    // ── Parsing ─────────────────────────────────────────────────────
 
     private OrchestratorPlan? TryParseOrchestratorPlan(string output)
     {
@@ -1135,7 +1212,47 @@ public class AiService
         catch { return null; }
     }
 
-    // Returns subtasks grouped into parallel layers via topological sort.
+    private ReviewerFeedback? TryParseReviewerFeedback(string output)
+    {
+        var json = ExtractJson(output);
+        if (string.IsNullOrEmpty(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var verdict    = root.TryGetProperty("overallVerdict", out var vv) ? vv.GetString() ?? "" : "";
+            var score      = root.TryGetProperty("finalScore",      out var sv) ? sv.GetDouble() : 0.0;
+            var summary    = root.TryGetProperty("summary",         out var sumv) ? sumv.GetString() ?? "" : "";
+            var reviews    = new List<SubtaskReview>();
+
+            if (root.TryGetProperty("subtaskReviews", out var revEl))
+            {
+                foreach (var r in revEl.EnumerateArray())
+                {
+                    var stId    = r.TryGetProperty("subtaskId", out var idv) ? idv.GetString() ?? "" : "";
+                    var stVerdict = r.TryGetProperty("verdict",   out var rdv) ? rdv.GetString() ?? "" : "";
+                    var stScore = r.TryGetProperty("score",      out var scv) ? scv.GetDouble() : 0.0;
+                    var issues  = new List<ReviewIssue>();
+                    if (r.TryGetProperty("issues", out var issEl))
+                        foreach (var iss in issEl.EnumerateArray())
+                            issues.Add(new ReviewIssue(
+                                iss.TryGetProperty("severity",    out var sev) ? sev.GetString() ?? "" : "",
+                                iss.TryGetProperty("description", out var dsc) ? dsc.GetString() ?? "" : "",
+                                iss.TryGetProperty("suggestion",  out var sug) ? sug.GetString() ?? "" : ""
+                            ));
+                    if (!string.IsNullOrEmpty(stId))
+                        reviews.Add(new SubtaskReview(stId, stVerdict, stScore, issues));
+                }
+            }
+            return new ReviewerFeedback(verdict, score, reviews, summary);
+        }
+        catch { return null; }
+    }
+
+    // ── Scheduling ──────────────────────────────────────────────────
+
+    // Returns subtasks grouped into parallel layers (topological sort).
     private static List<List<SubtaskDef>> TopologicalLayers(List<SubtaskDef> subtasks)
     {
         var remaining = subtasks.ToList();
@@ -1152,75 +1269,152 @@ public class AiService
         return layers;
     }
 
-    private async Task<Dictionary<string, AgentStep>> ExecuteTaskGraphAsync(
+    // Given a set of directly-failed subtask IDs, propagate to all dependents.
+    private static HashSet<string> GetSubtasksToRevise(List<SubtaskDef> all, HashSet<string> failed)
+    {
+        var toRevise = new HashSet<string>(failed);
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var st in all)
+                if (!toRevise.Contains(st.Id) && st.Deps.Any(d => toRevise.Contains(d)))
+                { toRevise.Add(st.Id); changed = true; }
+        }
+        return toRevise;
+    }
+
+    // ── Execution ───────────────────────────────────────────────────
+
+    private string BuildAgentInput(SubtaskDef subtask, TaskBlackboard board,
+                                   OrchestratorPlan plan, string? reviewerIssues = null)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"## Your Assignment: {subtask.Title}");
+        sb.AppendLine($"**Task:** {subtask.Task}");
+        sb.AppendLine($"**Expected Output:** {subtask.ExpectedOutput}");
+        sb.Append(board.BuildDepContext(subtask.Deps, plan.Subtasks));
+
+        if (!string.IsNullOrEmpty(reviewerIssues))
+        {
+            sb.AppendLine("\n## Revision Required — Reviewer Feedback:");
+            sb.AppendLine(reviewerIssues);
+            sb.AppendLine("\nPlease address ALL issues above in your revised output.");
+        }
+        return sb.ToString();
+    }
+
+    private async Task RunSubtaskLayerAsync(
+        List<SubtaskDef> layer, OrchestratorPlan plan, TaskBlackboard board,
+        int messageId, string provider, int userId, int? chatSessionId,
+        Func<string, string, Task>? onStepComplete, List<AgentStep> steps,
+        List<AgentDefinition> allAgents, string? projectRoot,
+        Dictionary<string, string>? reviewerIssuesPerTask = null,
+        int revisionNumber = 0)
+    {
+        var layerTasks = layer.Select(async subtask =>
+        {
+            var agentDef = allAgents.FirstOrDefault(a =>
+                a.Name.Equals(subtask.Agent, StringComparison.OrdinalIgnoreCase))
+                ?? new AgentDefinition(subtask.Agent, subtask.Agent, "", "You are a helpful AI assistant.");
+
+            string? issues = null;
+            reviewerIssuesPerTask?.TryGetValue(subtask.Id, out issues);
+            var input = BuildAgentInput(subtask, board, plan, issues);
+
+            var step = await RunAgentStepAsync(
+                role: agentDef.Name,
+                persona: agentDef.SystemPrompt,
+                input: input,
+                messageId: messageId,
+                provider: provider,
+                userId: userId,
+                chatSessionId: chatSessionId,
+                attemptNumber: revisionNumber + 1
+            );
+
+            var toolOut = await _toolExecutor.ExecuteToolsAsync(step.Output, projectRoot);
+            if (toolOut != step.Output) { step.Output = toolOut; await _db.SaveChangesAsync(); }
+
+            board.Write(subtask.Id, agentDef.Name, step.Output, revision: revisionNumber);
+
+            _ = Task.Run(async () => {
+                try { await _evalService.EvaluateStepAsync(step.Id, subtask.Task, step.Output, provider); }
+                catch (Exception ex) { _logger.LogError(ex, "EvaluateStepAsync failed for step {StepId}", step.Id); }
+            });
+
+            return (subtask.Id, step);
+        }).ToList();
+
+        var results = await Task.WhenAll(layerTasks);
+        foreach (var (_, step) in results)
+        {
+            steps.Add(step);
+            if (onStepComplete != null) await onStepComplete(step.Role, BuildStepHtml(step));
+        }
+    }
+
+    private async Task<TaskBlackboard> ExecuteTaskGraphAsync(
         OrchestratorPlan plan, string originalTask, int messageId,
         string defaultProvider, int userId, int? chatSessionId,
         Func<string, string, Task>? onStepComplete, List<AgentStep> steps)
     {
         var allAgents   = await GetAvailableAgentsAsync(userId);
         var projectRoot = await GetProjectRootAsync(chatSessionId);
-        var results     = new Dictionary<string, AgentStep>(); // id → step
+        var board       = new TaskBlackboard();
         var layers      = TopologicalLayers(plan.Subtasks);
 
         foreach (var layer in layers)
-        {
-            var layerTasks = layer.Select(async subtask =>
-            {
-                var agentDef = allAgents.FirstOrDefault(a =>
-                    a.Name.Equals(subtask.Agent, StringComparison.OrdinalIgnoreCase))
-                    ?? new AgentDefinition(subtask.Agent, subtask.Agent, "", "You are a helpful AI assistant.");
+            await RunSubtaskLayerAsync(layer, plan, board, messageId, defaultProvider,
+                userId, chatSessionId, onStepComplete, steps, allAgents, projectRoot);
 
-                var sb = new StringBuilder();
-                sb.AppendLine($"## Your Assignment: {subtask.Title}");
-                sb.AppendLine($"**Task:** {subtask.Task}");
-                sb.AppendLine($"**Expected Output:** {subtask.ExpectedOutput}");
-
-                if (subtask.Deps.Any())
-                {
-                    sb.AppendLine("\n## Context from upstream tasks:");
-                    foreach (var dep in subtask.Deps)
-                    {
-                        if (results.TryGetValue(dep, out var depStep))
-                        {
-                            var depDef = plan.Subtasks.FirstOrDefault(s => s.Id == dep);
-                            sb.AppendLine($"\n### [{dep}] {depDef?.Title ?? dep}:\n{depStep.Output}");
-                        }
-                    }
-                }
-
-                var step = await RunAgentStepAsync(
-                    role: agentDef.Name,
-                    persona: agentDef.SystemPrompt,
-                    input: sb.ToString(),
-                    messageId: messageId,
-                    provider: defaultProvider,
-                    userId: userId,
-                    chatSessionId: chatSessionId
-                );
-
-                var toolOutput = await _toolExecutor.ExecuteToolsAsync(step.Output, projectRoot);
-                if (toolOutput != step.Output) { step.Output = toolOutput; await _db.SaveChangesAsync(); }
-
-                _ = Task.Run(async () => {
-                    try { await _evalService.EvaluateStepAsync(step.Id, subtask.Task, step.Output, defaultProvider); }
-                    catch (Exception ex) { _logger.LogError(ex, "EvaluateStepAsync failed for task-graph step {StepId}", step.Id); }
-                });
-
-                return (subtask.Id, step);
-            }).ToList();
-
-            var layerResults = await Task.WhenAll(layerTasks);
-            foreach (var (id, step) in layerResults)
-            {
-                results[id] = step;
-                steps.Add(step);
-                if (onStepComplete != null) await onStepComplete(step.Role, BuildStepHtml(step));
-            }
-        }
-        return results;
+        return board;
     }
 
-    private string BuildTaskGraphReviewInput(OrchestratorPlan plan, Dictionary<string, AgentStep> results, string originalTask)
+    // One directed revision pass: re-runs only failed subtasks (+ dependents).
+    private async Task<bool> ReviseFailedSubtasksAsync(
+        OrchestratorPlan plan, ReviewerFeedback feedback, TaskBlackboard board,
+        int messageId, string defaultProvider, int userId, int? chatSessionId,
+        Func<string, string, Task>? onStepComplete, List<AgentStep> steps)
+    {
+        var failedIds = feedback.SubtaskReviews
+            .Where(r => r.Verdict is "revision_needed" or "failed")
+            .Select(r => r.SubtaskId)
+            .ToHashSet();
+
+        if (!failedIds.Any()) return false;
+
+        // Propagate failures to dependents so they re-run with fresh upstream output
+        var toRevise = GetSubtasksToRevise(plan.Subtasks, failedIds);
+
+        // Build per-task issue summary from Reviewer feedback
+        var issuesMap = feedback.SubtaskReviews
+            .Where(r => toRevise.Contains(r.SubtaskId) && r.Issues.Any())
+            .ToDictionary(
+                r => r.SubtaskId,
+                r => string.Join("\n", r.Issues.Select(i =>
+                    $"- [{i.Severity.ToUpper()}] {i.Description}\n  → Suggestion: {i.Suggestion}"))
+            );
+
+        var subtasksToRevise = plan.Subtasks.Where(s => toRevise.Contains(s.Id)).ToList();
+        var layers = TopologicalLayers(subtasksToRevise);
+        var allAgents = await GetAvailableAgentsAsync(userId);
+        var projectRoot = await GetProjectRootAsync(chatSessionId);
+
+        _logger.LogInformation("Directing revision for {Count} subtasks: {Ids}",
+            toRevise.Count, string.Join(", ", toRevise));
+
+        foreach (var layer in layers)
+            await RunSubtaskLayerAsync(layer, plan, board, messageId, defaultProvider,
+                userId, chatSessionId, onStepComplete, steps, allAgents, projectRoot,
+                reviewerIssuesPerTask: issuesMap, revisionNumber: 1);
+
+        return true;
+    }
+
+    // ── Review input builders ────────────────────────────────────────
+
+    private string BuildTaskGraphReviewInput(OrchestratorPlan plan, TaskBlackboard board, string originalTask)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"## Original Task\n{originalTask}");
@@ -1230,9 +1424,12 @@ public class AiService
         sb.AppendLine("\n## Subtask Results");
         foreach (var subtask in plan.Subtasks)
         {
+            var artifact = board.Read(subtask.Id);
             sb.AppendLine($"\n### [{subtask.Id}] {subtask.Title} (agent: {subtask.Agent})");
             sb.AppendLine($"**Expected:** {subtask.ExpectedOutput}");
-            sb.AppendLine($"**Output:**\n{(results.TryGetValue(subtask.Id, out var s) ? s.Output : "(no output)")}");
+            if (artifact != null && artifact.RevisionNumber > 0)
+                sb.AppendLine($"**(Revision {artifact.RevisionNumber})**");
+            sb.AppendLine($"**Output:**\n{artifact?.Content ?? "(no output)"}");
         }
         return sb.ToString();
     }
