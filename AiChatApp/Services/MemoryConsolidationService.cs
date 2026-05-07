@@ -1,4 +1,5 @@
 using AiChatApp.Models;
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
 namespace AiChatApp.Services;
@@ -6,14 +7,14 @@ namespace AiChatApp.Services;
 public class MemoryConsolidationService
 {
     private readonly AiService _aiService;
-    private readonly IConfiguration _config;
     private readonly MemoryFileService _fileService;
+    private readonly ILogger<MemoryConsolidationService> _logger;
 
-    public MemoryConsolidationService(AiService aiService, IConfiguration config, MemoryFileService fileService)
+    public MemoryConsolidationService(AiService aiService, MemoryFileService fileService, ILogger<MemoryConsolidationService> logger)
     {
         _aiService = aiService;
-        _config = config;
         _fileService = fileService;
+        _logger = logger;
     }
 
     public async Task TryConsolidateAsync(string userMessage, string aiResponse, int userId)
@@ -36,9 +37,9 @@ public class MemoryConsolidationService
             ]
             """;
 
-        string provider = _config["MemoryProvider"] ?? "claude";
+        string provider = _aiService.DefaultProvider;
         string rawJson = await _aiService.ExecuteCliDirectAsync(extractionPrompt, provider);
-        Console.WriteLine($"[Memory] Raw {provider} output ({rawJson.Length} chars): {rawJson[..Math.Min(300, rawJson.Length)]}");
+        _logger.LogDebug("[Memory] Raw {Provider} output ({Length} chars): {Preview}", provider, rawJson.Length, rawJson[..Math.Min(300, rawJson.Length)]);
 
         rawJson = System.Text.RegularExpressions.Regex.Replace(rawJson, @"```(?:json)?\s*", "").Trim();
 
@@ -46,7 +47,7 @@ public class MemoryConsolidationService
         int end = rawJson.LastIndexOf(']');
         if (start < 0 || end < 0 || end <= start)
         {
-            Console.WriteLine($"[Memory] No JSON array found. start={start}, end={end}");
+            _logger.LogDebug("[Memory] No JSON array found. start={Start}, end={End}", start, end);
             return;
         }
 
@@ -59,7 +60,7 @@ public class MemoryConsolidationService
 
             if (items == null || !items.Any())
             {
-                Console.WriteLine("[Memory] No items extracted.");
+                _logger.LogDebug("[Memory] No items extracted.");
                 return;
             }
 
@@ -95,15 +96,15 @@ public class MemoryConsolidationService
                 }
             }
 
-            Console.WriteLine($"[Memory] Saved {items.Count} memory items for userId={userId}");
+            _logger.LogDebug("[Memory] Saved {Count} memory items for userId={UserId}", items.Count, userId);
         }
         catch (JsonException ex)
         {
-            Console.WriteLine($"[Memory] JSON parse error: {ex.Message}");
+            _logger.LogWarning(ex, "[Memory] JSON parse error: {Message}", ex.Message);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Memory] Unexpected error: {ex.Message}");
+            _logger.LogWarning(ex, "[Memory] Unexpected error: {Message}", ex.Message);
         }
     }
 

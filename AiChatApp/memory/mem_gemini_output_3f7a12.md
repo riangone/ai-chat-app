@@ -7,9 +7,9 @@ type: user
 userId: 0
 tags: gemini output preference
 relevanceScore: 80
-accessCount: 9
+accessCount: 11
 createdAt: 2026-04-27T23:39:21.1589108Z
-lastAccessedAt: 2026-04-29T11:30:19.0863178Z
+lastAccessedAt: 2026-05-01T13:05:59.0355015Z
 ---
 
 gemini CLIの返信は最終メッセージのみ返す。中間メッセージは不要。thinking モードは無効化する。

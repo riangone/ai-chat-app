@@ -15,7 +15,10 @@ public static class ApplicationExtensions
         // Seed default admin user if not exists
         if (!await db.Users.AnyAsync(u => u.Username == "admin"))
         {
-            var admin = new User { Username = "admin", PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin123"), DefaultProvider = "" };
+            var adminPassword = Environment.GetEnvironmentVariable("ADMIN_INITIAL_PASSWORD") ?? "admin123";
+            if (adminPassword == "admin123")
+                app.Logger.LogWarning("Using default admin password 'admin123'. Set ADMIN_INITIAL_PASSWORD env var in production.");
+            var admin = new User { Username = "admin", PasswordHash = BCrypt.Net.BCrypt.HashPassword(adminPassword), DefaultProvider = "" };
             db.Users.Add(admin);
             await db.SaveChangesAsync();
         }

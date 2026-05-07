@@ -27,11 +27,43 @@ public class AiService
     public record AgentDefinition(string Name, string DisplayName, string Description, string SystemPrompt);
     private record CliResult(string Output, string Model, int PromptTokens, int CompletionTokens, int TotalTokens);
 
+    private static readonly string[] PromptPrefixes = { 
+        "System:", "User:", "Assistant:", "Context:", "History:", 
+        "Thought:", "Thinking:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:", 
+        "[相关的长期记忆]:", "[当前会话上下文]:",
+        "[追加スキル指示]:", "[MEMORY INSTRUCTION]:", "[ENVIRONMENTAL POLICIES & CONSTRAINTS]:", 
+        "--- Policy:", "Role:", "Persona:", "Input:", "Output:"
+    };
+
+    private static readonly string[] SystemPromptFragments = { 
+        "あなたは高度なAIアシスタントです", 
+        "你是高度进化的自主 AI 代理",
+        "現在はソフトウェア開発プロジェクトのコンテキストで動作しています",
+        "你目前运行在 AiChatApp 项目的上下文中",
+        "你是 Hyperion",
+        "专注于软件工程、系统架构和自动化开发任务",
+        "请始终以 Hyperion 的身份行事",
+        "你不仅要提供代码",
+        "理解项目的整体结构",
+        "根据需要自主规划和执行文件操作",
+        "明确列出你执行的动作",
+        "あなたはタスク分解の専門家",
+        "あなたは実装の専門家",
+        "あなたは評審の専門家",
+        "[MEMORY INSTRUCTION]",
+        "[会話履歴]:",
+        "[ユーザーの既知情報・長期記憶]:",
+        "[相关的长期记忆]:",
+        "重要な発見や制約があれば"
+    };
+
+    private readonly ILogger<AiService> _logger;
+
     public AiService(AppDbContext db, MemorySearchService memorySearch, 
         SessionMemoryService sessionMemory, IServiceProvider serviceProvider, 
         SkillManagerService skillManager, PipelineLoaderService pipelineLoader, 
         SchemaValidationService schemaValidator, ToolExecutorService toolExecutor,
-        EvalService evalService, IConfiguration config)
+        EvalService evalService, IConfiguration config, ILogger<AiService> logger)
     {
         _db = db;
         _memorySearch = memorySearch;
@@ -43,6 +75,7 @@ public class AiService
         _toolExecutor = toolExecutor;
         _evalService = evalService;
         _config = config;
+        _logger = logger;
     }
 
     public string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "gemini";
@@ -57,36 +90,6 @@ public class AiService
     {
         var skills = await _skillManager.GetAllSkillsAsync();
         return skills.Select(s => new AgentDefinition(s.Name, s.DisplayName, s.Description, s.Prompt)).ToList();
-    }
-
-    private async Task<AgentDefinition?> LoadAgentFromDirAsync(string dirPath)
-    {
-        var skillFile = Path.Combine(dirPath, "SKILL.md");
-        if (!File.Exists(skillFile)) return null;
-
-        var content = await File.ReadAllTextAsync(skillFile);
-        var name = Path.GetFileName(dirPath);
-        var description = "";
-        var systemPrompt = content;
-
-        // 尝试解析 YAML Front Matter (简单实现)
-        if (content.StartsWith("---"))
-        {
-            var endIdx = content.IndexOf("---", 3);
-            if (endIdx > 0)
-            {
-                var yaml = content.Substring(3, endIdx - 3);
-                var lines = yaml.Split('\n');
-                foreach (var line in lines)
-                {
-                    if (line.StartsWith("name:")) name = line.Replace("name:", "").Trim();
-                    if (line.StartsWith("description:")) description = line.Replace("description:", "").Trim();
-                }
-                systemPrompt = content.Substring(endIdx + 3).Trim();
-            }
-        }
-
-        return new AgentDefinition(name, name, description, systemPrompt);
     }
 
     // ─────────────────────────────────────────
@@ -185,7 +188,10 @@ public class AiService
                 await _db.SaveChangesAsync();
 
                 // --- Evaluation ---
-                _ = Task.Run(() => _evalService.EvaluateStepAsync(step.Id, task, step.Output, targetProvider));
+                _ = Task.Run(async () => {
+                    try { await _evalService.EvaluateStepAsync(step.Id, task, step.Output, targetProvider); }
+                    catch (Exception ex) { _logger.LogError(ex, "EvaluateStepAsync failed for step {StepId}", step.Id); }
+                });
 
                 steps.Add(step);
                 lastOutput = step.Output;
@@ -196,8 +202,10 @@ public class AiService
             if (chatSessionId.HasValue)
             {
                 _ = Task.Run(async () => {
-                    await _sessionMemory.PromoteToLongTermAsync(chatSessionId.Value, userId);
-                    await _skillLearning.LearnFromInteractionAsync(task, lastOutput, steps, userId);
+                    try {
+                        await _sessionMemory.PromoteToLongTermAsync(chatSessionId.Value, userId);
+                        await _skillLearning.LearnFromInteractionAsync(task, lastOutput, steps, userId);
+                    } catch (Exception ex) { _logger.LogError(ex, "PromoteToLongTerm/LearnFromInteraction failed for session {SessionId}", chatSessionId.Value); }
                 });
             }
 
@@ -213,7 +221,7 @@ public class AiService
         {
             if (stage.IsOptional && string.IsNullOrEmpty(currentInput)) continue;
 
-            AgentStep stageStep = null!;
+            AgentStep? stageStep = null;
             string stagePersona = !string.IsNullOrEmpty(stage.SystemPromptTemplate) 
                 ? await _pipelineLoader.GetPromptTemplateAsync(stage.SystemPromptTemplate)
                 : stage.SystemPromptInline ?? "You are a helpful AI assistant.";
@@ -278,11 +286,15 @@ public class AiService
                 await _db.SaveChangesAsync();
 
                 // --- Evaluation ---
-                _ = Task.Run(() => _evalService.EvaluateStepAsync(stageStep.Id, task, stageStep.Output, stage.Provider ?? provider));
+                _ = Task.Run(async () => {
+                    try { await _evalService.EvaluateStepAsync(stageStep.Id, task, stageStep.Output, stage.Provider ?? provider); }
+                    catch (Exception ex) { _logger.LogError(ex, "EvaluateStepAsync failed for step {StepId}", stageStep.Id); }
+                });
 
                 break;
             }
 
+            if (stageStep is null) continue;   // skip stage if somehow never ran
             steps.Add(stageStep);
             if (onStepComplete != null) await onStepComplete(stageStep.Role, BuildStepHtml(stageStep));
 
@@ -292,12 +304,16 @@ public class AiService
             if (stage.IsFinalStage) break;
         }
 
+        if (!steps.Any())
+            return (BuildCooperativeHtml(new List<AgentStep>(), task), steps);
         string finalResult = steps.Last().Output;
         if (chatSessionId.HasValue)
         {
             _ = Task.Run(async () => {
-                await _sessionMemory.PromoteToLongTermAsync(chatSessionId.Value, userId);
-                await _skillLearning.LearnFromInteractionAsync(task, finalResult, steps, userId);
+                try {
+                    await _sessionMemory.PromoteToLongTermAsync(chatSessionId.Value, userId);
+                    await _skillLearning.LearnFromInteractionAsync(task, finalResult, steps, userId);
+                } catch (Exception ex) { _logger.LogError(ex, "PromoteToLongTerm/LearnFromInteraction failed for session {SessionId}", chatSessionId.Value); }
             });
         }
 
@@ -479,7 +495,6 @@ public class AiService
         var prefixBuffer = new StringBuilder();
         bool prefixHandled = false;
         const int maxPrefixBuffer = 4096;
-        string[] promptPrefixes = { "System:", "User:", "Assistant:", "Context:", "History:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:" };
 
         if (useJsonStreaming)
         {
@@ -517,7 +532,10 @@ public class AiService
                 if (chunk != null)
                 {
                     fullResponse.Append(chunk);
-                    yield return chunk;
+                    var (toYield, handled) = HandlePrefixBuffer(prefixBuffer, chunk, prefixHandled, maxPrefixBuffer);
+                    prefixHandled = handled;
+                    if (toYield != null) yield return toYield;
+                    else if (handled) yield return chunk;
                 }
             }
         }
@@ -525,48 +543,20 @@ public class AiService
         {
             var buffer = new char[64];
             int read;
-            while ((read = await process.StandardOutput.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            while ((read = await process.StandardOutput.ReadAsync(buffer,0, buffer.Length)) > 0)
             {
-                var chunk = new string(buffer, 0, read);
+                var chunk = new string(buffer,0, read);
                 fullResponse.Append(chunk);
-                if (!prefixHandled)
-                {
-                    prefixBuffer.Append(chunk);
-                    var buf = prefixBuffer.ToString();
-                    
-                    bool startsWithPrefix = promptPrefixes.Any(p => buf.StartsWith(p, StringComparison.OrdinalIgnoreCase));
-                    
-                    if (!startsWithPrefix)
-                    {
-                        prefixHandled = true;
-                        yield return buf;
-                        prefixBuffer.Clear();
-                    }
-                    else if (buf.Contains("\nUser:") || buf.Contains("\nAssistant:"))
-                    {
-                        // We think we've reached the end of the echoed prompt
-                        var stripped = StripEchoedPromptPrefix(buf);
-                        prefixHandled = true;
-                        if (!string.IsNullOrEmpty(stripped)) yield return stripped;
-                        prefixBuffer.Clear();
-                    }
-                    else if (buf.Length >= maxPrefixBuffer)
-                    {
-                        prefixHandled = true;
-                        yield return buf;
-                        prefixBuffer.Clear();
-                    }
-                }
-                else
-                {
-                    yield return chunk;
-                }
+                var (toYield, handled) = HandlePrefixBuffer(prefixBuffer, chunk, prefixHandled, maxPrefixBuffer);
+                prefixHandled = handled;
+                if (toYield != null) yield return toYield;
+                else if (handled) yield return chunk;
             }
-            if (!prefixHandled && prefixBuffer.Length > 0)
-            {
-                var stripped = StripEchoedPromptPrefix(prefixBuffer.ToString());
-                if (!string.IsNullOrEmpty(stripped)) yield return stripped;
-            }
+        }
+        if (!prefixHandled && prefixBuffer.Length > 0)
+        {
+            var stripped = StripEchoedPromptPrefix(prefixBuffer.ToString());
+            if (!string.IsNullOrEmpty(stripped)) yield return stripped;
         }
         try { await process.WaitForExitAsync(); } catch { }
         cts.Cancel();
@@ -981,30 +971,6 @@ public class AiService
         int firstContentLine = -1;
         string? firstLineContent = null;
         
-        string[] promptPrefixes = { 
-            "System:", "User:", "Assistant:", "Context:", "History:", 
-            "Thought:", "Thinking:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:", 
-            "[相关的长期记忆]:", "[当前会话上下文]:",
-            "[追加スキル指示]:", "[MEMORY INSTRUCTION]:", "[ENVIRONMENTAL POLICIES & CONSTRAINTS]:", 
-            "--- Policy:", "Role:", "Persona:", "Input:", "Output:"
-        };
-        // Removed "Memory:" from the list above because AI uses "MEMORY: key=value" for memory extraction.
-
-        string[] systemPromptFragments = { 
-            "あなたは高度なAIアシスタントです", 
-            "你是高度进化的自主 AI 代理",
-            "現在はソフトウェア開発プロジェクトのコンテキストで動作しています",
-            "你目前运行在 AiChatApp 项目的上下文中",
-            "あなたはタスク分解の専門家",
-            "あなたは実装の専門家",
-            "あなたは評審の専門家",
-            "[MEMORY INSTRUCTION]",
-            "[会話履歴]:",
-            "[ユーザーの既知情報・長期記憶]:",
-            "[相关的长期记忆]:",
-            "重要な発見や制約があれば"
-        };
-
         for (int i = 0; i < Math.Min(lines.Length, 150); i++)
         {
             var trimmedLine = lines[i].Trim();
@@ -1012,7 +978,7 @@ public class AiService
 
             bool isPrefixHeader = false;
             string? matchedPrefix = null;
-            foreach (var p in promptPrefixes)
+            foreach (var p in PromptPrefixes)
             {
                 if (trimmedLine.StartsWith(p, StringComparison.OrdinalIgnoreCase))
                 {
@@ -1022,7 +988,7 @@ public class AiService
                 }
             }
 
-            bool isSystemFragment = systemPromptFragments.Any(f => trimmedLine.Contains(f));
+            bool isSystemFragment = SystemPromptFragments.Any(f => trimmedLine.Contains(f));
 
             if (isPrefixHeader)
             {
@@ -1031,7 +997,7 @@ public class AiService
                 if (!string.IsNullOrEmpty(contentAfter))
                 {
                     // If the content after the prefix is also a known system fragment, skip it
-                    if (systemPromptFragments.Any(f => contentAfter.Contains(f)))
+                    if (SystemPromptFragments.Any(f => contentAfter.Contains(f)))
                     {
                         continue;
                     }
@@ -1067,11 +1033,52 @@ public class AiService
         return text.Trim();
     }
 
+    /// <summary>
+    /// Handles the prefix-stripping buffer for streaming output.
+    /// Returns (chunk to yield or null, whether prefix handling is now complete).
+    /// </summary>
+    private static (string? toYield, bool handled) HandlePrefixBuffer(
+        StringBuilder prefixBuffer, string chunk, bool prefixHandled, int maxBuffer)
+    {
+        if (prefixHandled)
+            return (chunk, true);
+
+        prefixBuffer.Append(chunk);
+        var buf = prefixBuffer.ToString();
+
+        bool startsWithPrefix =
+            PromptPrefixes.Any(p => buf.StartsWith(p, StringComparison.OrdinalIgnoreCase)) ||
+            SystemPromptFragments.Any(f => buf.StartsWith(f, StringComparison.OrdinalIgnoreCase));
+
+        if (!startsWithPrefix)
+        {
+            prefixBuffer.Clear();
+            return (buf, true);
+        }
+
+        if (buf.Contains("\nUser:") || buf.Contains("\nAssistant:") ||
+            buf.Contains("\nAssistant ") || buf.Contains("\n["))
+        {
+            var stripped = StripEchoedPromptPrefix(buf);
+            prefixBuffer.Clear();
+            return (string.IsNullOrEmpty(stripped) ? null : stripped, true);
+        }
+
+        if (buf.Length >= maxBuffer)
+        {
+            var stripped = StripEchoedPromptPrefix(buf);
+            prefixBuffer.Clear();
+            return (string.IsNullOrEmpty(stripped) ? null : stripped, true);
+        }
+
+        return (null, false); // still buffering
+    }
+
     private static string CleanResponse(string text)
     {
         if (string.IsNullOrEmpty(text)) return text;
 
-        // 1. Strip echoed System:/User: prompt prefix
+        // 1. Strip echoed System:/User: prompt prefix (Multi-line heuristic)
         text = StripEchoedPromptPrefix(text);
 
         // 2. Remove XML-style thinking/thought tags
@@ -1083,11 +1090,44 @@ public class AiService
         text = Regex.Replace(text, @"\n\n(Thought|Thinking|Reasoning):.*?\n\n", "\n\n", RegexOptions.Singleline | RegexOptions.IgnoreCase);
         text = Regex.Replace(text, @"(Thought|Thinking|Reasoning):.*?$", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
 
-        // 4. Final check for any leaking "System:" or "Assistant:" at the very beginning
-        if (text.StartsWith("System:", StringComparison.OrdinalIgnoreCase))
-            text = text.Substring(7).Trim();
-        if (text.StartsWith("Assistant:", StringComparison.OrdinalIgnoreCase))
-            text = text.Substring(10).Trim();
+        // 4. Aggressively and repeatedly strip any leading system fragments or prefixes from the start
+        bool changed;
+        do
+        {
+            changed = false;
+            text = text.Trim();
+            
+            // Check for explicit prefixes (e.g., "System:", "Assistant:")
+            foreach (var p in PromptPrefixes)
+            {
+                if (text.StartsWith(p, StringComparison.OrdinalIgnoreCase))
+                {
+                    text = text.Substring(p.Length).Trim();
+                    changed = true;
+                    break;
+                }
+            }
+            if (changed) continue;
+
+            // Check for known system prompt fragments
+            foreach (var f in SystemPromptFragments)
+            {
+                if (text.StartsWith(f, StringComparison.OrdinalIgnoreCase))
+                {
+                    text = text.Substring(f.Length).Trim();
+                    changed = true;
+                    break;
+                }
+            }
+            
+            // Strip common punctuation that might remain after a prefix
+            if (text.StartsWith(":") || text.StartsWith("-") || text.StartsWith(" "))
+            {
+                text = text.Substring(1).Trim();
+                changed = true;
+            }
+
+        } while (changed && !string.IsNullOrEmpty(text));
 
         return text.Trim();
     }
@@ -1249,6 +1289,8 @@ public class AiService
 
         // Explicitly disable sandbox if docker/podman is not available
         processInfo.EnvironmentVariables["GEMINI_SANDBOX"] = "false";
+        // Trust the workspace so --yolo mode is not overridden in headless/automated environments
+        processInfo.EnvironmentVariables["GEMINI_CLI_TRUST_WORKSPACE"] = "true";
 
         if (provider == "codex")
         {

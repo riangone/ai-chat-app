@@ -40,8 +40,11 @@ public static class ServiceExtensions
         services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
             .AddCookie(options => {
                 options.LoginPath = "/login";
+                options.AccessDeniedPath = "/login";
             });
-        services.AddAuthorization();
+        services.AddAuthorization(options => {
+            options.AddPolicy("AdminOnly", policy => policy.RequireClaim("IsAdmin", "true"));
+        });
 
         services.AddSignalR();
         

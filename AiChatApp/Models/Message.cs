@@ -2,15 +2,6 @@ using System.ComponentModel.DataAnnotations;
 
 namespace AiChatApp.Models;
 
-public class User
-{
-    public int Id { get; set; }
-    public string Username { get; set; } = string.Empty;
-    public string PasswordHash { get; set; } = string.Empty;
-    public string DefaultProvider { get; set; } = string.Empty;
-    public List<ChatSession> ChatSessions { get; set; } = new();
-}
-
 public class ChatSession
 {
     public int Id { get; set; }

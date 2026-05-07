@@ -38,6 +38,10 @@ public static class AuthEndpoints
         group.MapPost("/login", async ([FromForm] string username, [FromForm] string password, AppDbContext db, HttpContext context) => {
             var user = await db.Users.FirstOrDefaultAsync(u => u.Username == username);
             if (user == null || !BCrypt.Net.BCrypt.Verify(password, user.PasswordHash)) return Results.Redirect("/login?error=invalid");
+            if (!user.IsActive) return Results.Redirect("/login?error=disabled");
+
+            user.LastLoginAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
 
             var claims = new List<Claim> { 
                 new Claim(ClaimTypes.Name, user.Username), 
@@ -61,6 +65,35 @@ public static class AuthEndpoints
             });
         }).RequireAuthorization();
 
+        // User Profile
+        group.MapGet("/profile", async (ClaimsPrincipal user, AppDbContext db) => {
+            var userIdStr = user.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (userIdStr == null) return Results.Unauthorized();
+            var userId = int.Parse(userIdStr);
+            var dbUser = await db.Users.FindAsync(userId);
+            if (dbUser == null) return Results.NotFound();
+            return Results.Ok(new {
+                id = dbUser.Id,
+                username = dbUser.Username,
+                email = dbUser.Email,
+                defaultProvider = dbUser.DefaultProvider,
+                createdAt = dbUser.CreatedAt,
+                lastLoginAt = dbUser.LastLoginAt
+            });
+        }).RequireAuthorization();
+
+        group.MapPut("/profile", async ([FromForm] string? email, [FromForm] string? defaultProvider, AppDbContext db, ClaimsPrincipal user) => {
+            var userIdStr = user.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (userIdStr == null) return Results.Unauthorized();
+            var userId = int.Parse(userIdStr);
+            var dbUser = await db.Users.FindAsync(userId);
+            if (dbUser == null) return Results.NotFound();
+            if (!string.IsNullOrWhiteSpace(email)) dbUser.Email = email.Trim();
+            if (!string.IsNullOrWhiteSpace(defaultProvider)) dbUser.DefaultProvider = defaultProvider;
+            await db.SaveChangesAsync();
+            return Results.Ok("Profile updated successfully.");
+        }).RequireAuthorization().DisableAntiforgery();
+
         group.MapPost("/change-password", async ([FromForm] string oldPassword, [FromForm] string newPassword, AppDbContext db, ClaimsPrincipal user) => {
             var userIdStr = user.FindFirstValue(ClaimTypes.NameIdentifier);
             if (userIdStr == null) return Results.Unauthorized();
@@ -77,6 +110,42 @@ public static class AuthEndpoints
             await db.SaveChangesAsync();
             return Results.Ok("Password updated successfully.");
         }).RequireAuthorization().DisableAntiforgery();
+
+        // Admin: User Management
+        app.MapGet("/api/admin/users", async (AppDbContext db) => {
+            var users = await db.Users
+                .Select(u => new {
+                    u.Id,
+                    u.Username,
+                    u.Email,
+                    u.IsActive,
+                    u.IsAdmin,
+                    u.CreatedAt,
+                    u.LastLoginAt,
+                    ChatCount = u.ChatSessions.Count,
+                    NoteCount = u.Notes.Count,
+                    TodoCount = u.TodoItems.Count
+                })
+                .OrderBy(u => u.Username)
+                .ToListAsync();
+            return Results.Ok(users);
+        }).RequireAuthorization("AdminOnly");
+
+        app.MapPut("/api/admin/users/{id}/toggle-active", async (int id, AppDbContext db) => {
+            var user = await db.Users.FindAsync(id);
+            if (user == null) return Results.NotFound();
+            user.IsActive = !user.IsActive;
+            await db.SaveChangesAsync();
+            return Results.Ok(new { isActive = user.IsActive });
+        }).RequireAuthorization("AdminOnly");
+
+        app.MapPut("/api/admin/users/{id}/toggle-admin", async (int id, AppDbContext db) => {
+            var user = await db.Users.FindAsync(id);
+            if (user == null) return Results.NotFound();
+            user.IsAdmin = !user.IsAdmin;
+            await db.SaveChangesAsync();
+            return Results.Ok(new { isAdmin = user.IsAdmin });
+        }).RequireAuthorization("AdminOnly");
 
         // Admin
         app.MapPost("/api/admin/restart", async (ClaimsPrincipal user) => {
