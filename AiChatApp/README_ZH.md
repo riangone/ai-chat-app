@@ -1,81 +1,249 @@
-# AiChatApp - 智能终端聊天封装工具 (v2.0)
+# AiChatApp — 多代理协作 AI 聊天平台
 
-AiChatApp 是一个现代化的 Web 聊天界面，它将专业的 AI CLI 工具（如 `gemini` 和 `copilot`）与丰富、响应式的用户体验相结合。它具有长期记忆、多智能体协作任务执行和高级会话管理功能。
+基于 ASP.NET Core 10 构建的 Web 聊天平台，将 `gemini`、`claude`、`copilot`、`codex`、`opencode` 等 AI CLI 工具统一封装，支持**多代理并行协作**、长期记忆、技能注入和实时推送。
 
-## 🚀 核心特性
+---
 
-- **多供应商支持**：在 `Gemini` 和 `GitHub Copilot`（通过 CLI 封装）之间无缝切换。
-- **协作模式**：一种多智能体工作流，由 **Orchestrator（编排者）** 规划，**Executor（执行者）** 实现，以及 **Reviewer（审核者）** 验证输出。
-- **长期记忆**：AI 会记住用户定义的某些事实和偏好。在对话过程中，系统会根据关键词标签检索记忆。
-- **技能系统**：可开关的“插件”或指令，用于增强 AI 处理特定任务的能力。
-- **现代 UI/UX**：
-  - 使用 **HTMX** 构建，实现流畅的类 SPA 交互，无需重型 JS 框架。
-  - 使用 **Tailwind CSS** 和 **DaisyUI**（包含 30 多种主题）进行样式设计。
-  - 响应式 **抽屉式布局 (Drawer layout)**，支持手机/平板端。
-  - 实时 **Markdown 渲染**（使用 `marked.js`）。
-  - 原生交互体验的消息操作：复制、转发（引用）以及保存到记忆。
-- **会话管理**：完整的历史记录追踪、聊天重命名及即时创建新会话。
-- **安全身份验证**：基于 Cookie 的身份验证，采用 **BCrypt** 密码哈希加密。
+## 核心特性
 
-## 🛠 技术栈
+### 多代理协作（DAG 并行执行）
 
-- **后端**：ASP.NET Core 10 Minimal API。
-- **数据库**：SQLite 与 Entity Framework Core。
-- **AI 集成**：自定义 `AiService` 封装 CLI 进程 (`System.Diagnostics.Process`)。
-- **前端**：HTMX, Tailwind CSS, DaisyUI, Marked.js。
-- **安全**：BCrypt.Net-Next 处理哈希，Cookie 身份验证。
+协作模式下，系统自动完成以下流程：
 
-## 📂 项目结构
-
-```text
-AiChatApp/
-├── Data/            # EF Core DbContext
-├── Models/          # 数据模型 (User, Message, ChatSession, Memory, Skill)
-├── Services/        # AiService (AI 逻辑与 CLI 交互)
-├── wwwroot/         # 前端 (HTMX + Tailwind + DaisyUI)
-│   ├── index.html   # 主聊天界面
-│   ├── login.html   # 身份验证页面
-│   └── register.html
-├── Program.cs       # 应用程序入口点与 API 端点
-└── AiChatApp.csproj # 依赖项与配置
+```
+用户输入
+  ↓
+Orchestrator → 输出结构化任务图（JSON，含 id / agent / deps）
+  ↓ 拓扑排序
+Layer 1: [t1, t2]  ← Task.WhenAll 并行执行
+  ↓ 各自写入 Blackboard
+Layer 2: [t3]      ← 读取 Blackboard["t1"] 作为上游上下文
+  ↓
+Reviewer → per-subtask 结构化反馈（verdict / score / issues）
+  ↓ 若 verdict == "revision_needed"
+    只重跑失败子任务 + 下游依赖，将具体 issue 注入 prompt
+  ↓ 再过一遍 Reviewer
+返回最终结果
 ```
 
-## ⚙️ 环境准备
+**Blackboard 共享工作空间**：各代理向命名的产物槽写入输出，后续代理按依赖关系读取，避免全文盲目传递。
 
-1. 安装 **.NET 10 SDK**。
-2. **AI CLI 工具**：
-   - 安装 `gemini` CLI（需添加到系统 PATH）。
-   - 安装 `copilot`（可选，用于支持 GitHub Copilot）。
+### AI 供应商
 
-## 🏃 快速上手
+| CLI | 启动参数 | 说明 |
+|-----|---------|------|
+| `gemini` | `--yolo` | 默认供应商 |
+| `claude` | `--dangerously-skip-permissions` | 长上下文代码 |
+| `copilot` | `--yolo --silent` | GitHub Copilot |
+| `codex` | `exec --dangerously-bypass-approvals-and-sandbox` | 沙箱执行 |
+| `opencode` | — | OpenCode CLI |
 
-### 1. 克隆并构建
-```bash
-dotnet build
+每个代理可通过 `AgentProfile.PreferredProvider` 独立指定供应商。
+
+### 长期记忆与自动整合
+
+- **记忆注入**：`BuildSystemPromptAsync` 按关键词匹配 `LongTermMemory.Tags`，自动注入系统提示
+- **自动整合**：每次对话后 fire-and-forget 调用 `MemoryConsolidationService`，AI 提取事实写入 `LongTermMemory`
+- **技能注入**：`Skill.TriggerKeywords` 匹配当前提示，注入特定指令；`TriggerKeywords` 为空则全局生效
+
+### 主动感知（哨兵系统）
+
+- `FileWatcherService`：监控项目目录文件变更，实时通过 SignalR 推送到前端
+- `ProjectPulseService`：每 10 分钟增量扫描 Git 提交，触发 AI 主动分析
+
+### 技能文件系统（SKILL.md）
+
+代理定义从以下目录自动加载：
+
+```
+AgentSkills/System/*/SKILL.md   ← 系统内置代理
+test-skill/SKILL.md
+.gemini/skills/*/SKILL.md
 ```
 
-### 2. 配置数据库
-应用程序使用 SQLite (`chat.db`)。数据库及其架构将在首次运行时自动创建。
+支持 YAML Front Matter：
 
-### 3. 运行应用程序
+```markdown
+---
+name: MyAgent
+description: 代理描述
+---
+系统提示词正文
+```
+
+文件系统定义优先于数据库中的同名 `AgentProfile`。
+
+### Harness 评估系统
+
+- **Pipeline 定义**：`pipelines/*.json`，支持多阶段、重试、schema 验证
+- **Prompt 模板**：`pipelines/prompts/*.md`
+- **Schema 验证**：`pipelines/schemas/*.json`（含 `orchestrator_output.json`、`reviewer_output.json`）
+- **自动评估**：每步完成后 AI 按 Accuracy / Safety / Format / Helpfulness 四项打分
+
+---
+
+## 快速上手
+
+### 环境要求
+
+- .NET 10 SDK
+- 至少一个 AI CLI 在 PATH 中：`gemini`（默认）、`claude`、`copilot`、`codex`、`opencode`
+
+### 启动
+
 ```bash
+# 构建
+dotnet build AiChatApp
+
+# 运行（http://localhost:5000）
 dotnet run --project AiChatApp
 ```
-应用将在 `http://localhost:5000` 运行。
 
-## 🧠 高级概念
+首次启动自动创建 SQLite 数据库（`chat.db`）和默认管理员账户。
 
-### 协作模式 (多智能体)
-启用后，`AiService` 会启动一个三步流水线：
-1. **Orchestrator**：分析请求并将其拆分为计划。
-2. **Executor**：遵循计划生成代码或详细逻辑。
-3. **Reviewer**：审核执行情况并提供最终润色后的响应。
+### 默认管理员账户
 
-### 长期记忆
-用户可以将特定的信息片段以“记忆”形式保存，并附带标签。当用户消息包含与标签匹配的关键词时，`AiService` 会自动将该记忆作为“已知事实”注入到 AI 的系统提示词中。
+| 用户名 | 密码 |
+|--------|------|
+| admin | admin123 |
 
-### 技能系统
-技能本质上是系统级的指令，可以手动开启或关闭。当启用某项技能且在提示词中提到其名称时，其特定的指令集将在系统提示词中获得高优先级。
+**生产环境**请设置环境变量覆盖默认密码：
 
-## 📝 许可证
-本项目仅供内部/教学使用。有关 AI 使用条款，请参阅相应 CLI 工具的许可证。
+```bash
+export ADMIN_INITIAL_PASSWORD=your_strong_password
+dotnet run --project AiChatApp
+```
+
+### 重置数据库（schema 变更时）
+
+```bash
+rm AiChatApp/chat.db && dotnet run --project AiChatApp
+```
+
+---
+
+## 项目结构
+
+```
+AiChatApp/
+├── Data/
+│   └── AppDbContext.cs          # EF Core DbContext
+├── Endpoints/                   # Minimal API 端点
+│   ├── AuthEndpoints.cs         # 登录 / 注册 / 管理员
+│   ├── ChatEndpoints.cs         # 聊天 / SSE 流式 / 协作
+│   ├── MemoryEndpoints.cs       # 长期记忆 CRUD
+│   ├── SkillEndpoints.cs        # 技能 CRUD
+│   ├── HarnessEndpoints.cs      # Pipeline 管理与评估
+│   ├── CliEndpoints.cs          # CLI 会话浏览
+│   ├── TodoEndpoints.cs
+│   ├── NotesEndpoints.cs
+│   ├── FileManagerEndpoints.cs
+│   └── StatsEndpoints.cs
+├── Extensions/
+│   ├── ServiceExtensions.cs     # DI 注册
+│   └── ApplicationExtensions.cs # DB 初始化 / schema 补丁
+├── Hubs/
+│   └── ProactiveAgentHub.cs     # SignalR WebSocket 实时推送
+├── Models/                      # 数据模型
+│   ├── Message.cs               # User / ChatSession / Message / AgentStep
+│   ├── AgentProfile.cs
+│   ├── LongTermMemory.cs
+│   ├── Skill.cs
+│   ├── Project.cs
+│   ├── Note.cs / TodoItem.cs / InputHistory.cs
+│   └── Harness/                 # PipelineConfig / Evaluation
+├── Services/
+│   ├── AiService.cs             # 核心 AI 调用 / DAG 执行 / Blackboard
+│   ├── MemorySearchService.cs   # 记忆 / 技能检索
+│   ├── MemoryConsolidationService.cs  # 自动记忆整合
+│   ├── SessionMemoryService.cs
+│   ├── SkillManagerService.cs / SkillLearningService.cs
+│   ├── ProjectService.cs / ProjectApiController.cs
+│   ├── ProactiveBrainService.cs
+│   ├── FileWatcherService.cs    # 文件变更哨兵
+│   ├── ProjectPulseService.cs   # Git 增量扫描哨兵
+│   └── Harness/
+│       ├── PipelineLoaderService.cs
+│       ├── EvalService.cs
+│       ├── SchemaValidationService.cs
+│       └── ToolExecutorService.cs
+├── AgentSkills/System/          # 内置代理 SKILL.md 目录
+├── pipelines/                   # Pipeline JSON + prompts + schemas + policies
+├── wwwroot/                     # 前端（HTMX + Tailwind CSS + DaisyUI）
+│   ├── index.html               # 主聊天界面（PWA）
+│   ├── login.html / register.html
+│   └── todo/                    # Todo PWA
+├── memory/                      # AI 长期记忆文件（Markdown）
+├── Program.cs                   # 应用入口
+└── appsettings.json             # AI 供应商 / 超时 / 路径配置
+```
+
+---
+
+## 配置说明
+
+`appsettings.json` 关键字段：
+
+```json
+{
+  "AiSettings": {
+    "DefaultProvider": "gemini",
+    "FallbackProvider": "gemini",
+    "TimeoutSeconds": 600
+  },
+  "ConnectionStrings": {
+    "DefaultConnection": "Data Source=chat.db"
+  },
+  "FileWatcher": {
+    "Path": "/path/to/watch"
+  }
+}
+```
+
+---
+
+## API 端点概览
+
+### 聊天
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/chat` | 普通聊天 / 协作模式（HTML 片段返回） |
+| GET | `/api/chat/stream` | 普通聊天 SSE 流 |
+| GET | `/api/chat/cooperate/stream` | 协作多代理 SSE 流 |
+
+SSE 事件类型（协作流）：`session` → `step-complete` → `final` → `done`
+
+### 其他
+
+| 路径前缀 | 说明 |
+|---------|------|
+| `/api/auth` | 登录 / 注册 / 个人资料 |
+| `/api/memory` | 长期记忆 CRUD |
+| `/api/skills` | 技能管理 |
+| `/api/harness` | Pipeline 定义 / 运行 / 评估 |
+| `/api/projects` | 项目与自定义代理 |
+| `/api/todo` | Todo 列表 |
+| `/api/notes` | 笔记 |
+| `/api/stats` | 使用统计 |
+| `/hub/proactive-agent` | SignalR WebSocket |
+
+---
+
+## 技术栈
+
+| 层 | 技术 |
+|----|------|
+| 后端 | ASP.NET Core 10 Minimal API |
+| 数据库 | SQLite + Entity Framework Core |
+| 实时通信 | SignalR WebSocket |
+| 前端 | HTMX + Tailwind CSS + DaisyUI + marked.js |
+| AI 集成 | 子进程 CLI 调用（`System.Diagnostics.Process`） |
+| 认证 | Cookie 认证 + BCrypt 密码哈希 |
+| PWA | Web App Manifest + Service Worker |
+
+---
+
+## 许可证
+
+本项目仅供内部 / 学习使用。AI CLI 工具的使用条款请参阅各自官方许可证。
