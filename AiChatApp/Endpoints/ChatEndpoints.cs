@@ -307,6 +307,7 @@ public static class ChatEndpoints
                 await db.SaveChangesAsync();
 
                 var aSteps1 = await db.AgentSteps.Where(s => s.MessageId == aMsg.Id || s.MessageId == uMsg.Id).ToListAsync();
+                context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
                 return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg, aSteps1), "text/html");
             } else {
                 aiResponse = await ai.GetResponseAsync(content, userId, session.Id, provider, agentId);
@@ -328,6 +329,7 @@ public static class ChatEndpoints
                 await db.SaveChangesAsync();
 
                 var aSteps2 = await db.AgentSteps.Where(s => s.MessageId == uMsg.Id).ToListAsync();
+                context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
                 return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg, aSteps2), "text/html");
             }
         }).DisableAntiforgery();

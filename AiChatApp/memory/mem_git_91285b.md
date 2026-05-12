@@ -1,13 +1,13 @@
 ---
 name: git,branch
-description: 项目的主分支名称为 main。
+description: 当前的开发分支为 jpiere-erp-subproject。
 type: user
 userId: 1
 tags: git,branch
-relevanceScore: 80
+relevanceScore: 85
 accessCount: 0
 createdAt: 2026-04-28T03:26:07.9923203Z
-lastAccessedAt: 2026-04-28T03:26:07.9923204Z
+lastAccessedAt: 2026-05-12T06:45:35.8999768Z
 ---
 
-项目的主分支名称为 main。
+当前的开发分支为 jpiere-erp-subproject。

@@ -420,6 +420,16 @@
                 if (r.ok) form.reset();
             } catch (e) { alert("Failed to update password."); }
         }
+        function saveStreamPreference(enabled) {
+            localStorage.setItem('chat_stream_enabled', enabled);
+        }
+        function loadStreamPreference() {
+            const enabled = localStorage.getItem('chat_stream_enabled');
+            const toggle = document.getElementById('stream-toggle');
+            if (toggle) {
+                toggle.checked = (enabled === null || enabled === 'true');
+            }
+        }
         async function handleFormSubmit(e) {
             if(e)e.preventDefault(); if(isSending) return false;
             const f=document.getElementById('chat-form'),fd=new FormData(f),c=(fd.get('content')||'').trim(); if(!c)return false;
@@ -432,8 +442,60 @@
             if(selectedProjectId) fd.set('projectId', selectedProjectId); 
             if(selectedAgentId) fd.set('agentId', selectedAgentId);
             addUserMessage(c); document.getElementById('chat-input').value=''; resetInputHeight(); setRequestState(true);
-            try { await sendMessageStream(fd); } finally { setRequestState(false); loadPanelData('history-panel'); if(selectedProjectId) htmx.ajax('GET',`/api/chat/list?projectId=${selectedProjectId}`,'#project-chat-list'); setTimeout(()=>htmx.trigger('#memory-list-container','loadMemories'),20000); }
+            
+            const isStream = document.getElementById('stream-toggle')?.checked !== false;
+            
+            try { 
+                if (isStream) {
+                    await sendMessageStream(fd); 
+                } else {
+                    await sendMessageNormal(fd);
+                }
+            } finally { 
+                setRequestState(false); 
+                loadPanelData('history-panel'); 
+                if(selectedProjectId) htmx.ajax('GET',`/api/chat/list?projectId=${selectedProjectId}`,'#project-chat-list'); 
+                setTimeout(()=>htmx.trigger('#memory-list-container','loadMemories'),20000); 
+            }
             return false;
+        }
+        async function sendMessageNormal(fd) {
+            let agentName = fd.get('provider');
+            const aid = fd.get('agentId');
+            if (aid && window.currentProjectAgents) {
+                const a = window.currentProjectAgents.find(x => x.id == aid);
+                if (a) agentName = a.roleName;
+            }
+            const list = document.getElementById('message-list') || document.getElementById('chat-box');
+            const id='ai-'+Date.now(); list.insertAdjacentHTML('beforeend',renderAiBubbleId('',id, agentName)); scrollToBottom();
+            const b=document.getElementById(id).querySelector('.content-body');
+            try {
+                const r=await fetch('/api/chat',{method:'POST',body:fd}); 
+                if(!r.ok) throw new Error('failed');
+                const sid=r.headers.get('X-Session-Id'); if(sid) document.getElementById('session-id-input').value=sid;
+                
+                // /api/chat returns RenderMessage(uMsg) + RenderMessage(aMsg)
+                // We only need the AI message part, but we already added the user message manually.
+                // However, /api/chat returns both. 
+                // We should probably have a separate endpoint or just parse it.
+                // Looking at ChatEndpoints.cs, RenderMessage(aMsg) is the second half.
+                const html = await r.text();
+                // Since RenderMessage(uMsg) is also there, let's extract the AI part if possible or just replace the bubble.
+                // A better way is to update /api/chat to support an 'onlyAi' flag or similar.
+                // But for now, let's assume we can just replace the bubble we just created with the last message from response.
+                
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const bubbles = doc.querySelectorAll('.message-bubble-container');
+                if (bubbles.length >= 2) {
+                    const aiBubble = bubbles[bubbles.length - 1];
+                    document.getElementById(id).outerHTML = aiBubble.outerHTML;
+                } else if (bubbles.length === 1) {
+                    document.getElementById(id).outerHTML = bubbles[0].outerHTML;
+                }
+                renderMarkdown();
+                scrollToBottom();
+            } catch(err) { b.innerHTML=`<span class="text-error">${i18n('request-error')}</span>`; }
         }
         async function sendMessageStream(fd) {
             let agentName = fd.get('provider');
@@ -1072,9 +1134,13 @@ function handleSuggestionAction(command, payload) {
         window.addEventListener('DOMContentLoaded', () => {
             initTheme(); updateUI(); renderUserProfile(); renderMarkdown(); syncActiveSessionFromDom(); syncProjectContext(); wirePanelNavigation(); loadCurrentUser(); loadPanelData('history-panel');
             refreshHarnessBadge();
+            loadStreamPreference();
             
             document.body.addEventListener('htmx:afterSwap', (e) => {
                 updateUI();
+                if (e.detail.pathInfo.requestPath.includes('footer.html')) {
+                    loadStreamPreference();
+                }
                 if (e.detail.pathInfo.requestPath.includes('modals.html')) {
                     updatePresetDropdown();
                     syncProviders();

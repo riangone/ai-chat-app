@@ -30,23 +30,34 @@ public class AiService
     private static readonly string[] PromptPrefixes = { 
         "System:", "User:", "Assistant:", "Context:", "History:", 
         "Thought:", "Thinking:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:", 
-        "[相关的长期记忆]:", "[当前会话上下文]:",
+        "[相关的长期记忆]:", "[当前会话上下文]:", "[会话上下文]:",
         "[追加スキル指示]:", "[MEMORY INSTRUCTION]:", "[ENVIRONMENTAL POLICIES & CONSTRAINTS]:", 
-        "--- Policy:", "Role:", "Persona:", "Input:", "Output:"
+        "--- Policy:", "Role:", "Persona:", "Input:", "Output:",
+        "役割:", "指示:", "角色:", "任务:", "项目名:", "项目路径:", "プロジェクト名:", "ルートパス:",
+        "[現在のアクティブエージェント]:", "[当前活跃代理]:", "[プロジェクト文脈]:", "[项目文脉]:",
+        "[利用可能なエージェント役割]:", "[可用代理角色]:", "[有効なスキル指示]:", "[有效技能指示]:"
     };
 
     private static readonly string[] SystemPromptFragments = { 
         "あなたは高度なAIアシスタントです", 
         "你是高度进化的自主 AI 代理",
+        "你是高度進化的自主 AI 代理",
         "現在はソフトウェア開発プロジェクトのコンテキストで動作しています",
         "你目前运行在 AiChatApp 项目的上下文中",
+        "你目前運行在 AiChatApp 專案的上下文中",
         "你是 Hyperion",
         "专注于软件工程、系统架构和自动化开发任务",
+        "專注於軟體工程、系統架構和自動化開發任務",
         "请始终以 Hyperion 的身份行事",
+        "請始終以 Hyperion 的身份行事",
         "你不仅要提供代码",
+        "你不僅要提供代碼",
         "理解项目的整体结构",
-        "根据需要自主规划和执行文件操作",
+        "理解專案的整體結構",
+        "根据需要自主规划 and 执行文件操作",
+        "根據需要自主規劃 and 執行文件操作",
         "明确列出你执行的动作",
+        "明確列出你執行的動作",
         "あなたはタスク分解の専門家",
         "あなたは実装の専門家",
         "あなたは評審の専門家",
@@ -54,7 +65,22 @@ public class AiService
         "[会話履歴]:",
         "[ユーザーの既知情報・長期記憶]:",
         "[相关的长期记忆]:",
-        "重要な発見や制約があれば"
+        "重要な発見や制約があれば",
+        "重要な発見や制約があれば",
+        "重要な発見や制約があれば",
+        "重要的发现或约束",
+        "重要的發現或約束",
+        "MEMORY: key=value",
+        "[ENVIRONMENTAL POLICIES & CONSTRAINTS]:",
+        "[当前会话上下文]:",
+        "[プロジェクト文脈]:",
+        "[利用可能なエージェント役割]:",
+        "[有効なスキル指示]:",
+        "[追加スキル指示]:",
+        "当你与用户交流或执行任务时",
+        "當你與用戶交流或執行任務時",
+        "根据具体的实现或修改指令",
+        "根據具體的實現或修改指令"
     };
 
     private readonly ILogger<AiService> _logger;
@@ -445,6 +471,27 @@ public class AiService
             ? prompt
             : $"{history}\nUser: {prompt}";
 
+        // Pre-process prompt to add @ prefix to existing image files for Vision support
+        string processedPrompt = fullPrompt;
+        try
+        {
+            var workingDirForVision = workingDir ?? Directory.GetCurrentDirectory();
+            var matches = Regex.Matches(fullPrompt, @"(\b[\w\-\.]+\.(png|jpg|jpeg|webp|gif|bmp)\b)", RegexOptions.IgnoreCase);
+            foreach (Match match in matches)
+            {
+                var visionFileName = match.Value;
+                if (!visionFileName.StartsWith("@"))
+                {
+                    var fullPath = Path.Combine(workingDirForVision, visionFileName);
+                    if (File.Exists(fullPath))
+                    {
+                        processedPrompt = processedPrompt.Replace(visionFileName, "@" + visionFileName);
+                    }
+                }
+            }
+        }
+        catch { /* Ignore processing errors */ }
+
         if (agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
 
         string fileName = targetProvider switch
@@ -469,8 +516,8 @@ public class AiService
         int messageId = await GetLatestUserMessageIdAsync(chatSessionId);
 
         string inputToStdin = string.IsNullOrEmpty(systemPrompt)
-            ? fullPrompt
-            : $"{systemPrompt}\n\n{fullPrompt}";
+            ? processedPrompt
+            : $"{systemPrompt}\n\n{processedPrompt}";
 
         if (targetProvider == "opencode")
         {
@@ -548,7 +595,7 @@ public class AiService
         // Buffer for detecting and stripping echoed System:/User: prefix at stream start
         var prefixBuffer = new StringBuilder();
         bool prefixHandled = false;
-        const int maxPrefixBuffer = 4096;
+        const int maxPrefixBuffer = 16384;
 
         if (useJsonStreaming)
         {
@@ -586,10 +633,9 @@ public class AiService
                 if (chunk != null)
                 {
                     fullResponse.Append(chunk);
-                    var (toYield, handled) = HandlePrefixBuffer(prefixBuffer, chunk, prefixHandled, maxPrefixBuffer);
+                    var (toYield, handled) = HandlePrefixBuffer(prefixBuffer, chunk, prefixHandled, maxPrefixBuffer, systemPrompt, fullPrompt);
                     prefixHandled = handled;
                     if (toYield != null) yield return toYield;
-                    else if (handled) yield return chunk;
                 }
             }
         }
@@ -601,15 +647,14 @@ public class AiService
             {
                 var chunk = new string(buffer,0, read);
                 fullResponse.Append(chunk);
-                var (toYield, handled) = HandlePrefixBuffer(prefixBuffer, chunk, prefixHandled, maxPrefixBuffer);
+                var (toYield, handled) = HandlePrefixBuffer(prefixBuffer, chunk, prefixHandled, maxPrefixBuffer, systemPrompt, fullPrompt);
                 prefixHandled = handled;
                 if (toYield != null) yield return toYield;
-                else if (handled) yield return chunk;
             }
         }
         if (!prefixHandled && prefixBuffer.Length > 0)
         {
-            var stripped = StripEchoedPromptPrefix(prefixBuffer.ToString());
+            var stripped = StripEchoedPromptPrefix(prefixBuffer.ToString(), systemPrompt, fullPrompt);
             if (!string.IsNullOrEmpty(stripped)) yield return stripped;
         }
         try { await process.WaitForExitAsync(); } catch { }
@@ -1017,7 +1062,29 @@ public class AiService
         return "{}";
     }
 
-    private static string StripEchoedPromptPrefix(string text)
+    private static HashSet<string> BuildDynamicFragments(string? systemPrompt, string? userPrompt = null)
+    {
+        var dynamicFragments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(systemPrompt))
+        {
+            foreach (var line in systemPrompt.Split('\n'))
+            {
+                var tl = line.Trim();
+                if (tl.Length > 3) dynamicFragments.Add(tl);
+            }
+        }
+        if (!string.IsNullOrEmpty(userPrompt))
+        {
+            foreach (var line in userPrompt.Split('\n'))
+            {
+                var tl = line.Trim();
+                if (tl.Length > 3) dynamicFragments.Add(tl);
+            }
+        }
+        return dynamicFragments;
+    }
+
+    private static string StripEchoedPromptPrefix(string text, string? systemPrompt = null, string? userPrompt = null)
     {
         if (string.IsNullOrEmpty(text)) return text;
 
@@ -1025,7 +1092,9 @@ public class AiService
         int firstContentLine = -1;
         string? firstLineContent = null;
         
-        for (int i = 0; i < Math.Min(lines.Length, 150); i++)
+        var dynamicFragments = BuildDynamicFragments(systemPrompt, userPrompt);
+
+        for (int i = 0; i < Math.Min(lines.Length, 300); i++)
         {
             var trimmedLine = lines[i].Trim();
             if (string.IsNullOrWhiteSpace(trimmedLine)) continue;
@@ -1042,16 +1111,25 @@ public class AiService
                 }
             }
 
-            bool isSystemFragment = SystemPromptFragments.Any(f => trimmedLine.Contains(f));
+            bool isSystemFragment = SystemPromptFragments.Any(f => trimmedLine.Contains(f, StringComparison.OrdinalIgnoreCase)) ||
+                                   dynamicFragments.Contains(trimmedLine);
 
             if (isPrefixHeader)
             {
+                // If the FULL line (including prefix) is an exact match of a dynamic fragment,
+                // it's echoed system prompt content — skip it entirely
+                if (dynamicFragments.Contains(trimmedLine))
+                {
+                    continue;
+                }
+
                 // Check if there is content AFTER the prefix on the SAME line
                 var contentAfter = trimmedLine.Substring(matchedPrefix!.Length).Trim();
                 if (!string.IsNullOrEmpty(contentAfter))
                 {
                     // If the content after the prefix is also a known system fragment, skip it
-                    if (SystemPromptFragments.Any(f => contentAfter.Contains(f)))
+                    if (SystemPromptFragments.Any(f => contentAfter.Contains(f, StringComparison.OrdinalIgnoreCase)) ||
+                        dynamicFragments.Any(f => contentAfter.Contains(f, StringComparison.OrdinalIgnoreCase)))
                     {
                         continue;
                     }
@@ -1084,7 +1162,8 @@ public class AiService
             return result.Trim();
         }
 
-        return text.Trim();
+        // All lines matched system prompt fragments — return empty, nothing is real content
+        return string.Empty;
     }
 
     /// <summary>
@@ -1092,7 +1171,7 @@ public class AiService
     /// Returns (chunk to yield or null, whether prefix handling is now complete).
     /// </summary>
     private static (string? toYield, bool handled) HandlePrefixBuffer(
-        StringBuilder prefixBuffer, string chunk, bool prefixHandled, int maxBuffer)
+        StringBuilder prefixBuffer, string chunk, bool prefixHandled, int maxBuffer, string? systemPrompt = null, string? userPrompt = null)
     {
         if (prefixHandled)
             return (chunk, true);
@@ -1100,27 +1179,40 @@ public class AiService
         prefixBuffer.Append(chunk);
         var buf = prefixBuffer.ToString();
 
+        // Build dynamic fragments from actual system prompt for prefix detection
+        var dynamicFrags = BuildDynamicFragments(systemPrompt, userPrompt);
+
         bool startsWithPrefix =
             PromptPrefixes.Any(p => buf.StartsWith(p, StringComparison.OrdinalIgnoreCase)) ||
-            SystemPromptFragments.Any(f => buf.StartsWith(f, StringComparison.OrdinalIgnoreCase));
+            SystemPromptFragments.Any(f => buf.StartsWith(f, StringComparison.OrdinalIgnoreCase)) ||
+            dynamicFrags.Any(f => buf.StartsWith(f, StringComparison.OrdinalIgnoreCase));
 
-        if (!startsWithPrefix)
+        bool couldBeginPrefix =
+            PromptPrefixes.Any(p => p.StartsWith(buf, StringComparison.OrdinalIgnoreCase)) ||
+            SystemPromptFragments.Any(f => f.StartsWith(buf, StringComparison.OrdinalIgnoreCase)) ||
+            dynamicFrags.Any(f => f.StartsWith(buf, StringComparison.OrdinalIgnoreCase));
+
+        if (!startsWithPrefix && !couldBeginPrefix)
         {
+            // Run thorough stripping before flushing — content may be echoed system prompt
+            // that doesn't match static prefix arrays (e.g. dynamic policy lines)
+            var stripped = StripEchoedPromptPrefix(buf, systemPrompt, userPrompt);
             prefixBuffer.Clear();
-            return (buf, true);
+            return (string.IsNullOrEmpty(stripped) ? null : stripped, true);
         }
 
-        if (buf.Contains("\nUser:") || buf.Contains("\nAssistant:") ||
-            buf.Contains("\nAssistant ") || buf.Contains("\n["))
+        if (startsWithPrefix &&
+            (buf.Contains("\nUser:") || buf.Contains("\nAssistant:") ||
+             buf.Contains("\nAssistant ") || buf.Contains("\n[")))
         {
-            var stripped = StripEchoedPromptPrefix(buf);
+            var stripped = StripEchoedPromptPrefix(buf, systemPrompt, userPrompt);
             prefixBuffer.Clear();
             return (string.IsNullOrEmpty(stripped) ? null : stripped, true);
         }
 
         if (buf.Length >= maxBuffer)
         {
-            var stripped = StripEchoedPromptPrefix(buf);
+            var stripped = StripEchoedPromptPrefix(buf, systemPrompt, userPrompt);
             prefixBuffer.Clear();
             return (string.IsNullOrEmpty(stripped) ? null : stripped, true);
         }
@@ -1434,12 +1526,12 @@ public class AiService
         return sb.ToString();
     }
 
-    private static string CleanResponse(string text)
+    private static string CleanResponse(string text, string? systemPrompt = null, string? userPrompt = null)
     {
         if (string.IsNullOrEmpty(text)) return text;
 
         // 1. Strip echoed System:/User: prompt prefix (Multi-line heuristic)
-        text = StripEchoedPromptPrefix(text);
+        text = StripEchoedPromptPrefix(text, systemPrompt, userPrompt);
 
         // 2. Remove XML-style thinking/thought tags
         text = Regex.Replace(text, @"<(thinking|thought|thought_process)>.*?</\1>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
@@ -1451,6 +1543,7 @@ public class AiService
         text = Regex.Replace(text, @"(Thought|Thinking|Reasoning):.*?$", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
 
         // 4. Aggressively and repeatedly strip any leading system fragments or prefixes from the start
+        var cleanDynamicFrags = BuildDynamicFragments(systemPrompt, userPrompt);
         bool changed;
         do
         {
@@ -1479,7 +1572,19 @@ public class AiService
                     break;
                 }
             }
-            
+            if (changed) continue;
+
+            // Check for dynamic fragments from the actual system prompt
+            foreach (var f in cleanDynamicFrags)
+            {
+                if (text.StartsWith(f, StringComparison.OrdinalIgnoreCase))
+                {
+                    text = text.Substring(f.Length).Trim();
+                    changed = true;
+                    break;
+                }
+            }
+
             // Strip common punctuation that might remain after a prefix
             if (text.StartsWith(":") || text.StartsWith("-") || text.StartsWith(" "))
             {
@@ -1695,7 +1800,13 @@ public class AiService
                 {
                     processInfo.ArgumentList.Add("--output-format");
                     processInfo.ArgumentList.Add(outputFormat ?? "json");
-                    // REMOVED --raw-output to ensure we get the JSON envelope with token usage
+                    
+                    // If provider is a specific model name (not just "gemini"), pass it as -m
+                    if (provider.ToLower() != "gemini")
+                    {
+                        processInfo.ArgumentList.Add("-m");
+                        processInfo.ArgumentList.Add(provider);
+                    }
                 }
             }
         }
@@ -1720,11 +1831,32 @@ public class AiService
 
     private async Task<CliResult> ExecuteCliAsync(string prompt, string provider, string? systemPrompt = null, string? workingDirectory = null)
     {
+        // Pre-process prompt to add @ prefix to existing image files for Vision support
+        string processedPrompt = prompt;
+        try
+        {
+            var workingDir = workingDirectory ?? Directory.GetCurrentDirectory();
+            var matches = Regex.Matches(prompt, @"(\b[\w\-\.]+\.(png|jpg|jpeg|webp|gif|bmp)\b)", RegexOptions.IgnoreCase);
+            foreach (Match match in matches)
+            {
+                var fileName = match.Value;
+                if (!fileName.StartsWith("@"))
+                {
+                    var fullPath = Path.Combine(workingDir, fileName);
+                    if (File.Exists(fullPath))
+                    {
+                        processedPrompt = processedPrompt.Replace(fileName, "@" + fileName);
+                    }
+                }
+            }
+        }
+        catch { /* Ignore processing errors */ }
+
         var processInfo = SetupProcessInfo(provider, workingDirectory);
 
         string inputToStdin = string.IsNullOrEmpty(systemPrompt)
-            ? prompt
-            : $"{systemPrompt}\n\n{prompt}";
+            ? processedPrompt
+            : $"{systemPrompt}\n\n{processedPrompt}";
 
         if (provider == "opencode")
         {
@@ -1773,13 +1905,13 @@ public class AiService
 
             if (string.IsNullOrWhiteSpace(output)) return new CliResult("No response received from AI.", provider, 0, 0, 0);
 
-            var parsed = ParseCliOutput(output, provider);
+            var parsed = ParseCliOutput(output, provider, systemPrompt, prompt);
             if (parsed.TotalTokens > 0 || !string.IsNullOrEmpty(parsed.Output) && parsed.Output != output)
             {
                 return parsed;
             }
 
-            return new CliResult(CleanResponse(output), provider, 0, 0, 0);
+            return new CliResult(CleanResponse(output, systemPrompt, prompt), provider, 0, 0, 0);
         }
         catch (Exception ex)
         {
@@ -1791,7 +1923,7 @@ public class AiService
         }
     }
 
-    private CliResult ParseCliOutput(string output, string provider)
+    private CliResult ParseCliOutput(string output, string provider, string? systemPrompt = null, string? userPrompt = null)
     {
         if (string.IsNullOrWhiteSpace(output)) return new CliResult(string.Empty, provider, 0, 0, 0);
 
@@ -1844,13 +1976,13 @@ public class AiService
         if (foundAnyJson)
         {
             // If it's Copilot, the model might be "gpt-4o" or similar, we might want to keep it or prefix it
-            var res = new CliResult(CleanResponse(finalContent ?? output), finalModel ?? provider, totalPt, totalCt, totalTt);
+            var res = new CliResult(CleanResponse(finalContent ?? output, systemPrompt, userPrompt), finalModel ?? provider, totalPt, totalCt, totalTt);
             Console.WriteLine($"[AiService] Successfully parsed JSON from {provider}. Model: {res.Model}, Tokens: {res.TotalTokens}");
             return res;
         }
 
         Console.WriteLine($"[AiService] No valid JSON found in output from {provider}.");
-        return new CliResult(CleanResponse(output), provider, 0, 0, 0);
+        return new CliResult(CleanResponse(output, systemPrompt, userPrompt), provider, 0, 0, 0);
     }
 
     private bool TryParseJsonElement(JsonElement root, ref string? content, ref string? model, ref int pt, ref int ct, ref int tt, bool isIncremental = false)
@@ -1957,8 +2089,11 @@ public class AiService
             var t = typeProp.GetString();
             if (t == "text" && root.TryGetProperty("part", out var op) && op.TryGetProperty("text", out var otText))
                 content = (content ?? "") + otText.GetString();
-            else if ((t == "message" || t == "assistant.message") && root.TryGetProperty("content", out var mc))
-                content = (content ?? "") + mc.GetString();
+            else if (t == "assistant.message" && root.TryGetProperty("content", out var amc))
+                content = (content ?? "") + amc.GetString();
+            else if (t == "message" && root.TryGetProperty("content", out var mMsg) &&
+                     (!root.TryGetProperty("role", out var roleProp) || roleProp.GetString() != "user"))
+                content = (content ?? "") + mMsg.GetString();
             else if (t == "assistant.message" && root.TryGetProperty("data", out var d) && d.TryGetProperty("content", out var c))
                 content = (content ?? "") + c.GetString();
             else if (t == "assistant.message_delta" && root.TryGetProperty("data", out var dd) && dd.TryGetProperty("deltaContent", out var dc))

@@ -5,9 +5,9 @@ type: user
 userId: 1
 tags: netYamlForge,project,github,path
 relevanceScore: 80
-accessCount: 0
+accessCount: 4
 createdAt: 2026-04-30T10:20:00.5319874Z
-lastAccessedAt: 2026-04-30T10:20:00.5319874Z
+lastAccessedAt: 2026-05-12T08:42:13.2519085Z
 ---
 
 NetYamlForge 项目 GitHub 仓库地址为 git@github.com:riangone/NetYamlForge.git，已克隆到 /home/ubuntu/ws/NetYamlForge

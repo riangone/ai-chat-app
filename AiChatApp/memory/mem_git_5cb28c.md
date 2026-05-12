@@ -1,13 +1,13 @@
 ---
 name: git,database,workflow
-description: 用户要求在 Git 提交中包含 chat.db 数据库文件，将其视为项目的一部分进行跟踪。
+description: 用户要求将数据库文件（包括 system.db 和各项目的 .db 文件）提交并推送到远程仓库。
 type: user
 userId: 1
 tags: git,database,workflow
-relevanceScore: 80
+relevanceScore: 85
 accessCount: 0
 createdAt: 2026-04-28T03:48:46.7356259Z
-lastAccessedAt: 2026-04-28T03:48:46.7356259Z
+lastAccessedAt: 2026-05-12T06:45:35.8663026Z
 ---
 
-用户要求在 Git 提交中包含 chat.db 数据库文件，将其视为项目的一部分进行跟踪。
+用户要求将数据库文件（包括 system.db 和各项目的 .db 文件）提交并推送到远程仓库。
