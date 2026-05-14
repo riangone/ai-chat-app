@@ -4,10 +4,11 @@ description: 利用可能なAIプロバイダー: gemini, copilot, claude, codex
 type: user
 userId: 1
 tags: providers,ai,gemini,copilot,claude,codex,opencode
+relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 89
+accessCount: 118
 createdAt: 2026-04-27T16:35:04.4117295Z
-lastAccessedAt: 2026-05-12T07:03:27.9417029Z
+lastAccessedAt: 2026-05-13T23:53:51.9959779Z
 ---
 
 利用可能なAIプロバイダー: gemini, copilot, claude, codex, opencode

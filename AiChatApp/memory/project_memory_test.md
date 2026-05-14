@@ -7,10 +7,11 @@ description: ユーザーはAIチャットアプリの記憶機能（`MemoryCons
 type: user
 userId: 0
 tags: 記憶機能テスト記録
+relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 47
+accessCount: 73
 createdAt: 2026-04-26T23:54:47.4544884Z
-lastAccessedAt: 2026-05-12T03:11:24.5681098Z
+lastAccessedAt: 2026-05-14T00:23:23.9015777Z
 ---
 
 ユーザーはAIチャットアプリの記憶機能（`MemoryConsolidationService`）をテストした。

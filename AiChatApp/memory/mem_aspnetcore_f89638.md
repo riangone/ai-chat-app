@@ -4,10 +4,11 @@ description: ASP.NET Core 子路径部署模式：当 Caddy 等反向代理使�
 type: user
 userId: 1
 tags: aspnetcore,pathbase,caddy,pattern,deployment
+relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 1
+accessCount: 3
 createdAt: 2026-04-30T10:57:06.4548148Z
-lastAccessedAt: 2026-04-30T12:16:13.8163194Z
+lastAccessedAt: 2026-05-13T01:36:52.2956651Z
 ---
 
 ASP.NET Core 子路径部署模式：当 Caddy 等反向代理使用 `handle_path` 剥离路径前缀时，应用中的 `UsePathBase()` 不会生效（因为请求到达时已无前缀）。

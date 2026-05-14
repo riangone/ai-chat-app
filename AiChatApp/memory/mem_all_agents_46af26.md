@@ -4,10 +4,11 @@ description: 全てのAIエージェント（Gemini、Claude、codex、opencode�
 type: user
 userId: 1
 tags: all-agents,output-format,final-conclusion,AiService,CleanResponse
+relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 189
+accessCount: 220
 createdAt: 2026-04-28T00:52:38.2102455Z
-lastAccessedAt: 2026-05-12T08:19:36.1898254Z
+lastAccessedAt: 2026-05-13T23:53:51.9955256Z
 ---
 
 全てのAIエージェント（Gemini、Claude、codex、opencode等）は推論過程（思考ブロック）を除いた最終結論のみを返す。AiService.csでSetupProcessInfo（claude/geminiにJSON出力フラグ適用）・ExecuteCliAsync（JSONパースでresponse/content/textを抽出）・CleanResponseメソッド（<thinking>・Thought:・Thinking:の正規表現除去）として実装済み。

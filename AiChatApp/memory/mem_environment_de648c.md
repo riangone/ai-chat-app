@@ -4,10 +4,11 @@ description: The current terminal environment lacks 256-color support and does n
 type: user
 userId: 1
 tags: environment,terminal,tools
+relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 0
+accessCount: 2
 createdAt: 2026-05-12T06:46:42.3212630Z
-lastAccessedAt: 2026-05-12T06:46:42.3212631Z
+lastAccessedAt: 2026-05-13T01:36:52.2948360Z
 ---
 
 The current terminal environment lacks 256-color support and does not have ripgrep installed.

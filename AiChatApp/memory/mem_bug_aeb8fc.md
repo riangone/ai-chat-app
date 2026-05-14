@@ -1,13 +1,14 @@
 ---
 name: bug,sqlite,database-schema
-description: A SqliteException occurred with the error 'no such column: last_login_at', indic...
+description: SQLite 数据库中缺少 'is_admin' 列，导致登录时出现 SQLite Error 1 并触发 500 错误。
 type: user
 userId: 1
 tags: bug,sqlite,database-schema
-relevanceScore: 80
+relations: SQLite,is_admin
+relevanceScore: 85
 accessCount: 0
 createdAt: 2026-05-12T08:09:50.4183242Z
-lastAccessedAt: 2026-05-12T08:09:50.4183243Z
+lastAccessedAt: 2026-05-13T01:47:27.0520865Z
 ---
 
-A SqliteException occurred with the error 'no such column: last_login_at', indicating a missing column in the database schema.
+SQLite 数据库中缺少 'is_admin' 列，导致登录时出现 SQLite Error 1 并触发 500 错误。

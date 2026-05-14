@@ -62,6 +62,13 @@ public static class MemoryEndpoints
             fileService.DeleteByFileName(fileName);
             return Results.Ok();
         });
+
+        group.MapGet("/mindmap", (ClaimsPrincipal user, MemoryGraphService graphService, [FromQuery] string? rootId, [FromQuery] int? depth, [FromQuery] string? collapsedIds) => {
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            graphService.BuildGraph(userId);
+            var mermaid = graphService.GenerateMermaidGraph(userId, rootId, depth ?? 1, collapsedIds);
+            return Results.Text(mermaid, "text/plain");
+        });
     }
 
     private static string RenderMemoryCard(LongTermMemory m, string extraAttrs = "")

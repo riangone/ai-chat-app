@@ -4,10 +4,11 @@ description: ノートパネルはSwiper.jsを使ったスライドUIで構成�
 type: user
 userId: 1
 tags: notes,swiper,ui,frontend
+relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 8
+accessCount: 12
 createdAt: 2026-04-27T15:34:53.3363930Z
-lastAccessedAt: 2026-04-28T11:25:25.1108632Z
+lastAccessedAt: 2026-05-13T09:55:09.9262112Z
 ---
 
 ノートパネルはSwiper.jsを使ったスライドUIで構成されており、スライド0がノート一覧、スライド1が編集画面。`notesSwiper.slideTo(1)` で編集画面へ遷移する。

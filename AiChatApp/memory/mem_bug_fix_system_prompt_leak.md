@@ -7,10 +7,11 @@ AI responses frequently inc...
 type: user
 userId: 0
 tags: mem_bug_fix_system_prompt_leak
+relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 5
+accessCount: 30
 createdAt: 2026-05-07T23:25:23.2073626Z
-lastAccessedAt: 2026-05-12T08:42:13.2516805Z
+lastAccessedAt: 2026-05-13T23:53:51.9917158Z
 ---
 
 # Bug Fix: System Prompt Leak in Responses

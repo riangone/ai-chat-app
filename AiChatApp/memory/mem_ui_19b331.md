@@ -4,10 +4,11 @@ description: ユーザーはチャットUI内に「Execution Steps」のステ�
 type: user
 userId: 1
 tags: ui,preference,execution-steps,chat
+relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 43
+accessCount: 55
 createdAt: 2026-04-27T05:28:27.1574187Z
-lastAccessedAt: 2026-05-11T15:53:31.9498836Z
+lastAccessedAt: 2026-05-13T09:55:09.9260112Z
 ---
 
 ユーザーはチャットUI内に「Execution Steps」のステップ表示を表示しないことを好む。ChatEndpoints.csを修正して非表示にした。

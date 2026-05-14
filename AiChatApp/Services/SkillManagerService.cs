@@ -21,11 +21,22 @@ public class SkillManagerService
         if (!Directory.Exists(_userPath)) Directory.CreateDirectory(_userPath);
     }
 
-    public async Task<List<SkillInfo>> GetAllSkillsAsync()
+    public async Task<List<SkillInfo>> GetAllSkillsAsync(int? userId = null)
     {
         var skills = new List<SkillInfo>();
         await LoadFromDir(_basePath, skills, isSystem: true);
-        await LoadFromDir(_userPath, skills, isSystem: false);
+        
+        if (userId.HasValue)
+        {
+            var userPath = Path.Combine(_userPath, userId.Value.ToString());
+            await LoadFromDir(userPath, skills, isSystem: false);
+        }
+        else
+        {
+            // 如果未指定 userId，可能是在管理员上下文或旧代码中，
+            // 默认加载所有用户的（这取决于具体需求，这里我们倾向于只加载系统技能）
+            // 或者我们可以遍历所有子目录。为了向后兼容，我们暂时不加载。
+        }
         return skills;
     }
 
@@ -45,18 +56,44 @@ public class SkillManagerService
         }
     }
 
-    public async Task SaveSkillAsync(string name, string content, bool isSystem = false)
+    public async Task SaveSkillAsync(string name, string content, int? userId = null, bool isSystem = false)
     {
-        var targetDir = Path.Combine(isSystem ? _basePath : _userPath, name);
+        string targetDir;
+        if (isSystem)
+        {
+            targetDir = Path.Combine(_basePath, name);
+        }
+        else if (userId.HasValue)
+        {
+            targetDir = Path.Combine(_userPath, userId.Value.ToString(), name);
+        }
+        else
+        {
+            throw new ArgumentException("userId is required for user skills.");
+        }
+
         if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
         
         var filePath = Path.Combine(targetDir, "SKILL.md");
         await File.WriteAllTextAsync(filePath, content);
     }
 
-    public void DeleteSkill(string name, bool isSystem = false)
+    public void DeleteSkill(string name, int? userId = null, bool isSystem = false)
     {
-        var targetDir = Path.Combine(isSystem ? _basePath : _userPath, name);
+        string targetDir;
+        if (isSystem)
+        {
+            targetDir = Path.Combine(_basePath, name);
+        }
+        else if (userId.HasValue)
+        {
+            targetDir = Path.Combine(_userPath, userId.Value.ToString(), name);
+        }
+        else
+        {
+            return;
+        }
+
         if (Directory.Exists(targetDir)) Directory.Delete(targetDir, true);
     }
 

@@ -1,5 +1,6 @@
 using AiChatApp.Services;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace AiChatApp.Endpoints;
 
@@ -9,10 +10,11 @@ public static class SkillEndpoints
     {
         var group = app.MapGroup("/api/skills").RequireAuthorization();
 
-        group.MapGet("/", async (SkillManagerService skillManager, [FromQuery] int? page, [FromQuery] int? pageSize) => {
+        group.MapGet("/", async (SkillManagerService skillManager, ClaimsPrincipal user, [FromQuery] int? page, [FromQuery] int? pageSize) => {
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var p = page ?? 1;
             var ps = pageSize ?? 20;
-            var allSkills = await skillManager.GetAllSkillsAsync();
+            var allSkills = await skillManager.GetAllSkillsAsync(userId);
             var paged = allSkills.Skip((p - 1) * ps).Take(ps + 1).ToList();
 
             if (!allSkills.Any() && p == 1)
@@ -46,17 +48,19 @@ public static class SkillEndpoints
             })), "text/html");
         });
 
-        group.MapPost("/save", async (HttpContext context, SkillManagerService skillManager) => {
+        group.MapPost("/save", async (HttpContext context, ClaimsPrincipal user, SkillManagerService skillManager) => {
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var form = await context.Request.ReadFormAsync();
             var name = form["name"].ToString();
             var prompt = form["prompt"].ToString();
             var isSystem = form["isSystem"].ToString() == "true";
-            await skillManager.SaveSkillAsync(name, prompt, isSystem);
+            await skillManager.SaveSkillAsync(name, prompt, userId, isSystem);
             return Results.Ok();
         }).DisableAntiforgery();
 
-        group.MapDelete("/{name}", (string name, SkillManagerService skillManager) => {
-            skillManager.DeleteSkill(name, isSystem: false);
+        group.MapDelete("/{name}", (string name, ClaimsPrincipal user, SkillManagerService skillManager) => {
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            skillManager.DeleteSkill(name, userId, isSystem: false);
             return Results.Ok();
         });
     }

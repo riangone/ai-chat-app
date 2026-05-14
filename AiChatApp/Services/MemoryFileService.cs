@@ -153,6 +153,7 @@ public class MemoryFileService
             type: user
             userId: {memory.UserId}
             tags: {memory.Tags}
+            relations: {memory.Relations}
             relevanceScore: {memory.RelevanceScore}
             accessCount: {memory.AccessCount}
             createdAt: {memory.CreatedAt:O}
@@ -216,12 +217,15 @@ public class MemoryFileService
             if (string.IsNullOrWhiteSpace(tags)) tags = Get("name");
             if (string.IsNullOrWhiteSpace(tags)) tags = Path.GetFileNameWithoutExtension(filePath);
 
+            var relations = Get("relations");
+
             return new LongTermMemory
             {
                 Id = 0,
                 UserId = GetInt("userId", 0),
                 Content = body,
                 Tags = tags,
+                Relations = string.IsNullOrWhiteSpace(relations) ? null : relations,
                 RelevanceScore = GetInt("relevanceScore", 80),
                 AccessCount = GetInt("accessCount", 0),
                 CreatedAt = GetDate("createdAt"),

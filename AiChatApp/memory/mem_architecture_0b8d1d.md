@@ -4,10 +4,11 @@ description: 主界面的 Swiper 幻灯片顺序确定为：0: AI Chat, 1: Histo
 type: user
 userId: 1
 tags: architecture,frontend,swiper,index
+relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 4
+accessCount: 9
 createdAt: 2026-04-28T07:58:30.5173686Z
-lastAccessedAt: 2026-04-29T07:55:59.6638366Z
+lastAccessedAt: 2026-05-12T15:09:05.0638983Z
 ---
 
 主界面的 Swiper 幻灯片顺序确定为：0: AI Chat, 1: History, 2: Workspaces, 3: Skills, 4: Memory, 5: CLI Sessions, 6: Notes, 7: Harness Engineering, 8: Pipeline Logs, 9: Settings, 10: File Manager (Files)。

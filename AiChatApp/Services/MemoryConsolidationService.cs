@@ -23,6 +23,7 @@ public class MemoryConsolidationService
 
         string extractionPrompt = $$"""
             Extract key facts, user preferences, and important information from the following conversation for long-term memory.
+            Also, extract entities and their relationships to build a knowledge graph (mindmap).
             Include things like name, interests, tech stack, goals, or specific decisions.
             If no new important information is found, return an empty array [].
 
@@ -31,10 +32,11 @@ public class MemoryConsolidationService
             Assistant: {{aiResponse}}
 
             OUTPUT FORMAT (JSON only):
-            [
-              {"content": "Description of the fact in the same language as the conversation", "tags": "comma,separated,tags"},
-              ...
-            ]
+            {
+              "memories": [
+                {"content": "Fact description", "tags": "comma,separated,tags", "relations": ["RelatedEntity1", "RelatedEntity2"]}
+              ]
+            }
             """;
 
         string provider = _aiService.DefaultProvider;
@@ -43,11 +45,11 @@ public class MemoryConsolidationService
 
         rawJson = System.Text.RegularExpressions.Regex.Replace(rawJson, @"```(?:json)?\s*", "").Trim();
 
-        int start = rawJson.IndexOf('[');
-        int end = rawJson.LastIndexOf(']');
+        int start = rawJson.IndexOf('{');
+        int end = rawJson.LastIndexOf('}');
         if (start < 0 || end < 0 || end <= start)
         {
-            _logger.LogDebug("[Memory] No JSON array found. start={Start}, end={End}", start, end);
+            _logger.LogDebug("[Memory] No JSON object found. start={Start}, end={End}", start, end);
             return;
         }
 
@@ -55,10 +57,10 @@ public class MemoryConsolidationService
 
         try
         {
-            var items = JsonSerializer.Deserialize<List<ConsolidationItem>>(jsonPart,
+            var root = JsonSerializer.Deserialize<ConsolidationRoot>(jsonPart,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            if (items == null || !items.Any())
+            if (root?.Memories == null || !root.Memories.Any())
             {
                 _logger.LogDebug("[Memory] No items extracted.");
                 return;
@@ -66,7 +68,7 @@ public class MemoryConsolidationService
 
             var existingMemories = _fileService.GetMemoriesForUser(userId);
 
-            foreach (var item in items)
+            foreach (var item in root.Memories)
             {
                 if (string.IsNullOrWhiteSpace(item.Content)) continue;
 
@@ -79,6 +81,15 @@ public class MemoryConsolidationService
                     existing.Content = item.Content;
                     existing.LastAccessedAt = DateTime.UtcNow;
                     existing.RelevanceScore = Math.Min(100, existing.RelevanceScore + 5);
+                    
+                    // Merge relations
+                    if (item.Relations != null)
+                    {
+                        var currentRelations = existing.Relations?.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(r => r.Trim()) ?? Enumerable.Empty<string>();
+                        var newRelations = currentRelations.Union(item.Relations).Distinct();
+                        existing.Relations = string.Join(",", newRelations);
+                    }
+
                     await _fileService.WriteAsync(existing);
                 }
                 else
@@ -88,6 +99,7 @@ public class MemoryConsolidationService
                         UserId = userId,
                         Content = item.Content,
                         Tags = item.Tags ?? "general",
+                        Relations = item.Relations != null ? string.Join(",", item.Relations) : null,
                         RelevanceScore = 80,
                         CreatedAt = DateTime.UtcNow,
                         LastAccessedAt = DateTime.UtcNow,
@@ -96,7 +108,7 @@ public class MemoryConsolidationService
                 }
             }
 
-            _logger.LogDebug("[Memory] Saved {Count} memory items for userId={UserId}", items.Count, userId);
+            _logger.LogDebug("[Memory] Saved {Count} memory items for userId={UserId}", root.Memories.Count, userId);
         }
         catch (JsonException ex)
         {
@@ -108,5 +120,6 @@ public class MemoryConsolidationService
         }
     }
 
-    private record ConsolidationItem(string Content, string Tags);
+    private record ConsolidationRoot(List<ConsolidationItem> Memories);
+    private record ConsolidationItem(string Content, string Tags, List<string>? Relations);
 }

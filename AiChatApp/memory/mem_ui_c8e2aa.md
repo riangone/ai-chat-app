@@ -4,10 +4,11 @@ description: 用户偏好手机端UI使用浮动按钮+滑动面板模式，而�
 type: user
 userId: 1
 tags: ui,mobile,preference,chat
+relations: 
 relevanceScore: 80
-accessCount: 0
+accessCount: 1
 createdAt: 2026-05-01T07:52:22.1084073Z
-lastAccessedAt: 2026-05-01T07:52:22.1084074Z
+lastAccessedAt: 2026-05-13T09:55:09.9272157Z
 ---
 
 用户偏好手机端UI使用浮动按钮+滑动面板模式，而不是直接显示聊天窗口

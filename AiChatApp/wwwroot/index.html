@@ -16,6 +16,9 @@
     <link rel="stylesheet" href="https://unpkg.com/swiper@11/swiper-bundle.min.css" />
     <script src="https://unpkg.com/swiper@11/swiper-bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
     <script src="translations.js"></script>
     <style>
@@ -278,9 +281,9 @@
                 2: { id: 'projects-list-container', trigger: 'loadProjects' },
                 3: { id: 'skills-list-container', trigger: 'loadSkills' },
                 4: { id: 'memory-list-container', trigger: 'loadMemories' },
-                5: { id: 'cli-list-container', trigger: 'loadCli' },
-                6: { id: 'notes-list', trigger: 'refreshNoteList' },
-                12: { id: 'todo-list', trigger: 'refreshTodoList' }
+                6: { id: 'cli-list-container', trigger: 'loadCli' },
+                7: { id: 'notes-list', trigger: 'refreshNoteList' },
+                13: { id: 'todo-list', trigger: 'refreshTodoList' }
             };
 
             const config = containerMap[index];
@@ -293,26 +296,28 @@
                 return;
             }
 
-            if (index === 9) {
+            if (index === 5) {
+                loadMemoryGraph();
+            } else if (index === 10) {
                 // Agent Stats - Always reload to show fresh data
                 const el = document.getElementById('agent-stats-container');
                 if (el) {
                     htmx.trigger(el, 'loadStats');
                     el.dataset.loaded = 'true';
                 }
-            } else if (index === 7) {
+            } else if (index === 8) {
                 const h = document.getElementById('harness-content-area');
                 if (h && !h.dataset.loaded) {
                     switchHarnessTab('pipelines');
                     h.dataset.loaded = 'true';
                 }
-            } else if (index === 8) {
+            } else if (index === 9) {
                 const p = document.getElementById('pipeline-panel');
                 if (p && !p.dataset.loaded) {
                     initPipelinePanel();
                     p.dataset.loaded = 'true';
                 }
-            } else if (index === 11) {
+            } else if (index === 12) {
                 const f = document.getElementById('files-content');
                 if (f && !f.dataset.loaded) {
                     browsePath(currentFilesPath || '');
@@ -1156,6 +1161,7 @@ function handleSuggestionAction(command, payload) {
                      loop: false,
                      slidesPerView: 1,
                      allowTouchMove: true,
+                     simulateTouch: false,
                      speed: 300,
                      navigation: {
                          nextEl: '.swiper-button-next',
@@ -1500,6 +1506,297 @@ function handleSuggestionAction(command, payload) {
             return currentFilesPath;
         }
 
+        let mermaidInitialized = false;
+        let currentMindmapRoot = null;
+        let currentMindmapDepth = 1;
+        let mindmapHistory = [];
+        let collapsedNodeIds = new Set();
+
+        function formatNodeName(nodeId) {
+            if (!nodeId) return 'Overview';
+            return nodeId
+                .replace(/^node_mem_/i, '')
+                .replace(/^node_/i, '')
+                .replace(/^tag_/i, '')
+                .replace(/_/g, ' ')
+                .replace(/ [a-z0-9]{6}$/i, '')
+                .replace(/\b\w/g, c => c.toUpperCase());
+        }
+
+        function updateMindmapBreadcrumb() {
+            const el = document.getElementById('mindmap-breadcrumb');
+            if (!el) return;
+            let html = '<button onclick="resetMindmap()" class="font-bold tracking-wider uppercase opacity-60 hover:opacity-100 transition-opacity">Overview</button>';
+            
+            for (let i = 0; i < mindmapHistory.length; i++) {
+                const entry = mindmapHistory[i];
+                html += `<span class="opacity-30 mx-1">\u203A</span>`;
+                html += `<button onclick="focusMindmapHistory(${i})" class="opacity-60 hover:opacity-100 transition-opacity">${entry.name}</button>`;
+            }
+
+            if (currentMindmapRoot) {
+                html += `<span class="opacity-30 mx-1">\u203A</span>`;
+                html += `<span class="text-primary font-bold">${formatNodeName(currentMindmapRoot)}</span>`;
+                html += `<button onclick="unfocusMindmap()" class="ml-2 btn btn-ghost btn-xs btn-circle opacity-40 hover:opacity-100" title="Back Up"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3 h-3"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" /></svg></button>`;
+            }
+            el.innerHTML = html;
+        }
+
+        window.focusMindmapHistory = function(index) {
+            const entry = mindmapHistory[index];
+            mindmapHistory = mindmapHistory.slice(0, index);
+            currentMindmapRoot = entry.id;
+            updateMindmapBreadcrumb();
+            loadMemoryGraph(currentMindmapRoot);
+        };
+
+        window.unfocusMindmap = function() {
+            if (mindmapHistory.length > 0) {
+                const last = mindmapHistory.pop();
+                currentMindmapRoot = last.id;
+            } else {
+                currentMindmapRoot = null;
+            }
+            updateMindmapBreadcrumb();
+            loadMemoryGraph(currentMindmapRoot);
+        };
+
+        let lastClickTime = 0;
+        let lastClickNodeId = null;
+        let clickTimeout = null;
+
+        window.expandNode = function(nodeId) {
+            if (nodeId.startsWith('rel_')) return;
+            
+            const now = Date.now();
+            if (lastClickNodeId === nodeId && now - lastClickTime < 350) {
+                // Double Click -> Focus/Drill-down
+                if (clickTimeout) clearTimeout(clickTimeout);
+                drillDownNode(nodeId);
+                lastClickTime = 0;
+                lastClickNodeId = null;
+                return;
+            }
+            
+            lastClickTime = now;
+            lastClickNodeId = nodeId;
+
+            if (clickTimeout) clearTimeout(clickTimeout);
+            clickTimeout = setTimeout(() => {
+                // Single Click -> Toggle Collapse
+                if (collapsedNodeIds.has(nodeId)) {
+                    collapsedNodeIds.delete(nodeId);
+                } else {
+                    collapsedNodeIds.add(nodeId);
+                }
+                loadMemoryGraph(currentMindmapRoot);
+                lastClickNodeId = null;
+            }, 350);
+        };
+
+        function drillDownNode(nodeId) {
+            if (currentMindmapRoot && !mindmapHistory.some(h => h.id === currentMindmapRoot)) {
+                mindmapHistory.push({ id: currentMindmapRoot, name: formatNodeName(currentMindmapRoot) });
+            }
+            currentMindmapRoot = nodeId;
+            currentMindmapDepth = 1;
+            collapsedNodeIds.clear(); // Clear local collapses when drilling down
+            updateMindmapBreadcrumb();
+            loadMemoryGraph(nodeId);
+        }
+
+        window.resetMindmap = function() {
+            currentMindmapRoot = null;
+            currentMindmapDepth = 1;
+            mindmapHistory = [];
+            collapsedNodeIds.clear();
+            updateMindmapBreadcrumb();
+            loadMemoryGraph();
+        };
+
+        window.collapseAllMindmap = function() {
+            // Find all nodes in the current SVG and add them to collapsedNodeIds
+            const nodes = document.querySelectorAll('#mermaid-graph .node');
+            nodes.forEach(node => {
+                const id = node.id.replace(/^mermaid-render-.*-/, '');
+                if (id && !id.startsWith('rel_') && id !== 'overview_root') {
+                    collapsedNodeIds.add(id);
+                }
+            });
+            loadMemoryGraph(currentMindmapRoot);
+        };
+
+        window.increaseMindmapDepth = function() {
+            if (!currentMindmapRoot) return;
+            currentMindmapDepth++;
+            loadMemoryGraph(currentMindmapRoot);
+        };
+
+        let panZoomInstance = null;
+
+        function scaleSvgToFit(svgEl) {
+            if (!svgEl) return;
+            
+            // Clear existing instance
+            if (panZoomInstance) {
+                panZoomInstance.destroy();
+                panZoomInstance = null;
+            }
+
+            svgEl.removeAttribute('height');
+            svgEl.removeAttribute('width');
+            svgEl.style.width = '100%';
+            svgEl.style.height = '100%';
+            
+            const eventsHandler = {
+                haltEventListeners: ['touchstart', 'touchend', 'touchmove', 'touchleave', 'touchcancel'],
+                init: function(options) {
+                    var instance = options.instance,
+                        initialScale = 1,
+                        pannedX = 0,
+                        pannedY = 0;
+
+                    this.hammer = Hammer(options.svgElement, {
+                        inputClass: Hammer.SUPPORT_POINTER_EVENTS ? Hammer.PointerEventInput : Hammer.TouchInput
+                    });
+
+                    this.hammer.get('pinch').set({enable: true});
+
+                    this.hammer.on('doubletap', function(ev) {
+                        instance.zoomIn();
+                    });
+
+                    this.hammer.on('panstart panmove', function(ev) {
+                        if (ev.type === 'panstart') {
+                            pannedX = 0;
+                            pannedY = 0;
+                        }
+                        instance.panBy({x: ev.deltaX - pannedX, y: ev.deltaY - pannedY});
+                        pannedX = ev.deltaX;
+                        pannedY = ev.deltaY;
+                    });
+
+                    this.hammer.on('pinchstart pinchmove', function(ev) {
+                        if (ev.type === 'pinchstart') {
+                            initialScale = instance.getZoom();
+                            instance.zoomAtPoint(initialScale * ev.scale, {x: ev.center.x, y: ev.center.y});
+                        }
+                        instance.zoomAtPoint(initialScale * ev.scale, {x: ev.center.x, y: ev.center.y});
+                    });
+
+                    options.svgElement.addEventListener('touchmove', function(e) { e.preventDefault(); });
+                },
+                destroy: function() {
+                    this.hammer.destroy();
+                }
+            };
+
+            panZoomInstance = svgPanZoom(svgEl, {
+                zoomEnabled: true,
+                controlIconsEnabled: false,
+                fit: true,
+                center: true,
+                minZoom: 0.1,
+                maxZoom: 10,
+                zoomScaleSensitivity: 0.2,
+                dblClickZoomEnabled: false,
+                customEventsHandler: eventsHandler
+            });
+
+            // Adjust SVG nodes for better mobile hits
+            svgEl.querySelectorAll('.node').forEach(node => {
+                node.style.cursor = 'pointer';
+                node.setAttribute('role', 'button');
+                node.setAttribute('aria-label', 'Toggle node');
+                node.setAttribute('title', 'Click to toggle, Double-click to focus');
+            });
+
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                if (panZoomInstance) panZoomInstance.resize().fit().center();
+            });
+        }
+
+        window.zoomInMindmap = function() {
+            if (panZoomInstance) panZoomInstance.zoomIn();
+        };
+
+        window.zoomOutMindmap = function() {
+            if (panZoomInstance) panZoomInstance.zoomOut();
+        };
+
+        window.resetZoomMindmap = function() {
+            if (panZoomInstance) panZoomInstance.resetZoom().fit().center();
+        };
+
+        async function loadMemoryGraph(rootId = null) {
+            const container = document.getElementById('mermaid-graph');
+            if (!container) return;
+
+            const isOverview = !rootId;
+            const loadingMsg = isOverview ? 'Loading Overview...' : 'Updating Graph...';
+            container.innerHTML = `<div class="opacity-20 flex flex-col items-center"><span class="loading loading-spinner loading-lg mb-4"></span><p class="font-bold uppercase tracking-widest text-xs">${loadingMsg}</p></div>`;
+
+            try {
+                if (typeof mermaid === 'undefined') {
+                    throw new Error('Mermaid library not loaded. Please check your internet connection.');
+                }
+
+                if (!mermaidInitialized) {
+                    mermaid.initialize({
+                        startOnLoad: false,
+                        theme: 'neutral',
+                        securityLevel: 'loose',
+                        fontFamily: 'inherit'
+                    });
+                    mermaidInitialized = true;
+                }
+
+                const url = new URL('/api/memories/mindmap', window.location.origin);
+                if (rootId) url.searchParams.set('rootId', rootId);
+                url.searchParams.set('depth', currentMindmapDepth);
+                if (collapsedNodeIds.size > 0) {
+                    url.searchParams.set('collapsed', Array.from(collapsedNodeIds).join(','));
+                }
+
+                const res = await fetch(url);
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    throw new Error(`Server Error: ${res.status} ${errorText || 'Failed to fetch mindmap data'}`);
+                }
+                const graphDef = await res.text();
+
+                if (!graphDef || !graphDef.trim().startsWith('graph')) {
+                    container.innerHTML = '<div class="opacity-40 text-xs font-bold uppercase tracking-widest text-center py-20">No graph data available yet.</div>';
+                    return;
+                }
+
+                const id = 'mermaid-render-' + Math.random().toString(36).substr(2, 9);
+
+                try {
+                    const { svg } = await mermaid.render(id, graphDef);
+                    container.innerHTML = svg;
+                    const svgEl = container.querySelector('svg');
+                    scaleSvgToFit(svgEl);
+                } catch (renderErr) {
+                    console.error("Mermaid Render Error:", renderErr);
+                    const errorMsg = renderErr.message || renderErr.str || "Unknown Error";
+                    container.innerHTML = `
+                        <div class="alert alert-warning text-xs flex flex-col gap-2">
+                            <span class="font-bold">Render Error</span>
+                            <p class="opacity-70">${errorMsg}</p>
+                            <pre class="bg-base-300 p-2 rounded overflow-auto max-w-full font-mono text-[10px]">${graphDef}</pre>
+                        </div>`;
+                }
+            } catch (err) {
+                console.error("Mindmap Load Error:", err);
+                container.innerHTML = `
+                    <div class="alert alert-error text-xs">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <span>${err.message}</span>
+                    </div>`;
+            }
+        }
         document.addEventListener('htmx:afterSwap', (evt) => {
             if (evt.detail.target.id === 'files-content' || evt.detail.target.id === 'notes-list' || evt.detail.target.id === 'chat-list') {
                 updateUI();
@@ -1511,6 +1808,35 @@ function handleSuggestionAction(command, payload) {
     </script>
     <style>
         #notes-slide-list, #notes-slide-editor { transition: transform 0.4s cubic-bezier(0.25, 0.1, 0.25, 1); will-change: transform; }
+
+        #mermaid-graph svg {
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
+            margin: 0 auto;
+        }
+        #mermaid-graph .node rect,
+        #mermaid-graph .node circle,
+        #mermaid-graph .node polygon,
+        #mermaid-graph .node ellipse {
+            transition: all 0.2s ease;
+            stroke-width: 2px;
+        }
+        #mermaid-graph .node:active rect,
+        #mermaid-graph .node:active circle,
+        #mermaid-graph .node:active polygon,
+        #mermaid-graph .node:active ellipse {
+            filter: brightness(0.9);
+            transform: scale(0.98);
+        }
+        #mermaid-graph .node .label {
+            font-weight: 800 !important;
+            font-size: 15px !important;
+            fill: currentColor !important;
+        }
+        #mermaid-graph .edgePath path {
+            stroke-width: 2.5px !important;
+        }
     </style>
 </head>
 <body class="bg-base-200">
@@ -1576,6 +1902,55 @@ function handleSuggestionAction(command, payload) {
                     <div class="swiper-slide">
                         <div class="shell-header"><div class="shell-badge"><span data-i18n="memory-title">Memory</span></div><button onclick="htmx.trigger('#memory-list-container','loadMemories')" class="btn btn-ghost btn-xs opacity-60 hover:opacity-100" title="Refresh"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg></button></div>
                         <div id="memory-panel" class="flex flex-col flex-1"><div id="memory-list-container" hx-get="/api/memories" hx-trigger="loadMemories" hx-target="#memory-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-4xl mx-auto space-y-4" id="memory-list"></div></div></div>
+                    </div>
+                    <div class="swiper-slide" id="memory-graph-slide">
+                        <div class="shell-header">
+                            <div class="shell-badge">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" /></svg>
+                                <span data-i18n="mindmap">Memory Mindmap</span>
+                            </div>
+                            <div class="right-actions flex items-center gap-2 mr-2">
+                                <div class="flex items-center bg-base-300/50 rounded-lg p-0.5 border border-base-content/10 mr-1">
+                                    <button onclick="zoomInMindmap()" class="btn btn-ghost btn-xs px-1.5" title="Zoom In">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                    </button>
+                                    <button onclick="resetZoomMindmap()" class="btn btn-ghost btn-xs px-1.5" title="Reset Zoom">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                    </button>
+                                    <button onclick="zoomOutMindmap()" class="btn btn-ghost btn-xs px-1.5" title="Zoom Out">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14" /></svg>
+                                    </button>
+                                </div>
+                                <button onclick="increaseMindmapDepth()" class="btn btn-ghost btn-xs opacity-60 hover:opacity-100 flex items-center gap-1">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                    <span class="text-[10px] uppercase font-bold tracking-widest">Expand</span>
+                                </button>
+                                <button onclick="collapseAllMindmap()" class="btn btn-ghost btn-xs opacity-60 hover:opacity-100 flex items-center gap-1">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12h-15" /></svg>
+                                    <span class="text-[10px] uppercase font-bold tracking-widest">Collapse All</span>
+                                </button>
+                                <button onclick="resetMindmap()" class="btn btn-ghost btn-xs opacity-60 hover:opacity-100 flex items-center gap-1">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                    <span class="text-[10px] uppercase font-bold tracking-widest">Reset</span>
+                                </button>
+                            </div>
+                        </div>
+                        <nav id="mindmap-breadcrumb" class="px-6 pt-3 pb-0 flex items-center gap-1 text-xs text-base-content/70">
+                            <span class="font-bold tracking-wider opacity-60 uppercase">Overview</span>
+                        </nav>
+                        <div id="memory-graph-panel" class="flex flex-col flex-1 p-2 md:p-8 pt-2 bg-base-100 overflow-hidden">
+                            <div class="flex-1 overflow-hidden border border-base-content/10 rounded-3xl bg-base-200/50 relative">
+                                <div id="mermaid-graph" class="w-full h-full" style="touch-action: none;">
+                                    <div class="opacity-20 flex flex-col items-center h-full justify-center">
+                                        <span class="loading loading-spinner loading-lg mb-4"></span>
+                                        <p class="font-bold uppercase tracking-widest text-xs">Generating Graph...</p>
+                                    </div>
+                                </div>
+                                <button onclick="loadMemoryGraph()" class="btn btn-circle btn-sm btn-ghost absolute top-4 right-4 bg-base-100 shadow-md">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                </button>
+                            </div>
+                        </div>
                     </div>
                     <div class="swiper-slide">
                         <div class="shell-header"><div class="shell-badge"><span data-i18n="cli-title">CLI Sessions</span></div></div>
@@ -1829,6 +2204,15 @@ function handleSuggestionAction(command, payload) {
     <div hx-get="/components/modals.html" hx-trigger="load" hx-swap="outerHTML"></div>
 
     <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        });
+      }
+    </script>
+</body>
+</html>
+<script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js').catch(() => {});

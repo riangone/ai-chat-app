@@ -32,10 +32,11 @@ public class AiService
         "Thought:", "Thinking:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:", 
         "[相关的长期记忆]:", "[当前会话上下文]:", "[会话上下文]:",
         "[追加スキル指示]:", "[MEMORY INSTRUCTION]:", "[ENVIRONMENTAL POLICIES & CONSTRAINTS]:", 
-        "--- Policy:", "Role:", "Persona:", "Input:", "Output:",
+        "--- Policy:", "Role:", "Persona:", "Input:", "Output:", "Prompt:", "Instructions:", "Response:", "Result:",
         "役割:", "指示:", "角色:", "任务:", "项目名:", "项目路径:", "プロジェクト名:", "ルートパス:",
         "[現在のアクティブエージェント]:", "[当前活跃代理]:", "[プロジェクト文脈]:", "[项目文脉]:",
-        "[利用可能なエージェント役割]:", "[可用代理角色]:", "[有効なスキル指示]:", "[有效技能指示]:"
+        "[利用可能なエージェント役割]:", "[可用代理角色]:", "[有効なスキル指示]:", "[有效技能指示]:",
+        "[System]:", "[User]:", "[Assistant]:", "[Context]:", "[History]:", "[Prompt]:", "[Instructions]:"
     };
 
     private static readonly string[] SystemPromptFragments = { 
@@ -46,8 +47,8 @@ public class AiService
         "你目前运行在 AiChatApp 项目的上下文中",
         "你目前運行在 AiChatApp 專案的上下文中",
         "你是 Hyperion",
-        "专注于软件工程、系统架构和自动化开发任务",
-        "專注於軟體工程、系統架構和自動化開發任務",
+        "专注于软件工程、系统架构 and 自动化开发任务",
+        "專注於軟體工程、系統架構 and 自動化開發任務",
         "请始终以 Hyperion 的身份行事",
         "請始終以 Hyperion 的身份行事",
         "你不仅要提供代码",
@@ -61,12 +62,12 @@ public class AiService
         "あなたはタスク分解の専門家",
         "あなたは実装の専門家",
         "あなたは評審の専門家",
+        "あなたは評価の専門家",
+        "你是评估专家",
         "[MEMORY INSTRUCTION]",
         "[会話履歴]:",
         "[ユーザーの既知情報・長期記憶]:",
         "[相关的长期记忆]:",
-        "重要な発見や制約があれば",
-        "重要な発見や制約があれば",
         "重要な発見や制約があれば",
         "重要的发现或约束",
         "重要的發現或約束",
@@ -80,7 +81,12 @@ public class AiService
         "当你与用户交流或执行任务时",
         "當你與用戶交流或執行任務時",
         "根据具体的实现或修改指令",
-        "根據具體的實現或修改指令"
+        "根據具體的實現或修改指令",
+        "You are a highly capable AI assistant",
+        "You are currently operating in the context of a software development project",
+        "Always act as Hyperion",
+        "Focus on software engineering, system architecture, and automated development tasks",
+        "List the actions you take clearly"
     };
 
     private readonly ILogger<AiService> _logger;
@@ -114,7 +120,7 @@ public class AiService
     /// <summary>获取所有可用的代理定义（统一从 SkillManager 获取）</summary>
     public async Task<List<AgentDefinition>> GetAvailableAgentsAsync(int userId)
     {
-        var skills = await _skillManager.GetAllSkillsAsync();
+        var skills = await _skillManager.GetAllSkillsAsync(userId);
         return skills.Select(s => new AgentDefinition(s.Name, s.DisplayName, s.Description, s.Prompt)).ToList();
     }
 
