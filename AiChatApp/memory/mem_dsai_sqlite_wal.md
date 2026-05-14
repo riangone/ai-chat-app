@@ -6,9 +6,9 @@ userId: 0
 tags: dsai sqlite wal mode fix
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 6
+accessCount: 7
 createdAt: 2026-05-01T13:16:51.5288123Z
-lastAccessedAt: 2026-05-14T03:11:41.4210460Z
+lastAccessedAt: 2026-05-14T03:49:17.9285661Z
 ---
 
 dsai项目在并发请求（尤其是opencode长时间占用写锁期间）会触发`sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) database is locked`，导致500内部服务器错误。
