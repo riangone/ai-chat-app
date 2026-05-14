@@ -6,9 +6,9 @@ userId: 1
 tags: user-preference,workflow,git,database
 relations: git workflow,database files
 relevanceScore: 80
-accessCount: 1
+accessCount: 3
 createdAt: 2026-05-14T00:24:29.4078910Z
-lastAccessedAt: 2026-05-14T00:46:30.1065563Z
+lastAccessedAt: 2026-05-14T01:59:08.3094403Z
 ---
 
 用户习惯将数据库文件 (.db) 连同代码和文档一起进行 Git 提交和推送。
