@@ -1,13 +1,14 @@
 ---
 name: git, branch, nyf
-description: 用户使用 'nyf' 分支进行 Git 提交和推送。
+description: 当前使用的 Git 分支为 nyf，主要用于提交重构相关的代码和文档。
 type: user
 userId: 1
 tags: git, branch, nyf
-relevanceScore: 80
+relations: nyf
+relevanceScore: 85
 accessCount: 0
 createdAt: 2026-05-12T08:43:26.8791005Z
-lastAccessedAt: 2026-05-12T08:43:26.8791006Z
+lastAccessedAt: 2026-05-14T02:44:22.3163482Z
 ---
 
-用户使用 'nyf' 分支进行 Git 提交和推送。
+当前使用的 Git 分支为 nyf，主要用于提交重构相关的代码和文档。

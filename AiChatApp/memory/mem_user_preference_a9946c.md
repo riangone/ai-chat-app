@@ -6,9 +6,9 @@ userId: 1
 tags: user_preference,git,database
 relations: relevanceScore: 85
 relevanceScore: 85
-accessCount: 15
+accessCount: 19
 createdAt: 2026-04-28T23:24:03.2774869Z
-lastAccessedAt: 2026-05-14T01:59:08.3094080Z
+lastAccessedAt: 2026-05-14T03:44:22.3367482Z
 ---
 
 用户倾向于将代码、文档以及 chat.db 数据库文件一同提交并推送至远程仓库进行同步。
