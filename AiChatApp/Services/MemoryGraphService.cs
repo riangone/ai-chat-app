@@ -279,19 +279,6 @@ public string GenerateMermaidGraph(int userId, string? rootId = null, int depth 
     sb.AppendLine("  classDef virtualNode fill:#eee,stroke:#999,stroke-dasharray:5,5,font-size:14px;");
     sb.AppendLine("  classDef collapsedNode fill:#fff,stroke:#6366f1,stroke-width:2px,stroke-dasharray: 5,5,font-size:14px;");
 
-    // 4. Callbacks (at the very end)
-    foreach (var nodeId in definedNodes.Where(n => !n.StartsWith("rel_") && n != "overview_root"))
-    {
-        if (nodeId.StartsWith("tag_"))
-        {
-             sb.AppendLine($"  click {nodeId} expandNode");
-        }
-        else
-        {
-             sb.AppendLine($"  click {nodeId} expandNode");
-        }
-    }
-
     return sb.ToString();
 }
 

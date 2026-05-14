@@ -6,9 +6,9 @@ userId: 1
 tags: harness,policy,rules,ai,constraints
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 68
+accessCount: 73
 createdAt: 2026-04-30T09:25:23.0473815Z
-lastAccessedAt: 2026-05-14T04:13:55.0914884Z
+lastAccessedAt: 2026-05-14T10:14:18.8555849Z
 ---
 
 Harness 是一个策略管理系统，用于管理和应用 AI 对话的规则或约束，在 Policies 标签页保存规则后徽章自动更新

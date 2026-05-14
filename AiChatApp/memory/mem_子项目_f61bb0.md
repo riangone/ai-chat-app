@@ -6,9 +6,9 @@ userId: 1
 tags: 子项目, auto-dealer-demo
 relations: auto-dealer-demo
 relevanceScore: 80
-accessCount: 2
+accessCount: 3
 createdAt: 2026-05-14T01:19:05.3294275Z
-lastAccessedAt: 2026-05-14T03:11:41.4209400Z
+lastAccessedAt: 2026-05-14T08:17:29.0074743Z
 ---
 
 auto-dealer-demo 是已完成领域特定内容定制的子项目之一。

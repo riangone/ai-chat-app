@@ -6,9 +6,9 @@ userId: 1
 tags: netyamlforge,ai-assistant,javascript,pathbase
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 2
+accessCount: 3
 createdAt: 2026-04-30T11:18:39.7618312Z
-lastAccessedAt: 2026-05-13T01:48:51.2033572Z
+lastAccessedAt: 2026-05-14T06:28:12.6075231Z
 ---
 
 修改了 NetYamlForge/wwwroot/js/ai-assistant.js，新增 getPath() 辅助函数，通过 window.NetYamlForgeConfig.pathBase 动态构造 apiBaseUrl 和 signalRUrl，解决子路径部署时 API 请求路径错误的问题

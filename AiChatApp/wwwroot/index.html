@@ -1662,9 +1662,44 @@ function handleSuggestionAction(command, payload) {
 
                     this.hammer.get('pinch').set({enable: true});
 
-                    this.hammer.on('doubletap', function(ev) {
-                        instance.zoomIn();
-                    });
+                    // Recognizers for single and double tap
+                    const doubleTap = new Hammer.Tap({ event: 'doubletap', taps: 2 });
+                    const singleTap = new Hammer.Tap({ event: 'singletap' });
+                    
+                    this.hammer.add([doubleTap, singleTap]);
+                    singleTap.requireFailure(doubleTap);
+
+                    const handleTap = (ev, isDouble) => {
+                        let target = ev.target;
+                        // Find the closest parent that is a node
+                        while (target && target !== options.svgElement) {
+                            if (target.classList && (target.classList.contains('node') || target.closest('.node'))) {
+                                const nodeEl = target.classList.contains('node') ? target : target.closest('.node');
+                                // Extract nodeId from element ID (e.g., "mermaid-123-node_abc" -> "node_abc")
+                                const idParts = nodeEl.id.split('-');
+                                const nodeId = idParts[idParts.length - 1];
+                                
+                                if (nodeId && nodeId !== 'overview_root' && !nodeId.startsWith('rel_')) {
+                                    if (isDouble) {
+                                        drillDownNode(nodeId);
+                                    } else {
+                                        // Toggle collapse
+                                        if (collapsedNodeIds.has(nodeId)) {
+                                            collapsedNodeIds.delete(nodeId);
+                                        } else {
+                                            collapsedNodeIds.add(nodeId);
+                                        }
+                                        loadMemoryGraph(currentMindmapRoot);
+                                    }
+                                }
+                                break;
+                            }
+                            target = target.parentNode;
+                        }
+                    };
+
+                    this.hammer.on('singletap', (ev) => handleTap(ev, false));
+                    this.hammer.on('doubletap', (ev) => handleTap(ev, true));
 
                     this.hammer.on('panstart panmove', function(ev) {
                         if (ev.type === 'panstart') {
@@ -1679,15 +1714,14 @@ function handleSuggestionAction(command, payload) {
                     this.hammer.on('pinchstart pinchmove', function(ev) {
                         if (ev.type === 'pinchstart') {
                             initialScale = instance.getZoom();
-                            instance.zoomAtPoint(initialScale * ev.scale, {x: ev.center.x, y: ev.center.y});
                         }
                         instance.zoomAtPoint(initialScale * ev.scale, {x: ev.center.x, y: ev.center.y});
                     });
 
-                    options.svgElement.addEventListener('touchmove', function(e) { e.preventDefault(); });
+                    options.svgElement.addEventListener('touchmove', function(e) { e.preventDefault(); }, { passive: false });
                 },
                 destroy: function() {
-                    this.hammer.destroy();
+                    if (this.hammer) this.hammer.destroy();
                 }
             };
 
@@ -1699,16 +1733,15 @@ function handleSuggestionAction(command, payload) {
                 minZoom: 0.1,
                 maxZoom: 10,
                 zoomScaleSensitivity: 0.2,
-                dblClickZoomEnabled: false,
+                dblClickZoomEnabled: false, // We handle double click manually
                 customEventsHandler: eventsHandler
             });
 
-            // Adjust SVG nodes for better mobile hits
+            // Visual feedback for nodes
             svgEl.querySelectorAll('.node').forEach(node => {
                 node.style.cursor = 'pointer';
                 node.setAttribute('role', 'button');
-                node.setAttribute('aria-label', 'Toggle node');
-                node.setAttribute('title', 'Click to toggle, Double-click to focus');
+                node.style.transition = 'filter 0.2s ease, transform 0.2s ease';
             });
 
             // Handle window resize
@@ -1756,7 +1789,7 @@ function handleSuggestionAction(command, payload) {
                 if (rootId) url.searchParams.set('rootId', rootId);
                 url.searchParams.set('depth', currentMindmapDepth);
                 if (collapsedNodeIds.size > 0) {
-                    url.searchParams.set('collapsed', Array.from(collapsedNodeIds).join(','));
+                    url.searchParams.set('collapsedIds', Array.from(collapsedNodeIds).join(','));
                 }
 
                 const res = await fetch(url);

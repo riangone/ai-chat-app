@@ -4,10 +4,11 @@ description: 已将 wwwroot/index.html 中的消息加载动画从单个点更�
 type: user
 userId: 1
 tags: UI, 变更, 前端
+relations: 
 relevanceScore: 80
-accessCount: 0
+accessCount: 1
 createdAt: 2026-04-28T03:32:00.3289270Z
-lastAccessedAt: 2026-04-28T03:32:00.3289271Z
+lastAccessedAt: 2026-05-14T10:33:06.9125914Z
 ---
 
 已将 wwwroot/index.html 中的消息加载动画从单个点更新为三个带有交错跳动动画的点。

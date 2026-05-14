@@ -6,9 +6,9 @@ userId: 1
 tags: bug, schema-validation, jpcs, yaml
 relations: AiChatApp,jpcs,iDempiere
 relevanceScore: 80
-accessCount: 0
+accessCount: 4
 createdAt: 2026-05-14T04:13:38.7385913Z
-lastAccessedAt: 2026-05-14T04:13:38.7385915Z
+lastAccessedAt: 2026-05-14T09:25:37.9982531Z
 ---
 
 项目在启动时遇到模式验证失败，调查发现 jpcs/entities/ 目录下 1148 个实体 YAML 文件使用了不兼容的 iDempiere 导出格式。

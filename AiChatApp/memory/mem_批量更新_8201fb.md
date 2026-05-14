@@ -6,9 +6,9 @@ userId: 1
 tags: 批量更新, 子项目, 自动化
 relations: inventory,biz-docs,todo-app
 relevanceScore: 80
-accessCount: 2
+accessCount: 3
 createdAt: 2026-05-14T00:43:57.1145901Z
-lastAccessedAt: 2026-05-14T03:11:41.4210118Z
+lastAccessedAt: 2026-05-14T08:17:29.0075138Z
 ---
 
 批量更新了包括 inventory, biz-docs, todo-app 在内的 8 个现有子项目的主页配置至新标准。

@@ -9,9 +9,9 @@ userId: 0
 tags: notes-swiper-htmx-config
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 36
+accessCount: 40
 createdAt: 2026-04-27T15:49:49.1450963Z
-lastAccessedAt: 2026-05-14T02:12:55.2013234Z
+lastAccessedAt: 2026-05-14T06:10:22.0374362Z
 ---
 
 NotesパネルのSwiperをHTMXと組み合わせる際の必須設定：

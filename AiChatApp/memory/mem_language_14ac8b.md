@@ -4,11 +4,11 @@ description: ユーザーは中国語でも会話することがある（「我�
 type: user
 userId: 1
 tags: language,chinese,communication
-relations: 
+relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 56
+accessCount: 57
 createdAt: 2026-04-27T04:27:55.6801029Z
-lastAccessedAt: 2026-05-14T01:06:06.8929680Z
+lastAccessedAt: 2026-05-14T06:10:22.0374672Z
 ---
 
 ユーザーは中国語でも会話することがある（「我的名字叫oneriang」と中国語で自己紹介した）。
