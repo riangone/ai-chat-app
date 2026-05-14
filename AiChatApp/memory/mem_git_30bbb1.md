@@ -6,9 +6,9 @@ userId: 1
 tags: git,workflow,preferences
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 48
+accessCount: 49
 createdAt: 2026-04-28T05:34:02.9259642Z
-lastAccessedAt: 2026-05-14T10:40:37.9246244Z
+lastAccessedAt: 2026-05-14T13:25:01.4486748Z
 ---
 
 用户倾向于将代码、文档以及数据库文件（如 chat.db）一同提交并推送至远程仓库。
