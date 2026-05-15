@@ -6,9 +6,9 @@ userId: 1
 tags: NetYamlForge, Northwind Retail, 页面清单
 relations: NetYamlForge,Northwind Retail
 relevanceScore: 80
-accessCount: 11
+accessCount: 16
 createdAt: 2026-05-13T06:27:34.0023995Z
-lastAccessedAt: 2026-05-14T10:44:11.2441418Z
+lastAccessedAt: 2026-05-14T23:46:35.3278935Z
 ---
 
 NetYamlForge 的 Northwind Retail 演示项目包含 15 个已确认正常运行的页面：SalesDashboard, InventoryOverview, ExecutiveReport, OrderFulfillment, CustomerAnalytics, SalesByProduct, EmployeePerformance, ShippingDashboard, SupplierManagement, Customer360, ProductCatalog, OrderKanban, PurchaseRequisition, SalesCommission, CashFlowDashboard。

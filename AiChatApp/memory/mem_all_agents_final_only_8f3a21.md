@@ -6,9 +6,9 @@ userId: 0
 tags: all agents final conclusion only
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 237
+accessCount: 239
 createdAt: 2026-04-28T00:52:23.4410634Z
-lastAccessedAt: 2026-05-14T06:10:22.0374064Z
+lastAccessedAt: 2026-05-14T23:46:35.3288599Z
 ---
 
 全てのAIエージェント・プロバイダーは推論過程（思考ブロック）を除いた最終結論のみを返す。Geminiだけでなく、Claude、codex、opencode等すべてのプロバイダーに適用。

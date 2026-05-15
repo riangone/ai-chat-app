@@ -4,11 +4,11 @@ description: 用户希望在 /home/ubuntu/ws 创建一个 OCR Web 项目，利�
 type: user
 userId: 1
 tags: project_request,OCR,AI,vision
-relations: 
+relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 4
+accessCount: 5
 createdAt: 2026-05-08T03:11:25.0530206Z
-lastAccessedAt: 2026-05-12T14:17:40.0504306Z
+lastAccessedAt: 2026-05-14T23:13:00.7708834Z
 ---
 
 用户希望在 /home/ubuntu/ws 创建一个 OCR Web 项目，利用 AI 批量读取图片文本并保存为同名文本文件。

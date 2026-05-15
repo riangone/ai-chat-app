@@ -1,7 +1,6 @@
 using AiChatApp.Data;
 using AiChatApp.Models;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace AiChatApp.Services;
 
@@ -10,22 +9,20 @@ public class MemorySearchService
     private readonly AppDbContext _db;
     private readonly MemoryFileService _fileService;
     private readonly MemoryGraphService _graphService;
-    private readonly IServiceProvider _serviceProvider;
 
-    public MemorySearchService(AppDbContext db, MemoryFileService fileService, MemoryGraphService graphService, IServiceProvider serviceProvider)
+    public MemorySearchService(AppDbContext db, MemoryFileService fileService, MemoryGraphService graphService)
     {
         _db = db;
         _fileService = fileService;
         _graphService = graphService;
-        _serviceProvider = serviceProvider;
     }
 
-    /// <summary>プロンプトに関連する記憶をmdファイルから検索する。多段検索（キーワード + グラフ拡張 + セマンティック再ランク）を行う。</summary>
+    /// <summary>プロンプトに関連する記憶をmdファイルから検索する。キーワード検索 + グラフ拡張の2段階。</summary>
     public async Task<List<LongTermMemory>> SearchAsync(string prompt, int userId, int maxResults = 5)
     {
         // 1. キーワードベースの広域検索 (Top 15)
         var initialResults = await _fileService.SearchAsync(prompt, userId, 15);
-        
+
         // 2. グラフ拡張 (Knowledge Graph expansion)
         _graphService.BuildGraph(userId);
         var expandedResults = new List<LongTermMemory>(initialResults);
@@ -44,48 +41,7 @@ public class MemorySearchService
             }
         }
 
-        if (expandedResults.Count <= maxResults) return expandedResults;
-
-        // 3. セマンティック再ランク (AIによる関連性評価)
-        try
-        {
-            var aiService = _serviceProvider.GetRequiredService<AiService>();
-            
-            var memoryList = string.Join("\n", expandedResults.Select((m, i) => $"ID:{i} | Tags:{m.Tags} | Content:{m.Content}"));
-            
-            string rankPrompt = $"""
-                Identify the most relevant memories for the user's prompt from the list below. 
-                Consider both semantic relevance and logical connection.
-                Return only the IDs of the top {maxResults} memories as a comma-separated list, in order of relevance.
-                
-                USER PROMPT: {prompt}
-                
-                MEMORIES:
-                {memoryList}
-                
-                OUTPUT FORMAT: 0,2,5...
-                """;
-
-            string result = await aiService.ExecuteCliDirectAsync(rankPrompt, aiService.DefaultProvider);
-            var idStrings = result.Split(new[] { ',', ' ', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            
-            var reranked = new List<LongTermMemory>();
-            foreach (var idStr in idStrings)
-            {
-                if (int.TryParse(idStr.Trim(), out int index) && index >= 0 && index < expandedResults.Count)
-                {
-                    reranked.Add(expandedResults[index]);
-                    if (reranked.Count >= maxResults) break;
-                }
-            }
-
-            return reranked.Any() ? reranked : expandedResults.Take(maxResults).ToList();
-        }
-        catch
-        {
-            // フォールバック: 単純な上位取得
-            return expandedResults.Take(maxResults).ToList();
-        }
+        return expandedResults.Take(maxResults).ToList();
     }
 
     /// <summary>有効スキルをトリガーキーワードで検索する（DB）。</summary>

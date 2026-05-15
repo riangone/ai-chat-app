@@ -1,14 +1,14 @@
 ---
 name: refactoring,code_quality
-description: UserAuthService 提取了私有方法 InsertUserAsync，消除了 CreateAsync、RegisterAsync 和 Register...
+description: 清理了冗余代码，删除了旧的 expandNode 函数，将逻辑统一整合至 handleNodeTap 中。
 type: user
 userId: 1
 tags: refactoring,code_quality
-relations: UserAuthService
-relevanceScore: 80
+relations: UserAuthService,handleNodeTap
+relevanceScore: 85
 accessCount: 0
 createdAt: 2026-05-12T23:41:27.7488850Z
-lastAccessedAt: 2026-05-12T23:41:27.7488851Z
+lastAccessedAt: 2026-05-14T22:28:11.6430276Z
 ---
 
-UserAuthService 提取了私有方法 InsertUserAsync，消除了 CreateAsync、RegisterAsync 和 RegisterCustomerAsync 中约 90 行重复的 SQL 插入逻辑。
+清理了冗余代码，删除了旧的 expandNode 函数，将逻辑统一整合至 handleNodeTap 中。

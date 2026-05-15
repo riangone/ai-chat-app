@@ -6,9 +6,9 @@ userId: 1
 tags: AI, 数据库, YAML, 清理
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 2
+accessCount: 3
 createdAt: 2026-05-12T07:18:24.9508098Z
-lastAccessedAt: 2026-05-14T06:10:22.0375542Z
+lastAccessedAt: 2026-05-14T23:13:00.7709273Z
 ---
 
 项目中仍保留着AI相关的非代码资产，例如YAML实体定义中的AI字段、数据库Schema（如ai_conversations、ai_messages表）以及种子数据。

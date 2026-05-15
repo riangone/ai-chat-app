@@ -91,6 +91,10 @@ public class AiService
 
     private readonly ILogger<AiService> _logger;
 
+    private static string? _cachedPolicies;
+    private static DateTime _policiesCacheTime = DateTime.MinValue;
+    private static readonly TimeSpan _policiesCacheTtl = TimeSpan.FromMinutes(5);
+
     public AiService(AppDbContext db, MemorySearchService memorySearch, 
         SessionMemoryService sessionMemory, IServiceProvider serviceProvider, 
         SkillManagerService skillManager, PipelineLoaderService pipelineLoader, 
@@ -928,26 +932,49 @@ public class AiService
     }
     private async Task<string> LoadPoliciesAsync()
     {
+        if (_cachedPolicies != null && DateTime.UtcNow - _policiesCacheTime < _policiesCacheTtl)
+            return _cachedPolicies;
+
         var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies");
-        if (!Directory.Exists(path)) return "";
+        if (!Directory.Exists(path)) return _cachedPolicies = "";
 
         var sb = new StringBuilder("\n\n[ENVIRONMENTAL POLICIES & CONSTRAINTS]:\n");
         var files = Directory.GetFiles(path, "*.md");
-        if (!files.Any()) return "";
+        if (!files.Any()) return _cachedPolicies = "";
 
         foreach (var file in files)
         {
             var content = await File.ReadAllTextAsync(file);
             sb.Append($"--- Policy: {Path.GetFileNameWithoutExtension(file)} ---\n{content}\n");
         }
-        return sb.ToString();
+
+        _policiesCacheTime = DateTime.UtcNow;
+        return _cachedPolicies = sb.ToString();
     }
 
     private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int? chatSessionId, string? agentRole, AgentProfile? selectedAgent = null)
     {
-        var memories = await _memorySearch.SearchAsync(prompt, userId);
+        // Fire file-based tasks immediately (no DbContext dependency — safe to run concurrently)
+        var memoriesTask = _memorySearch.SearchAsync(prompt, userId);
+        var policiesTask = LoadPoliciesAsync();
+
+        // DB operations must remain sequential (all share the same scoped DbContext)
         var skills = await _memorySearch.SearchSkillsAsync(prompt, userId, agentRole);
-        var policies = await LoadPoliciesAsync();
+
+        ChatSession? session = null;
+        string sessionMemoryContext = "";
+        if (chatSessionId.HasValue)
+        {
+            session = await _db.ChatSessions
+                .Include(s => s.Project)
+                .ThenInclude(p => p!.Agents)
+                .FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
+            sessionMemoryContext = await _sessionMemory.ReadAllAsContextAsync(chatSessionId.Value);
+        }
+
+        // Collect file-based results (likely already completed by now)
+        var memories = await memoriesTask;
+        var policies = await policiesTask;
 
         var sb = new StringBuilder(GetSystemPromptTemplate("Default", "あなたは高度なAIアシスタントです。現在はソフトウェア開発プロジェクトのコンテキストで動作しています。"));
         sb.Append(policies);
@@ -957,36 +984,23 @@ public class AiService
             sb.Append($"\n\n[現在のアクティブエージェント]:\n役割: {selectedAgent.RoleName}\n指示: {selectedAgent.SystemPrompt}");
         }
 
-        // Add Project Context if available
-        if (chatSessionId.HasValue)
+        if (session?.Project != null)
         {
-            var session = await _db.ChatSessions
-                .Include(s => s.Project)
-                .ThenInclude(p => p!.Agents)
-                .FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
+            sb.Append($"\n\n[プロジェクト文脈]:\nプロジェクト名: {session.Project.Name}\nルートパス: {session.Project.RootPath}");
 
-            if (session?.Project != null)
+            if (session.Project.Agents.Any())
             {
-                sb.Append($"\n\n[プロジェクト文脈]:\nプロジェクト名: {session.Project.Name}\nルートパス: {session.Project.RootPath}");
-                
-                if (session.Project.Agents.Any())
+                sb.Append("\n\n[利用可能なエージェント役割]:\n");
+                foreach (var agent in session.Project.Agents)
                 {
-                    sb.Append("\n\n[利用可能なエージェント役割]:\n");
-                    foreach (var agent in session.Project.Agents)
-                    {
-                        if (selectedAgent != null && agent.Id == selectedAgent.Id) continue;
-                        sb.Append($"- {agent.RoleName}: {agent.SystemPrompt}\n");
-                    }
+                    if (selectedAgent != null && agent.Id == selectedAgent.Id) continue;
+                    sb.Append($"- {agent.RoleName}: {agent.SystemPrompt}\n");
                 }
             }
-
-            // Inject Session Memory
-            var sessionMemoryContext = await _sessionMemory.ReadAllAsContextAsync(chatSessionId.Value);
-            if (!string.IsNullOrEmpty(sessionMemoryContext))
-            {
-                sb.Append("\n\n" + sessionMemoryContext);
-            }
         }
+
+        if (!string.IsNullOrEmpty(sessionMemoryContext))
+            sb.Append("\n\n" + sessionMemoryContext);
 
         if (memories.Any())
         {
@@ -1000,7 +1014,6 @@ public class AiService
             foreach (var s in skills) sb.Append($"- {s.Description}\n");
         }
 
-        // Memory Instruction
         sb.Append(GetSystemPromptTemplate("MemoryInstruction", "\n\n[MEMORY INSTRUCTION]:\n重要な発見や制約があれば \"MEMORY: key=value\" の形式で行末に出力してください。"));
 
         return sb.ToString();
@@ -1698,8 +1711,15 @@ public class AiService
 
     private static bool ShouldIgnoreStderrLine(string line, string provider)
     {
+        if (string.IsNullOrWhiteSpace(line)) return true;
+
         if (line.StartsWith("System:", StringComparison.Ordinal) ||
-            line.StartsWith("User:", StringComparison.Ordinal))
+            line.StartsWith("User:", StringComparison.Ordinal) ||
+            line.StartsWith("Warning:", StringComparison.OrdinalIgnoreCase) ||
+            line.Contains("DeprecationWarning:", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("YOLO mode is enabled", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("Ripgrep is not available", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("(node:", StringComparison.Ordinal))
         {
             return true;
         }
