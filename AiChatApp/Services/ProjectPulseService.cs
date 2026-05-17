@@ -134,19 +134,24 @@ namespace AiChatApp.Services
                 var output = await proc.StandardOutput.ReadToEndAsync();
                 await proc.WaitForExitAsync();
                 
-                // 如果变更较小，可以尝试获取具体的 diff 内容（限制行数）
+                // For small change sets, fetch actual diff content (limited context lines)
                 if (output.Split('\n').Length < 20)
                 {
-                     var psiDetail = new ProcessStartInfo("git", $"diff -U1 {oldHash} {newHash}")
-                     {
-                         RedirectStandardOutput = true,
-                         UseShellExecute = false,
-                         WorkingDirectory = workingDir
-                     };
-                     using var procDetail = Process.Start(psiDetail);
-                     var detail = await procDetail!.StandardOutput.ReadToEndAsync();
-                     await procDetail.WaitForExitAsync();
-                     return detail;
+                    var psiDetail = new ProcessStartInfo("git", $"diff -U1 {oldHash} {newHash}")
+                    {
+                        RedirectStandardOutput = true,
+                        UseShellExecute = false,
+                        WorkingDirectory = workingDir
+                    };
+                    using var procDetail = Process.Start(psiDetail);
+                    var detail = await procDetail!.StandardOutput.ReadToEndAsync();
+                    await procDetail.WaitForExitAsync();
+
+                    // Truncate to avoid overwhelming the AI with large diffs
+                    const int maxDiffChars = 3000;
+                    return detail.Length > maxDiffChars
+                        ? detail[..maxDiffChars] + "\n... [diff truncated]"
+                        : detail;
                 }
 
                 return output;

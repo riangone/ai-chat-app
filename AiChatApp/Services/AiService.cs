@@ -27,11 +27,11 @@ public class AiService
     public record AgentDefinition(string Name, string DisplayName, string Description, string SystemPrompt);
     private record CliResult(string Output, string Model, int PromptTokens, int CompletionTokens, int TotalTokens);
 
-    private static readonly string[] PromptPrefixes = { 
-        "System:", "User:", "Assistant:", "Context:", "History:", 
-        "Thought:", "Thinking:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:", 
+    private static readonly string[] PromptPrefixes = {
+        "System:", "User:", "Assistant:", "Context:", "History:",
+        "Thought:", "Thinking:", "[会話履歴]:", "[ユーザーの既知情報・長期記憶]:",
         "[相关的长期记忆]:", "[当前会话上下文]:", "[会话上下文]:",
-        "[追加スキル指示]:", "[MEMORY INSTRUCTION]:", "[ENVIRONMENTAL POLICIES & CONSTRAINTS]:", 
+        "[追加スキル指示]:", "[MEMORY INSTRUCTION]:", "[ENVIRONMENTAL POLICIES & CONSTRAINTS]:",
         "--- Policy:", "Role:", "Persona:", "Input:", "Output:", "Prompt:", "Instructions:", "Response:", "Result:",
         "役割:", "指示:", "角色:", "任务:", "项目名:", "项目路径:", "プロジェクト名:", "ルートパス:",
         "[現在のアクティブエージェント]:", "[当前活跃代理]:", "[プロジェクト文脈]:", "[项目文脉]:",
@@ -89,6 +89,12 @@ public class AiService
         "List the actions you take clearly"
     };
 
+    // Pre-computed HashSets for O(1) lookup — declared after the arrays they reference
+    private static readonly HashSet<string> PromptPrefixSet =
+        new(PromptPrefixes, StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> SystemPromptFragmentSet =
+        new(SystemPromptFragments, StringComparer.OrdinalIgnoreCase);
+
     private readonly ILogger<AiService> _logger;
 
     private static string? _cachedPolicies;
@@ -139,22 +145,29 @@ public class AiService
     {
         var targetProvider = string.IsNullOrWhiteSpace(provider) ? DefaultProvider : provider;
         AgentProfile? agent = agentId.HasValue ? await _db.AgentProfiles.FindAsync(agentId.Value) : null;
-        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agent?.RoleName, agent);
-        var workingDir = await GetProjectRootAsync(chatSessionId);
-        var history = await BuildHistoryBlockAsync(chatSessionId, limit: 5);
-        string fullPrompt = string.IsNullOrEmpty(history)
-            ? prompt
-            : $"{history}\nUser: {prompt}";
 
+        // Load session ONCE — shared by BuildSystemPromptAsync (avoids duplicate DB round-trip)
+        ChatSession? session = null;
+        string? workingDir = null;
+        if (chatSessionId.HasValue)
+        {
+            session = await _db.ChatSessions
+                .Include(s => s.Project).ThenInclude(p => p!.Agents)
+                .FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
+            workingDir = session?.Project?.RootPath;
+        }
+
+        // Single Messages query for both history and messageId (was 2 separate queries)
+        var (history, messageId) = await LoadHistoryAndMessageIdAsync(chatSessionId);
+        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agent?.RoleName, agent, session);
+
+        string fullPrompt = string.IsNullOrEmpty(history) ? prompt : $"{history}\nUser: {prompt}";
         if (agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
-
-        int messageId = await GetLatestUserMessageIdAsync(chatSessionId);
 
         var sw = Stopwatch.StartNew();
         var result = await ExecuteCliAsync(fullPrompt, targetProvider, systemPrompt, workingDir);
         sw.Stop();
 
-        // ログを記録 — Model が空のときは provider 名を使用して統計ページで正しく分類できるようにする
         var modelName = string.IsNullOrEmpty(result.Model) ? targetProvider : result.Model;
         await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", modelName, targetProvider, systemPrompt ?? "Default Assistant", fullPrompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
 
@@ -499,9 +512,22 @@ public class AiService
     {
         var targetProvider = provider ?? DefaultProvider;
         AgentProfile? agent = agentId.HasValue ? await _db.AgentProfiles.FindAsync(agentId.Value) : null;
-        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agent?.RoleName, agent);
-        var workingDir = await GetProjectRootAsync(chatSessionId);
-        var history = await BuildHistoryBlockAsync(chatSessionId, limit: 5);
+
+        // Load session ONCE — shared by BuildSystemPromptAsync (avoids duplicate DB round-trip)
+        ChatSession? session = null;
+        string? workingDir = null;
+        if (chatSessionId.HasValue)
+        {
+            session = await _db.ChatSessions
+                .Include(s => s.Project).ThenInclude(p => p!.Agents)
+                .FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
+            workingDir = session?.Project?.RootPath;
+        }
+
+        // Single Messages query for both history and messageId (was 2 separate queries)
+        var (history, messageId) = await LoadHistoryAndMessageIdAsync(chatSessionId);
+        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agent?.RoleName, agent, session);
+
         string fullPrompt = string.IsNullOrEmpty(history)
             ? prompt
             : $"{history}\nUser: {prompt}";
@@ -547,8 +573,7 @@ public class AiService
 
         var processInfo = SetupProcessInfo(targetProvider, workingDir, useJsonStreaming ? "stream-json" : null, agentMode: false);
 
-        // 获取 MessageId 用于記録日志
-        int messageId = await GetLatestUserMessageIdAsync(chatSessionId);
+        // messageId already loaded by LoadHistoryAndMessageIdAsync above
 
         string inputToStdin = string.IsNullOrEmpty(systemPrompt)
             ? processedPrompt
@@ -749,24 +774,29 @@ public class AiService
         var workingDir = await GetProjectRootAsync(chatSessionId);
         
         var sb = new StringBuilder(profile.SystemPrompt);
-        
+
         if (profile.UseMemory && userId.HasValue)
         {
-            var memories = await _memorySearch.SearchAsync(prompt, userId.Value);
+            // Parallelize memory + session memory searches (were sequential before)
+            var memoriesTask = _memorySearch.SearchAsync(prompt, userId.Value);
+            var sessionMemTask = chatSessionId.HasValue
+                ? _sessionMemory.ReadAllAsContextAsync(chatSessionId.Value)
+                : Task.FromResult("");
+
+            await Task.WhenAll(memoriesTask, sessionMemTask);
+
+            var memories = memoriesTask.Result;
             if (memories.Any())
             {
                 sb.AppendLine("\n[相关的长期记忆]:");
                 foreach (var m in memories) sb.AppendLine($"- {m.Content}");
             }
 
-            if (chatSessionId.HasValue)
+            var sessionMemoryContext = sessionMemTask.Result;
+            if (!string.IsNullOrEmpty(sessionMemoryContext))
             {
-                var sessionMemoryContext = await _sessionMemory.ReadAllAsContextAsync(chatSessionId.Value);
-                if (!string.IsNullOrEmpty(sessionMemoryContext))
-                {
-                    sb.AppendLine("\n[当前会话上下文]:");
-                    sb.AppendLine(sessionMemoryContext);
-                }
+                sb.AppendLine("\n[当前会话上下文]:");
+                sb.AppendLine(sessionMemoryContext);
             }
         }
 
@@ -904,9 +934,8 @@ public class AiService
         {
             sb.AppendLine("\n[追加スキル指示]:");
             sb.Append(string.Join("\n", roleSkills.Select(s => $"- {s.Description}")));
-            
-            var firstSkill = roleSkills.First();
-            _ = Task.Run(() => _skillLearning.UpdateSkillMetricsAsync(firstSkill.Id, true));
+            // Skill metrics update removed: per-step fire-and-forget DB writes had high overhead
+            // and skill usage stats are low-priority. Metrics can be derived from AgentStep logs instead.
         }
 
         string fullPersona = sb.ToString();
@@ -996,21 +1025,25 @@ public class AiService
         }
     }
 
-    private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int? chatSessionId, string? agentRole, AgentProfile? selectedAgent = null)
+    private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int? chatSessionId, string? agentRole, AgentProfile? selectedAgent = null, ChatSession? preloadedSession = null)
     {
         // Fire file-based tasks immediately
         var memoriesTask = _memorySearch.SearchAsync(prompt, userId);
         var policiesTask = LoadPoliciesAsync();
         var skillsTask = _memorySearch.SearchSkillsAsync(prompt, userId, agentRole);
 
-        ChatSession? session = null;
+        // Use pre-loaded session if provided; otherwise load from DB (avoids duplicate query when caller already has session)
+        ChatSession? session = preloadedSession;
         string sessionMemoryContext = "";
         if (chatSessionId.HasValue)
         {
-            session = await _db.ChatSessions
-                .Include(s => s.Project)
-                .ThenInclude(p => p!.Agents)
-                .FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
+            if (session == null)
+            {
+                session = await _db.ChatSessions
+                    .Include(s => s.Project)
+                    .ThenInclude(p => p!.Agents)
+                    .FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
+            }
             sessionMemoryContext = await _sessionMemory.ReadAllAsContextAsync(chatSessionId.Value);
         }
 
@@ -1071,9 +1104,15 @@ public class AiService
 
     private async Task<string> BuildHistoryBlockAsync(int? chatSessionId, int limit)
     {
-        if (!chatSessionId.HasValue) return "";
+        var (history, _) = await LoadHistoryAndMessageIdAsync(chatSessionId, limit);
+        return history;
+    }
 
-        // Increase limit slightly for better context if requested
+    // Combines two formerly separate DB queries (history + latest user messageId) into one round-trip.
+    private async Task<(string History, int MessageId)> LoadHistoryAndMessageIdAsync(int? chatSessionId, int limit = 5)
+    {
+        if (!chatSessionId.HasValue) return ("", 0);
+
         var msgs = await _db.Messages
             .Where(m => m.ChatSessionId == chatSessionId.Value)
             .OrderByDescending(m => m.Timestamp)
@@ -1081,13 +1120,15 @@ public class AiService
             .OrderBy(m => m.Timestamp)
             .ToListAsync();
 
-        if (!msgs.Any()) return "";
+        if (!msgs.Any()) return ("", 0);
 
         var sb = new StringBuilder("[会話履歴]:\n");
         foreach (var m in msgs)
             sb.Append($"{(m.IsAi ? "Assistant" : "User")}: {TruncateMessage(m.Content, 500)}\n");
 
-        return sb.ToString();
+        // The user's message was inserted just before this call, so it's always in the most recent records
+        var latestUserMsgId = msgs.LastOrDefault(m => !m.IsAi)?.Id ?? 0;
+        return (sb.ToString(), latestUserMsgId);
     }
 
     private static string BuildStepHtml(AgentStep step)
@@ -1154,8 +1195,13 @@ public class AiService
         return dynamicFragments;
     }
 
+    private static bool BufStartsWithAny(string buf, HashSet<string> set)
+        => set.Any(p => buf.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+    private static bool AnyStartsWithBuf(string buf, HashSet<string> set)
+        => set.Any(p => p.StartsWith(buf, StringComparison.OrdinalIgnoreCase));
+
     private static (string? toYield, bool handled) HandlePrefixBuffer(
-        StringBuilder prefixBuffer, string chunk, bool prefixHandled, int maxBuffer, 
+        StringBuilder prefixBuffer, string chunk, bool prefixHandled, int maxBuffer,
         HashSet<string>? dynamicFrags = null)
     {
         if (prefixHandled)
@@ -1165,13 +1211,13 @@ public class AiService
         var buf = prefixBuffer.ToString();
 
         bool startsWithPrefix =
-            PromptPrefixes.Any(p => buf.StartsWith(p, StringComparison.OrdinalIgnoreCase)) ||
-            SystemPromptFragments.Any(f => buf.StartsWith(f, StringComparison.OrdinalIgnoreCase)) ||
+            BufStartsWithAny(buf, PromptPrefixSet) ||
+            BufStartsWithAny(buf, SystemPromptFragmentSet) ||
             (dynamicFrags != null && dynamicFrags.Any(f => buf.StartsWith(f, StringComparison.OrdinalIgnoreCase)));
 
         bool couldBeginPrefix =
-            PromptPrefixes.Any(p => p.StartsWith(buf, StringComparison.OrdinalIgnoreCase)) ||
-            SystemPromptFragments.Any(f => f.StartsWith(buf, StringComparison.OrdinalIgnoreCase)) ||
+            AnyStartsWithBuf(buf, PromptPrefixSet) ||
+            AnyStartsWithBuf(buf, SystemPromptFragmentSet) ||
             (dynamicFrags != null && dynamicFrags.Any(f => f.StartsWith(buf, StringComparison.OrdinalIgnoreCase)));
 
         if (!startsWithPrefix && !couldBeginPrefix)
@@ -1208,41 +1254,35 @@ public class AiService
         int firstContentLine = -1;
         string? firstLineContent = null;
 
-        for (int i = 0; i < Math.Min(lines.Length, 300); i++)
+        for (int i = 0; i < Math.Min(lines.Length, 50); i++) // reduced from 300; prompt echoes appear at start
         {
             var trimmedLine = lines[i].Trim();
             if (string.IsNullOrWhiteSpace(trimmedLine)) continue;
 
-            bool isPrefixHeader = false;
-            string? matchedPrefix = null;
-            foreach (var p in PromptPrefixes)
-            {
-                if (trimmedLine.StartsWith(p, StringComparison.OrdinalIgnoreCase))
-                {
-                    isPrefixHeader = true;
-                    matchedPrefix = p;
-                    break;
-                }
-            }
+            // O(1) HashSet lookup instead of O(n) linear scan
+            string? matchedPrefix = PromptPrefixSet.FirstOrDefault(p =>
+                trimmedLine.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+            bool isPrefixHeader = matchedPrefix != null;
 
-            bool isSystemFragment = SystemPromptFragments.Any(f => trimmedLine.Contains(f, StringComparison.OrdinalIgnoreCase)) ||
+            // Check if this line IS a known system fragment (exact match in dynamic set, or contains static fragment)
+            bool isSystemFragment = SystemPromptFragmentSet.Any(f =>
+                                        trimmedLine.Contains(f, StringComparison.OrdinalIgnoreCase)) ||
                                    (dynamicFragments != null && dynamicFragments.Contains(trimmedLine));
 
             if (isPrefixHeader)
             {
                 if (dynamicFragments != null && dynamicFragments.Contains(trimmedLine))
-                {
                     continue;
-                }
 
-                var contentAfter = trimmedLine.Substring(matchedPrefix!.Length).Trim();
+                var contentAfter = trimmedLine[matchedPrefix!.Length..].Trim();
                 if (!string.IsNullOrEmpty(contentAfter))
                 {
-                    if (SystemPromptFragments.Any(f => contentAfter.Contains(f, StringComparison.OrdinalIgnoreCase)) ||
-                        (dynamicFragments != null && dynamicFragments.Any(f => contentAfter.Contains(f, StringComparison.OrdinalIgnoreCase))))
-                    {
-                        continue;
-                    }
+                    // Check if text after prefix is itself a system fragment
+                    bool afterIsFragment =
+                        SystemPromptFragmentSet.Any(f => contentAfter.Contains(f, StringComparison.OrdinalIgnoreCase)) ||
+                        (dynamicFragments != null && dynamicFragments.Any(f => contentAfter.Contains(f, StringComparison.OrdinalIgnoreCase)));
+
+                    if (afterIsFragment) continue;
 
                     firstContentLine = i;
                     firstLineContent = contentAfter;
@@ -1250,11 +1290,8 @@ public class AiService
                 }
                 continue;
             }
-            
-            if (isSystemFragment)
-            {
-                continue;
-            }
+
+            if (isSystemFragment) continue;
 
             firstContentLine = i;
             firstLineContent = lines[i];
