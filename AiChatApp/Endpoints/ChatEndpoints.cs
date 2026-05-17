@@ -39,7 +39,7 @@ public static class ChatEndpoints
             var p = page ?? 1;
             var ps = pageSize ?? 20;
 
-            var query = db.ChatSessions.Where(s => s.UserId == userId && db.Messages.Any(m => m.ChatSessionId == s.Id));
+            var query = db.ChatSessions.Where(s => s.UserId == userId);
             if (projectId.HasValue)
                 query = query.Where(s => s.ProjectId == projectId);
             else
@@ -98,26 +98,19 @@ public static class ChatEndpoints
             const int pageSize = 20;
             var messages = await db.Messages
                 .Where(m => m.ChatSessionId == id)
+                .Include(m => m.AgentSteps)
                 .OrderByDescending(m => m.Timestamp)
                 .Take(pageSize)
                 .ToListAsync();
-            
+
             messages = messages.OrderBy(m => m.Timestamp).ToList();
 
-            var messageIds = messages.Select(m => m.Id).ToList();
-            var allSteps = await db.AgentSteps
-                .Where(s => messageIds.Contains(s.MessageId))
-                .ToListAsync();
-
-            var stepsLookup = allSteps.GroupBy(s => s.MessageId).ToDictionary(g => g.Key, g => g.ToList());
             var messagesHtml = string.Concat(messages.Select((m, idx) => {
                 List<AgentStep>? steps = null;
                 if (m.IsAi) {
-                    stepsLookup.TryGetValue(m.Id, out steps);
-                    if (steps == null || !steps.Any()) {
-                        var prevId = idx > 0 ? messages[idx - 1].Id : 0;
-                        stepsLookup.TryGetValue(prevId, out steps);
-                    }
+                    steps = m.AgentSteps.Any() ? m.AgentSteps : null;
+                    if (steps == null && idx > 0)
+                        steps = messages[idx - 1].AgentSteps.Any() ? messages[idx - 1].AgentSteps : null;
                 }
                 return RenderMessage(m, steps);
             }));
@@ -156,26 +149,19 @@ public static class ChatEndpoints
             const int pageSize = 20;
             var messages = await db.Messages
                 .Where(m => m.ChatSessionId == id && m.Id < beforeId)
+                .Include(m => m.AgentSteps)
                 .OrderByDescending(m => m.Timestamp)
                 .Take(pageSize)
                 .ToListAsync();
 
             messages = messages.OrderBy(m => m.Timestamp).ToList();
 
-            var messageIds = messages.Select(m => m.Id).ToList();
-            var allSteps = await db.AgentSteps
-                .Where(s => messageIds.Contains(s.MessageId))
-                .ToListAsync();
-
-            var stepsLookup = allSteps.GroupBy(s => s.MessageId).ToDictionary(g => g.Key, g => g.ToList());
             var messagesHtml = string.Concat(messages.Select((m, idx) => {
                 List<AgentStep>? steps = null;
                 if (m.IsAi) {
-                    stepsLookup.TryGetValue(m.Id, out steps);
-                    if (steps == null || !steps.Any()) {
-                        var prevId = idx > 0 ? messages[idx - 1].Id : 0;
-                        stepsLookup.TryGetValue(prevId, out steps);
-                    }
+                    steps = m.AgentSteps.Any() ? m.AgentSteps : null;
+                    if (steps == null && idx > 0)
+                        steps = messages[idx - 1].AgentSteps.Any() ? messages[idx - 1].AgentSteps : null;
                 }
                 return RenderMessage(m, steps);
             }));
@@ -285,17 +271,16 @@ public static class ChatEndpoints
 
             var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
             db.Messages.Add(uMsg);
-            await db.SaveChangesAsync();
 
             string aiResponse;
             if (isCooperative || selectedAgents.Any()) {
+                // Save uMsg + aMsg together in one round-trip (both IDs needed before CooperateAsync)
                 var aMsg = new Message { ChatSessionId = session.Id, Content = "", IsAi = true, AgentName = "Multi-Agent" };
                 db.Messages.Add(aMsg);
                 await db.SaveChangesAsync();
 
                 var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, session.Id, provider, selectedAgents.Any() ? selectedAgents : null);
                 aMsg.Content = html;
-                await db.SaveChangesAsync();
                 aiResponse = html;
 
                 _ = Task.Run(() => consolidation.TryConsolidateAsync(content, html, userId));
@@ -304,12 +289,14 @@ public static class ChatEndpoints
                 if (session.Title.StartsWith("New Chat") || session.Title == content[..Math.Min(content.Length, 20)] + (content.Length > 20 ? "..." : "")) {
                     session.Title = await ai.GenerateTitleAsync(content, html, provider);
                 }
-                await db.SaveChangesAsync();
+                await db.SaveChangesAsync(); // single save: aMsg.Content + session
 
                 var aSteps1 = await db.AgentSteps.Where(s => s.MessageId == aMsg.Id || s.MessageId == uMsg.Id).ToListAsync();
                 context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
                 return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg, aSteps1), "text/html");
             } else {
+                await db.SaveChangesAsync(); // save uMsg (needs ID for GetLatestUserMessageIdAsync)
+
                 aiResponse = await ai.GetResponseAsync(content, userId, session.Id, provider, agentId);
                 string agentName = provider;
                 if (agentId.HasValue) {
@@ -318,7 +305,6 @@ public static class ChatEndpoints
                 }
                 var aMsg = new Message { ChatSessionId = session.Id, Content = aiResponse, IsAi = true, AgentName = agentName };
                 db.Messages.Add(aMsg);
-                await db.SaveChangesAsync();
 
                 _ = Task.Run(() => consolidation.TryConsolidateAsync(content, aiResponse, userId));
 
@@ -326,7 +312,7 @@ public static class ChatEndpoints
                 if (session.Title.StartsWith("New Chat") || session.Title == content[..Math.Min(content.Length, 20)] + (content.Length > 20 ? "..." : "")) {
                     session.Title = await ai.GenerateTitleAsync(content, aiResponse, provider);
                 }
-                await db.SaveChangesAsync();
+                await db.SaveChangesAsync(); // single save: aMsg + session
 
                 var aSteps2 = await db.AgentSteps.Where(s => s.MessageId == uMsg.Id).ToListAsync();
                 context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
@@ -401,15 +387,13 @@ public static class ChatEndpoints
                     var agentProfile = await db.AgentProfiles.FindAsync(agentId.Value);
                     if (agentProfile != null) agentName = agentProfile.RoleName;
                 }
-                var aMsg = new Message { ChatSessionId = session.Id, Content = fullResponse.ToString(), IsAi = true, AgentName = agentName };
+                var responseText = fullResponse.ToString();
+                var aMsg = new Message { ChatSessionId = session.Id, Content = responseText, IsAi = true, AgentName = agentName };
                 db.Messages.Add(aMsg);
-                
+
                 session.UpdatedAt = DateTime.UtcNow;
-                if (session.Title.StartsWith("New Chat")) {
-                    session.Title = await ai.GenerateTitleAsync(content, fullResponse.ToString(), provider);
-                }
-                
-                await db.SaveChangesAsync();
+                await db.SaveChangesAsync(); // save aMsg + session.UpdatedAt
+
                 var streamSteps = await db.AgentSteps.Where(s => s.MessageId == uMsg.Id).ToListAsync();
                 var spt = streamSteps.Sum(s => s.PromptTokens);
                 var sct = streamSteps.Sum(s => s.CompletionTokens);
@@ -417,8 +401,25 @@ public static class ChatEndpoints
                 if (stt == 0) stt = spt + sct;
                 await context.Response.WriteAsync($"data: [DONE:{spt}:{sct}:{stt}]\n\n");
 
-                // 記憶の抽出をバックグラウンドで実行
-            _ = Task.Run(() => consolidation.TryConsolidateAsync(content, fullResponse.ToString(), userId));
+                // 背景でタイトル生成と記憶抽出（クライアントへの応答を遅らせない）
+                if (session.Title.StartsWith("New Chat")) {
+                    var capturedSessionId = session.Id;
+                    var capturedContent = content;
+                    var capturedResponse = responseText;
+                    var capturedProvider = provider;
+                    var sp = context.RequestServices;
+                    _ = Task.Run(async () => {
+                        using var scope = sp.CreateScope();
+                        var titleAi = scope.ServiceProvider.GetRequiredService<AiService>();
+                        var titleDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        var s = await titleDb.ChatSessions.FindAsync(capturedSessionId);
+                        if (s != null && s.Title.StartsWith("New Chat")) {
+                            s.Title = await titleAi.GenerateTitleAsync(capturedContent, capturedResponse, capturedProvider);
+                            await titleDb.SaveChangesAsync();
+                        }
+                    });
+                }
+                _ = Task.Run(() => consolidation.TryConsolidateAsync(content, responseText, userId));
         }).DisableAntiforgery();
 
         group.MapPost("/chat/cooperate/stream", async (
@@ -509,16 +510,30 @@ public static class ChatEndpoints
             keepAliveCts2.Cancel();
 
             aMsg.Content = html;
-            
             session.UpdatedAt = DateTime.UtcNow;
-            if (session.Title.StartsWith("New Chat")) {
-                session.Title = await ai.GenerateTitleAsync(content, html, provider);
-            }
-            
-            await db.SaveChangesAsync();
+            await db.SaveChangesAsync(); // save aMsg.Content + session.UpdatedAt
+
             await SendEvent("final", html);
             await SendEvent("done", "");
 
+            // 背景でタイトル生成と記憶抽出（SSE完了後にブロックしない）
+            if (session.Title.StartsWith("New Chat")) {
+                var capturedSessionId = session.Id;
+                var capturedContent = content;
+                var capturedHtml = html;
+                var capturedProvider = provider;
+                var sp = context.RequestServices;
+                _ = Task.Run(async () => {
+                    using var scope = sp.CreateScope();
+                    var titleAi = scope.ServiceProvider.GetRequiredService<AiService>();
+                    var titleDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    var s = await titleDb.ChatSessions.FindAsync(capturedSessionId);
+                    if (s != null && s.Title.StartsWith("New Chat")) {
+                        s.Title = await titleAi.GenerateTitleAsync(capturedContent, capturedHtml, capturedProvider);
+                        await titleDb.SaveChangesAsync();
+                    }
+                });
+            }
             _ = Task.Run(() => consolidation.TryConsolidateAsync(content, html, userId));
         }).DisableAntiforgery();
     }

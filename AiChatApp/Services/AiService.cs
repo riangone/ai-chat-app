@@ -835,10 +835,17 @@ public class AiService
         string role, string persona, string input, int messageId,
         string provider, int userId, int? chatSessionId = null, int attemptNumber = 1,
         string? workingDir = null, string? policies = null,
-        ChatSession? session = null)
+        ChatSession? session = null,
+        IEnumerable<LongTermMemory>? sharedMemories = null,
+        IEnumerable<Skill>? sharedSkills = null)
     {
-        var roleSkillsTask = _memorySearch.SearchSkillsAsync(input, userId, agentRole: role);
-        var memoriesTask = _memorySearch.SearchAsync(input, userId);
+        // Use pre-loaded shared data if provided, otherwise search per-step
+        var roleSkillsTask = sharedSkills != null
+            ? Task.FromResult(sharedSkills.ToList())
+            : _memorySearch.SearchSkillsAsync(input, userId, agentRole: role);
+        var memoriesTask = sharedMemories != null
+            ? Task.FromResult(sharedMemories.ToList())
+            : _memorySearch.SearchAsync(input, userId);
         
         workingDir ??= await GetProjectRootAsync(chatSessionId);
         policies ??= await LoadPoliciesAsync();
@@ -1448,7 +1455,14 @@ public class AiService
         Dictionary<string, string>? reviewerIssuesPerTask = null,
         int revisionNumber = 0, ChatSession? session = null)
     {
-        var policies = await LoadPoliciesAsync();
+        // Search memories and skills once for the whole layer (all subtasks share the same task context)
+        var policiesTask = LoadPoliciesAsync();
+        var memoriesTask = _memorySearch.SearchAsync(plan.Goal, userId);
+        var skillsTask = _memorySearch.SearchSkillsAsync(plan.Goal, userId);
+        var policies = await policiesTask;
+        var sharedMemories = await memoriesTask;
+        var sharedSkills = await skillsTask;
+
         var layerTasks = layer.Select(async subtask =>
         {
             var agentDef = allAgents.FirstOrDefault(a =>
@@ -1470,7 +1484,9 @@ public class AiService
                 attemptNumber: revisionNumber + 1,
                 workingDir: projectRoot,
                 policies: policies,
-                session: session
+                session: session,
+                sharedMemories: sharedMemories,
+                sharedSkills: sharedSkills
             );
 
             var toolOut = await _toolExecutor.ExecuteToolsAsync(step.Output, projectRoot);

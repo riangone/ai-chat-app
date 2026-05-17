@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using AiChatApp.Models;
 
@@ -8,14 +9,20 @@ public class SkillManagerService
     private readonly string _basePath;
     private readonly string _userPath;
 
+    // Cache key: null → system-only, int → userId. TTL = 1 min.
+    private readonly ConcurrentDictionary<int, (List<SkillInfo> Skills, DateTime Expiry)> _userCache = new();
+    private (List<SkillInfo> Skills, DateTime Expiry) _systemCache = (new(), DateTime.MinValue);
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(1);
+    private readonly SemaphoreSlim _lock = new(1, 1);
+
     public SkillManagerService(IConfiguration config)
     {
         var currentDir = Directory.GetCurrentDirectory();
         var root = currentDir.EndsWith("AiChatApp") ? currentDir : Path.Combine(currentDir, "AiChatApp");
-        
+
         _basePath = Path.Combine(root, "AgentSkills", "System");
         _userPath = Path.Combine(root, "AgentSkills", "User");
-        
+
         Console.WriteLine($"[SkillManager] Base Path: {_basePath}");
         if (!Directory.Exists(_basePath)) Directory.CreateDirectory(_basePath);
         if (!Directory.Exists(_userPath)) Directory.CreateDirectory(_userPath);
@@ -23,21 +30,51 @@ public class SkillManagerService
 
     public async Task<List<SkillInfo>> GetAllSkillsAsync(int? userId = null)
     {
-        var skills = new List<SkillInfo>();
-        await LoadFromDir(_basePath, skills, isSystem: true);
-        
-        if (userId.HasValue)
+        var now = DateTime.UtcNow;
+
+        // Fast path: cache hit (no lock needed for reads)
+        if (_systemCache.Expiry > now)
         {
-            var userPath = Path.Combine(_userPath, userId.Value.ToString());
-            await LoadFromDir(userPath, skills, isSystem: false);
+            var sys = _systemCache.Skills;
+            if (!userId.HasValue) return sys;
+            if (_userCache.TryGetValue(userId.Value, out var uc) && uc.Expiry > now)
+                return sys.Concat(uc.Skills).ToList();
         }
-        else
+
+        // Slow path: rebuild cache under lock
+        await _lock.WaitAsync();
+        try
         {
-            // 如果未指定 userId，可能是在管理员上下文或旧代码中，
-            // 默认加载所有用户的（这取决于具体需求，这里我们倾向于只加载系统技能）
-            // 或者我们可以遍历所有子目录。为了向后兼容，我们暂时不加载。
+            // Double-check after acquiring lock
+            if (_systemCache.Expiry <= now)
+            {
+                var sys = new List<SkillInfo>();
+                await LoadFromDir(_basePath, sys, isSystem: true);
+                _systemCache = (sys, now + CacheTtl);
+            }
+
+            if (userId.HasValue)
+            {
+                if (!_userCache.TryGetValue(userId.Value, out var uc) || uc.Expiry <= now)
+                {
+                    var usr = new List<SkillInfo>();
+                    await LoadFromDir(Path.Combine(_userPath, userId.Value.ToString()), usr, isSystem: false);
+                    _userCache[userId.Value] = (usr, now + CacheTtl);
+                }
+            }
         }
-        return skills;
+        finally { _lock.Release(); }
+
+        if (!userId.HasValue) return _systemCache.Skills;
+        _userCache.TryGetValue(userId.Value, out var cached);
+        return _systemCache.Skills.Concat(cached.Skills ?? Enumerable.Empty<SkillInfo>()).ToList();
+    }
+
+    private void InvalidateCache(int? userId = null)
+    {
+        _systemCache = (new(), DateTime.MinValue);
+        if (userId.HasValue) _userCache.TryRemove(userId.Value, out _);
+        else _userCache.Clear();
     }
 
     private async Task LoadFromDir(string path, List<SkillInfo> list, bool isSystem)
@@ -73,9 +110,10 @@ public class SkillManagerService
         }
 
         if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
-        
+
         var filePath = Path.Combine(targetDir, "SKILL.md");
         await File.WriteAllTextAsync(filePath, content);
+        InvalidateCache(isSystem ? null : userId);
     }
 
     public void DeleteSkill(string name, int? userId = null, bool isSystem = false)
@@ -95,6 +133,7 @@ public class SkillManagerService
         }
 
         if (Directory.Exists(targetDir)) Directory.Delete(targetDir, true);
+        InvalidateCache(isSystem ? null : userId);
     }
 
     private SkillInfo ParseSkillFile(string dirName, string content)
