@@ -6,9 +6,9 @@ userId: 1
 tags: performance, bug, AiChatApp, MemorySearchService
 relations: AiChatApp,MemorySearchService,Performance
 relevanceScore: 80
-accessCount: 2
+accessCount: 3
 createdAt: 2026-05-14T23:17:14.6844031Z
-lastAccessedAt: 2026-05-17T02:52:30.6653856Z
+lastAccessedAt: 2026-05-17T06:14:25.8141466Z
 ---
 
 AiChatApp AI response performance is degraded by MemorySearchService.SearchAsync making hidden gemini CLI calls for semantic re-ordering when search results exceed 5 items.

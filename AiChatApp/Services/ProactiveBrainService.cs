@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AiChatApp.Hubs;
 using AiChatApp.Models;
 using AiChatApp.Data;
@@ -12,6 +13,10 @@ public class ProactiveBrainService
     private readonly IHubContext<ProactiveAgentHub> _hubContext;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<ProactiveBrainService> _logger;
+
+    // Per-user cooldown to prevent repeated AI calls on reconnect
+    private static readonly ConcurrentDictionary<int, DateTime> _lastWelcomeTime = new();
+    private static readonly TimeSpan WelcomeCooldown = TimeSpan.FromMinutes(30);
 
     public ProactiveBrainService(
         IHubContext<ProactiveAgentHub> hubContext,
@@ -39,10 +44,15 @@ public class ProactiveBrainService
     }
 
     /// <summary>
-    /// 当用户连接时触发，生成“断点续传”洞察。
+    /// 当用户连接时触发，生成”断点续传”洞察。30 分钟冷却以避免刷新页面重复触发。
     /// </summary>
     public async Task ProcessWelcomeInsightAsync(int userId)
     {
+        var now = DateTime.UtcNow;
+        if (_lastWelcomeTime.TryGetValue(userId, out var last) && now - last < WelcomeCooldown)
+            return;
+        _lastWelcomeTime[userId] = now;
+
         _ = Task.Run(async () =>
         {
             try
@@ -156,9 +166,11 @@ public class ProactiveBrainService
                 
                 if (action == "created")
                 {
-                    // 1. 分析与生成建议
-                    var analysis = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.Summarizer, $"任务: {item.Title}. 描述: {item.Description}. 请用一句话概括核心目标。", item.UserId);
-                    var advice = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.HyperionBrain, $"用户创建了新任务，请给出一条专业的工程建议。要求：不要超过60字，使用 Markdown 加粗重点。内容：{analysis}", item.UserId);
+                    // 单次 AI 调用：直接生成建议（原来是 Summarizer + HyperionBrain 两次调用）
+                    var advice = await aiService.ExecuteProactiveAgentAsync(
+                        ProactiveAgentProfiles.HyperionBrain,
+                        $"用户创建了新任务「{item.Title}」。描述：{item.Description}。请给出一条专业的工程建议，不超过60字，使用 Markdown 加粗重点。",
+                        item.UserId);
 
                     // 2. 持久化到聊天记录 (AI 发起的会话)
                     if (item.UserId.HasValue)

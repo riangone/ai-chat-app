@@ -19,7 +19,7 @@ public static class ServiceExtensions
             options.UseSqlite(connectionString));
         
         services.AddSingleton<MemoryFileService>();
-        services.AddScoped<MemoryGraphService>();
+        services.AddSingleton<MemoryGraphService>();
         services.AddScoped<MemorySearchService>();
         services.AddScoped<MemoryConsolidationService>(); // fire-and-forget用にScopedのまま
         services.AddScoped<ProjectService>();

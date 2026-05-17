@@ -17,7 +17,7 @@ public class MemoryConsolidationService
         _logger = logger;
     }
 
-    private int _consolidationCounter;
+    private static int _consolidationCounter;
     private const int ConsolidationSampleRate = 10;
 
     public async Task TryConsolidateAsync(string userMessage, string aiResponse, int userId)

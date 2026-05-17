@@ -370,7 +370,7 @@ public class AiService
                 if (plan != null)
                 {
                     activePlan  = plan;
-                    activeBoard = await ExecuteTaskGraphAsync(plan, task, messageId, targetProvider, userId, chatSessionId, onStepComplete, steps);
+                    activeBoard = await ExecuteTaskGraphAsync(plan, task, messageId, targetProvider, userId, chatSessionId, onStepComplete, steps, session);
                     currentInput = BuildTaskGraphReviewInput(plan, activeBoard, task);
                     contextFromPreviousStages = $"Orchestrator plan:\n{stageStep.Output}";
                     continue; // advance to Reviewer
@@ -400,7 +400,7 @@ public class AiService
                     var revised = await ReviseFailedSubtasksAsync(
                         activePlan, feedback, activeBoard,
                         messageId, targetProvider, userId, chatSessionId,
-                        onStepComplete, steps);
+                        onStepComplete, steps, session);
 
                     if (revised)
                     {
@@ -427,8 +427,7 @@ public class AiService
             _ = Task.Run(async () => {
                 try {
                     await _sessionMemory.PromoteToLongTermAsync(chatSessionId.Value, userId);
-                    await _skillLearning.LearnFromInteractionAsync(task, finalResult, steps, userId);
-                } catch (Exception ex) { _logger.LogError(ex, "PromoteToLongTerm/LearnFromInteraction failed for session {SessionId}", chatSessionId.Value); }
+                } catch (Exception ex) { _logger.LogError(ex, "PromoteToLongTermAsync failed for session {SessionId}", chatSessionId.Value); }
             });
         }
 
@@ -889,8 +888,8 @@ public class AiService
             }
         }
 
-        // Memory Instruction - Reduced emphasis
-        if (attemptNumber == 1)
+        // Only inject MEMORY INSTRUCTION when there is a session to save to
+        if (attemptNumber == 1 && chatSessionId.HasValue)
         {
             sb.AppendLine(GetSystemPromptTemplate("MemoryInstruction", "\n[MEMORY INSTRUCTION]: 重要な発見があれば \"MEMORY: key=value\" 形式で行末に出力してください。"));
         }
@@ -1053,8 +1052,9 @@ public class AiService
             foreach (var s in skills) sb.Append($"- {s.Description}\n");
         }
 
-        // Reduced emphasis for memory instructions to save completion tokens if not needed
-        sb.Append(GetSystemPromptTemplate("MemoryInstruction", "\n\n[MEMORY INSTRUCTION]: 重要な発見があれば \"MEMORY: key=value\" 形式で行末に出力してください。"));
+        // Only inject MEMORY INSTRUCTION when there is a session to actually save to
+        if (chatSessionId.HasValue)
+            sb.Append(GetSystemPromptTemplate("MemoryInstruction", "\n\n[MEMORY INSTRUCTION]: 重要な発見があれば \"MEMORY: key=value\" 形式で行末に出力してください。"));
 
         return sb.ToString();
     }
@@ -1072,7 +1072,7 @@ public class AiService
         var msgs = await _db.Messages
             .Where(m => m.ChatSessionId == chatSessionId.Value)
             .OrderByDescending(m => m.Timestamp)
-            .Take(Math.Max(limit, 10)) 
+            .Take(limit)
             .OrderBy(m => m.Timestamp)
             .ToListAsync();
 
@@ -1448,7 +1448,7 @@ public class AiService
         Func<string, string, Task>? onStepComplete, List<AgentStep> steps,
         List<AgentDefinition> allAgents, string? projectRoot,
         Dictionary<string, string>? reviewerIssuesPerTask = null,
-        int revisionNumber = 0)
+        int revisionNumber = 0, ChatSession? session = null)
     {
         var policies = await LoadPoliciesAsync();
         var layerTasks = layer.Select(async subtask =>
@@ -1471,7 +1471,8 @@ public class AiService
                 chatSessionId: chatSessionId,
                 attemptNumber: revisionNumber + 1,
                 workingDir: projectRoot,
-                policies: policies
+                policies: policies,
+                session: session
             );
 
             var toolOut = await _toolExecutor.ExecuteToolsAsync(step.Output, projectRoot);
@@ -1498,7 +1499,8 @@ public class AiService
     private async Task<TaskBlackboard> ExecuteTaskGraphAsync(
         OrchestratorPlan plan, string originalTask, int messageId,
         string defaultProvider, int userId, int? chatSessionId,
-        Func<string, string, Task>? onStepComplete, List<AgentStep> steps)
+        Func<string, string, Task>? onStepComplete, List<AgentStep> steps,
+        ChatSession? session = null)
     {
         var allAgents   = await GetAvailableAgentsAsync(userId);
         var projectRoot = await GetProjectRootAsync(chatSessionId);
@@ -1507,7 +1509,8 @@ public class AiService
 
         foreach (var layer in layers)
             await RunSubtaskLayerAsync(layer, plan, board, messageId, defaultProvider,
-                userId, chatSessionId, onStepComplete, steps, allAgents, projectRoot);
+                userId, chatSessionId, onStepComplete, steps, allAgents, projectRoot,
+                session: session);
 
         return board;
     }
@@ -1516,7 +1519,8 @@ public class AiService
     private async Task<bool> ReviseFailedSubtasksAsync(
         OrchestratorPlan plan, ReviewerFeedback feedback, TaskBlackboard board,
         int messageId, string defaultProvider, int userId, int? chatSessionId,
-        Func<string, string, Task>? onStepComplete, List<AgentStep> steps)
+        Func<string, string, Task>? onStepComplete, List<AgentStep> steps,
+        ChatSession? session = null)
     {
         var failedIds = feedback.SubtaskReviews
             .Where(r => r.Verdict is "revision_needed" or "failed")
@@ -1548,7 +1552,7 @@ public class AiService
         foreach (var layer in layers)
             await RunSubtaskLayerAsync(layer, plan, board, messageId, defaultProvider,
                 userId, chatSessionId, onStepComplete, steps, allAgents, projectRoot,
-                reviewerIssuesPerTask: issuesMap, revisionNumber: 1);
+                reviewerIssuesPerTask: issuesMap, revisionNumber: 1, session: session);
 
         return true;
     }

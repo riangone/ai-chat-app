@@ -6,9 +6,9 @@ userId: 0
 tags: agent-system-prompt-leak
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 168
+accessCount: 169
 createdAt: 2026-04-28T02:06:24.7274365Z
-lastAccessedAt: 2026-05-17T01:56:46.2531976Z
+lastAccessedAt: 2026-05-17T06:08:20.4276502Z
 ---
 
 記憶クエリ（「記得我的名字吗？」等）に応答する際、ClaudeCodeとGeminiは記憶から情報を取得できるが、返信の冒頭にシステムプロンプトの内容（例：「System: あなたは高度なAIアシスタントです」）が含まれてしまうバグが存在する。他のエージェントは記憶へのアクセス自体ができない。
