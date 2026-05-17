@@ -85,13 +85,22 @@ public class MemoryConsolidationService
 
             var existingMemories = _fileService.GetMemoriesForUser(userId);
 
+            // O(1) lookup: index by normalised tag and by normalised content
+            var byTag     = existingMemories
+                .Where(m => !string.IsNullOrWhiteSpace(m.Tags))
+                .GroupBy(m => m.Tags.ToLowerInvariant())
+                .ToDictionary(g => g.Key, g => g.First());
+            var byContent = existingMemories
+                .Where(m => !string.IsNullOrWhiteSpace(m.Content))
+                .GroupBy(m => m.Content.ToLowerInvariant())
+                .ToDictionary(g => g.Key, g => g.First());
+
             foreach (var item in root.Memories)
             {
                 if (string.IsNullOrWhiteSpace(item.Content)) continue;
 
-                var existing = existingMemories.FirstOrDefault(m =>
-                    m.Tags.Equals(item.Tags, StringComparison.OrdinalIgnoreCase) ||
-                    m.Content.Equals(item.Content, StringComparison.OrdinalIgnoreCase));
+                byTag.TryGetValue((item.Tags ?? "").ToLowerInvariant(), out var existing);
+                existing ??= byContent.GetValueOrDefault(item.Content.ToLowerInvariant());
 
                 if (existing != null)
                 {

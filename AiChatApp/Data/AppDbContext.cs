@@ -25,5 +25,27 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // HasData シードを削除。ユーザー登録時に個別作成する方式に変更。
+
+        // Composite index for the most common query: session messages ordered by time
+        modelBuilder.Entity<Message>()
+            .HasIndex(m => new { m.ChatSessionId, m.Timestamp });
+
+        modelBuilder.Entity<ChatSession>()
+            .HasIndex(s => s.UserId);
+
+        modelBuilder.Entity<Skill>()
+            .HasIndex(s => new { s.UserId, s.IsEnabled });
+
+        modelBuilder.Entity<SessionMemory>()
+            .HasIndex(m => m.ChatSessionId);
+
+        modelBuilder.Entity<AgentStep>()
+            .HasIndex(s => s.MessageId);
+
+        modelBuilder.Entity<LongTermMemory>()
+            .HasIndex(m => m.UserId);
+
+        modelBuilder.Entity<InputHistory>()
+            .HasIndex(h => h.UserId);
     }
 }

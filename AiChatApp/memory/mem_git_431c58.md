@@ -6,9 +6,9 @@ userId: 1
 tags: git,commit,业务页面,开发
 relations: 130e8c2,OrderKanban,OrderFulfillment,PurchaseRequisition,Customer360,CashFlowDashboard,EmployeePerformance,ShippingDashboard,SupplierManagement,ProductCatalog,SalesByProduct,SalesCommission,CustomerAnalytics
 relevanceScore: 80
-accessCount: 44
+accessCount: 48
 createdAt: 2026-05-13T05:28:59.1779279Z
-lastAccessedAt: 2026-05-17T08:24:26.0582968Z
+lastAccessedAt: 2026-05-17T12:44:26.4407115Z
 ---
 
 用户在 commit 130e8c2 中添加了 12 个业务页面：OrderKanban, OrderFulfillment, PurchaseRequisition, Customer360, CashFlowDashboard, EmployeePerformance, ShippingDashboard, SupplierManagement, ProductCatalog, SalesByProduct, SalesCommission, CustomerAnalytics。

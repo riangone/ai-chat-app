@@ -6,9 +6,9 @@ userId: 1
 tags: NetYamlForge, blog, 页面升级, 功能开发
 relations: NetYamlForge,blog 子项目
 relevanceScore: 80
-accessCount: 1448
+accessCount: 45420
 createdAt: 2026-05-15T00:30:01.4263998Z
-lastAccessedAt: 2026-05-17T08:29:50.4877240Z
+lastAccessedAt: 2026-05-17T23:09:36.8858462Z
 ---
 
 完成了 NetYamlForge 项目中 blog 子项目的全面升级，实现了包含搜索、归档、标签云和关于我页面的完整博客系统。

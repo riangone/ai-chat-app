@@ -148,6 +148,22 @@ public static class ApplicationExtensions
             );";
         command.ExecuteNonQuery();
 
+        // Ensure indexes exist on already-created database (EnsureCreated only applies to new DBs)
+        foreach (var ddl in new[]
+        {
+            "CREATE INDEX IF NOT EXISTS IX_Messages_SessionTimestamp ON Messages (ChatSessionId, Timestamp);",
+            "CREATE INDEX IF NOT EXISTS IX_ChatSessions_UserId       ON ChatSessions (UserId);",
+            "CREATE INDEX IF NOT EXISTS IX_Skills_UserEnabled         ON Skills (UserId, IsEnabled);",
+            "CREATE INDEX IF NOT EXISTS IX_SessionMemories_SessionId  ON SessionMemories (ChatSessionId);",
+            "CREATE INDEX IF NOT EXISTS IX_AgentSteps_MessageId       ON AgentSteps (MessageId);",
+            "CREATE INDEX IF NOT EXISTS IX_LongTermMemories_UserId    ON LongTermMemories (UserId);",
+            "CREATE INDEX IF NOT EXISTS IX_InputHistories_UserId      ON InputHistories (UserId);",
+        })
+        {
+            command.CommandText = ddl;
+            command.ExecuteNonQuery();
+        }
+
         // Initialize PipelineLoaderService
         var pipelineLoader = scope.ServiceProvider.GetRequiredService<PipelineLoaderService>();
         await pipelineLoader.LoadAllAsync();
@@ -155,6 +171,20 @@ public static class ApplicationExtensions
         {
             await pipelineLoader.ReloadPipelineAsync(fileName);
         });
+
+        // Invalidate policy cache when policy files change
+        var policiesPath = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies");
+        if (Directory.Exists(policiesPath))
+        {
+            var policyWatcher = new FileSystemWatcher(policiesPath, "*.md")
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
+                EnableRaisingEvents = true
+            };
+            policyWatcher.Changed += (_, _) => AiChatApp.Services.AiService.InvalidatePolicyCache();
+            policyWatcher.Created += (_, _) => AiChatApp.Services.AiService.InvalidatePolicyCache();
+            policyWatcher.Deleted += (_, _) => AiChatApp.Services.AiService.InvalidatePolicyCache();
+        }
     }
 
     public static string GetRelativeTime(this DateTime dateTime)

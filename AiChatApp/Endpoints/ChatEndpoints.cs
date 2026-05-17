@@ -308,7 +308,10 @@ public static class ChatEndpoints
                 }
                 await db.SaveChangesAsync(); // single save: aMsg.Content + session
 
-                var aSteps1 = await db.AgentSteps.Where(s => s.MessageId == aMsg.Id || s.MessageId == uMsg.Id).ToListAsync();
+                var aSteps1 = db.ChangeTracker.Entries<AgentStep>()
+                    .Select(e => e.Entity)
+                    .Where(s => s.MessageId == aMsg.Id || s.MessageId == uMsg.Id)
+                    .ToList();
                 context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
                 return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg, aSteps1), "text/html");
             } else {
@@ -331,7 +334,10 @@ public static class ChatEndpoints
                 }
                 await db.SaveChangesAsync(); // single save: aMsg + session
 
-                var aSteps2 = await db.AgentSteps.Where(s => s.MessageId == uMsg.Id).ToListAsync();
+                var aSteps2 = db.ChangeTracker.Entries<AgentStep>()
+                    .Select(e => e.Entity)
+                    .Where(s => s.MessageId == uMsg.Id)
+                    .ToList();
                 context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
                 return Results.Content(RenderMessage(uMsg) + RenderMessage(aMsg, aSteps2), "text/html");
             }
@@ -413,7 +419,10 @@ public static class ChatEndpoints
                 session.UpdatedAt = DateTime.UtcNow;
                 await db.SaveChangesAsync(); // save aMsg + session.UpdatedAt
 
-                var streamSteps = await db.AgentSteps.Where(s => s.MessageId == uMsg.Id).ToListAsync();
+                var streamSteps = db.ChangeTracker.Entries<AgentStep>()
+                    .Select(e => e.Entity)
+                    .Where(s => s.MessageId == uMsg.Id)
+                    .ToList();
                 var spt = streamSteps.Sum(s => s.PromptTokens);
                 var sct = streamSteps.Sum(s => s.CompletionTokens);
                 var stt = streamSteps.Sum(s => s.TotalTokens);

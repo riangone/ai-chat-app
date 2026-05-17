@@ -42,17 +42,22 @@ public class SessionMemoryService
         await _db.SaveChangesAsync();
     }
 
+    private const int SessionMemoryContextLimit = 30;
+
     /// <summary>
-    /// 全エージェントからメモリを読む（プロンプト注入用）
+    /// 全エージェントからメモリを読む（プロンプト注入用）。最新 30 件のみ取得してコンテキスト肥大を防ぐ。
     /// </summary>
     public async Task<string> ReadAllAsContextAsync(int sessionId)
     {
         var memories = await _db.SessionMemories
             .Where(m => m.ChatSessionId == sessionId)
+            .OrderByDescending(m => m.CreatedAt)
+            .Take(SessionMemoryContextLimit)
             .ToListAsync();
 
-        if (!memories.Any()) return "";
+        if (memories.Count == 0) return "";
 
+        memories.Reverse(); // chronological order for readability
         var sb = new StringBuilder("\n[共有セッションメモリ]:\n");
         foreach (var m in memories)
         {

@@ -98,9 +98,10 @@ public class AiService
     private readonly ILogger<AiService> _logger;
 
     private static string? _cachedPolicies;
-    private static DateTime _policiesCacheTime = DateTime.MinValue;
-    private static readonly TimeSpan _policiesCacheTtl = TimeSpan.FromMinutes(5);
     private static readonly SemaphoreSlim _policiesCacheLock = new(1, 1);
+
+    /// <summary>Called by the policy-directory FileSystemWatcher to drop the in-memory cache.</summary>
+    public static void InvalidatePolicyCache() => _cachedPolicies = null;
 
     public AiService(AppDbContext db, MemorySearchService memorySearch, 
         SessionMemoryService sessionMemory, IServiceProvider serviceProvider, 
@@ -995,29 +996,26 @@ public class AiService
 
     private async Task<string> LoadPoliciesAsync()
     {
-        if (_cachedPolicies != null && DateTime.UtcNow - _policiesCacheTime < _policiesCacheTtl)
-            return _cachedPolicies;
+        if (_cachedPolicies != null) return _cachedPolicies;
 
         await _policiesCacheLock.WaitAsync();
         try
         {
-            if (_cachedPolicies != null && DateTime.UtcNow - _policiesCacheTime < _policiesCacheTtl)
-                return _cachedPolicies;
+            if (_cachedPolicies != null) return _cachedPolicies;
 
             var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies");
             if (!Directory.Exists(path)) return _cachedPolicies = "";
 
-            var sb = new StringBuilder("\n\n[ENVIRONMENTAL POLICIES & CONSTRAINTS]:\n");
             var files = Directory.GetFiles(path, "*.md");
-            if (!files.Any()) return _cachedPolicies = "";
+            if (files.Length == 0) return _cachedPolicies = "";
 
+            var sb = new StringBuilder("\n\n[ENVIRONMENTAL POLICIES & CONSTRAINTS]:\n");
             foreach (var file in files)
             {
                 var content = await File.ReadAllTextAsync(file);
                 sb.Append($"--- Policy: {Path.GetFileNameWithoutExtension(file)} ---\n{content}\n");
             }
 
-            _policiesCacheTime = DateTime.UtcNow;
             return _cachedPolicies = sb.ToString();
         }
         finally
