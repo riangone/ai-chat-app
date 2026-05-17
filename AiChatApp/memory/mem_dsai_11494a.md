@@ -6,9 +6,9 @@ userId: 1
 tags: dsai,opencode,ai,backend,python
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 44
+accessCount: 45
 createdAt: 2026-05-01T09:49:33.9684768Z
-lastAccessedAt: 2026-05-17T03:39:38.0587341Z
+lastAccessedAt: 2026-05-17T05:26:33.6284800Z
 ---
 
 dsai项目的AI后端已从OpenAI API切换为opencode CLI（通过subprocess调用），函数为call_opencode，兼容原有OpenAI响应结构以最小化改动

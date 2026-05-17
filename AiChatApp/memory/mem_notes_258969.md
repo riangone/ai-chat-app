@@ -6,9 +6,9 @@ userId: 1
 tags: notes,htmx,swiper,transition,frontend
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 86
+accessCount: 90
 createdAt: 2026-04-27T15:34:53.3418648Z
-lastAccessedAt: 2026-05-15T04:08:15.6213549Z
+lastAccessedAt: 2026-05-17T06:04:18.5775909Z
 ---
 
 ノート一覧アイテムの選択時は `hx-on:click="selectNote(this)"` でSwiper遷移を発火（シングルコロン）。新規作成ボタンはサーバー応答後に `hx-on::after-request="onNoteCreated(event)"` で遷移（HTMXイベントなのでダブルコロン）。関連ファイル: `wwwroot/index.html`, `Endpoints/NotesEndpoints.cs`。

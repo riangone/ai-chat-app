@@ -6,9 +6,9 @@ userId: 1
 tags: 配置更新,MyPage.yml
 relations: jpcs,MyPage.yml,DynamicEntity
 relevanceScore: 80
-accessCount: 2
+accessCount: 5
 createdAt: 2026-05-14T15:33:23.5697086Z
-lastAccessedAt: 2026-05-14T23:09:56.5521922Z
+lastAccessedAt: 2026-05-17T06:05:02.3840127Z
 ---
 
 更新了 'projects/jpcs/pages/MyPage.yml' 配置文件，将旧的路径格式 '/jpcs/Entity/{entity}' 修正为 '/jpcs/DynamicEntity/Index?entity={entity}'。

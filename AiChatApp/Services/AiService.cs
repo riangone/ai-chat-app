@@ -548,9 +548,9 @@ public class AiService
                               targetProvider == "codex" || fileName == "codex" ||
                               targetProvider == "opencode" || fileName == "opencode";
 
-        var processInfo = SetupProcessInfo(targetProvider, workingDir, useJsonStreaming ? "stream-json" : null);
+        var processInfo = SetupProcessInfo(targetProvider, workingDir, useJsonStreaming ? "stream-json" : null, agentMode: false);
 
-        // 获取 MessageId 用于记录日志
+        // 获取 MessageId 用于記録日志
         int messageId = await GetLatestUserMessageIdAsync(chatSessionId);
 
         string inputToStdin = string.IsNullOrEmpty(systemPrompt)
@@ -774,7 +774,7 @@ public class AiService
         }
 
         var sw = Stopwatch.StartNew();
-        var result = await ExecuteCliAsync(prompt, targetProvider, sb.ToString(), workingDir);
+        var result = await ExecuteCliAsync(prompt, targetProvider, sb.ToString(), workingDir, agentMode: true);
         sw.Stop();
 
         // 记录日志（如果可能）
@@ -907,7 +907,7 @@ public class AiService
 
         string fullPersona = sb.ToString();
         var sw = Stopwatch.StartNew();
-        var result = await ExecuteCliAsync(input, provider, fullPersona, workingDir);
+        var result = await ExecuteCliAsync(input, provider, fullPersona, workingDir, agentMode: true);
         sw.Stop();
 
         // Extract and Save Memory
@@ -1785,7 +1785,7 @@ public class AiService
         return false;
     }
 
-    private ProcessStartInfo SetupProcessInfo(string provider, string? workingDirectory = null, string? outputFormat = null)
+    private ProcessStartInfo SetupProcessInfo(string provider, string? workingDirectory = null, string? outputFormat = null, bool agentMode = false)
     {
         string fileName = provider.ToLower() switch
         {
@@ -1850,7 +1850,17 @@ public class AiService
             }
             else
             {
-                processInfo.ArgumentList.Add("--yolo");
+                // In agent mode (cooperative/proactive), use YOLO for full tool access.
+                // In chat mode, use plan (read-only) to prevent autonomous file modifications.
+                if (agentMode || (provider != "gemini" && fileName != "gemini"))
+                {
+                    processInfo.ArgumentList.Add("--yolo");
+                }
+                else
+                {
+                    processInfo.ArgumentList.Add("--approval-mode");
+                    processInfo.ArgumentList.Add("plan");
+                }
                 processInfo.ArgumentList.Add("--sandbox");
                 processInfo.ArgumentList.Add("false");
                 if (provider == "gemini" || fileName == "gemini")
@@ -1886,7 +1896,7 @@ public class AiService
         return result.Output.Trim().Trim('"', '\'').Replace("\n", " ");
     }
 
-    private async Task<CliResult> ExecuteCliAsync(string prompt, string provider, string? systemPrompt = null, string? workingDirectory = null)
+    private async Task<CliResult> ExecuteCliAsync(string prompt, string provider, string? systemPrompt = null, string? workingDirectory = null, bool agentMode = false)
     {
         // Pre-process prompt to add @ prefix to existing image files for Vision support
         string processedPrompt = prompt;
@@ -1909,7 +1919,7 @@ public class AiService
         }
         catch { /* Ignore processing errors */ }
 
-        var processInfo = SetupProcessInfo(provider, workingDirectory);
+        var processInfo = SetupProcessInfo(provider, workingDirectory, agentMode: agentMode);
 
         string inputToStdin = string.IsNullOrEmpty(systemPrompt)
             ? processedPrompt
@@ -1953,9 +1963,9 @@ public class AiService
             {
                 if (provider != FallbackProvider)
                 {
-                    return await ExecuteCliAsync(prompt, FallbackProvider, systemPrompt, workingDirectory);
+                    return await ExecuteCliAsync(prompt, FallbackProvider, systemPrompt, workingDirectory, agentMode);
                 }
-                
+
                 if (!string.IsNullOrWhiteSpace(error))
                     return new CliResult($"[Error from {provider}]: {ExtractCliError(error, provider)}", provider, 0, 0, 0);
             }
@@ -1974,7 +1984,7 @@ public class AiService
         {
             if (provider != FallbackProvider)
             {
-                return await ExecuteCliAsync(prompt, FallbackProvider, systemPrompt, workingDirectory);
+                return await ExecuteCliAsync(prompt, FallbackProvider, systemPrompt, workingDirectory, agentMode);
             }
             return new CliResult($"[Exception]: {ex.Message}", provider, 0, 0, 0);
         }
