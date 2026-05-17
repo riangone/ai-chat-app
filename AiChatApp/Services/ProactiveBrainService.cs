@@ -60,14 +60,11 @@ public class ProactiveBrainService
                 using var scope = _serviceProvider.CreateScope();
                 var aiService = scope.ServiceProvider.GetRequiredService<AiService>();
                 
-                // 1. 哨兵扫描：获取最近状态
-                var summaryInput = "请根据当前项目状态生成一份欢迎报告。重点：最近的进展和接下来的关键任务。";
-                
-                // 2. 记录员总结 (Summarizer) - 使用 opencode 节省 Token
-                var summary = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.Summarizer, summaryInput, userId, provider: "opencode");
-
-                // 3. 主脑生成建议 (Hyperion Brain) - 强制简短
-                var insight = await aiService.ExecuteProactiveAgentAsync(ProactiveAgentProfiles.HyperionBrain, $"请根据以下总结给出一句简短的欢迎建议（30字以内）：{summary}", userId, provider: "opencode");
+                // 单次调用：直接让 HyperionBrain 生成欢迎建议，避免 Summarizer + HyperionBrain 双重调用
+                var insight = await aiService.ExecuteProactiveAgentAsync(
+                    ProactiveAgentProfiles.HyperionBrain,
+                    "请快速分析当前项目状态并给出一句精炼的欢迎建议（30字以内，使用 Markdown 加粗重点）。",
+                    userId, provider: "opencode");
 
                 await SendSuggestionAsync(new ProactiveSuggestion
                 {

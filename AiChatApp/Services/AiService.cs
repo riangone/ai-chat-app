@@ -268,6 +268,7 @@ public class AiService
 
         var pipelineProjectRoot = await GetProjectRootAsync(chatSessionId);
         var pipelinePolicies = await LoadPoliciesAsync();
+        List<AgentDefinition>? pipelineAgents = null; // loaded once on first task-graph use
 
         foreach (var stage in pipeline.Stages)
         {
@@ -309,10 +310,7 @@ public class AiService
                 // --- Tool Execution ---
                 var toolOutput = await _toolExecutor.ExecuteToolsAsync(stageStep.Output, pipelineProjectRoot);
                 if (toolOutput != stageStep.Output)
-                {
-                    stageStep.Output = toolOutput;
-                    await _db.SaveChangesAsync();
-                }
+                    stageStep.Output = toolOutput; // will be persisted below in a single save
 
                 // --- Schema Validation ---
                 if (!string.IsNullOrEmpty(stage.OutputSchema))
@@ -321,7 +319,7 @@ public class AiService
                     if (!validationResult.IsValid)
                     {
                         stageStep.WasAccepted = false;
-                        await _db.SaveChangesAsync();
+                        await _db.SaveChangesAsync(); // persist Output + WasAccepted together
 
                         if (attempt < stage.MaxAttempts)
                         {
@@ -340,14 +338,13 @@ public class AiService
                     if (!qualityOk)
                     {
                         stageStep.WasAccepted = false;
-                        await _db.SaveChangesAsync();
+                        await _db.SaveChangesAsync(); // persist Output + WasAccepted together
                         continue;
                     }
                 }
 
-                // Success
+                // Success — persist Output (possibly changed by tool) + WasAccepted in one save
                 stageStep.WasAccepted = true;
-                // RunAgentStepAsync already calls SaveChangesAsync. Only call here if we changed WasAccepted.
                 await _db.SaveChangesAsync();
 
                 // --- Evaluation ---
@@ -369,8 +366,9 @@ public class AiService
                 var plan = TryParseOrchestratorPlan(stageStep.Output);
                 if (plan != null)
                 {
-                    activePlan  = plan;
-                    activeBoard = await ExecuteTaskGraphAsync(plan, task, messageId, targetProvider, userId, chatSessionId, onStepComplete, steps, session);
+                    activePlan    = plan;
+                    pipelineAgents ??= await GetAvailableAgentsAsync(userId);
+                    activeBoard = await ExecuteTaskGraphAsync(plan, task, messageId, targetProvider, userId, chatSessionId, onStepComplete, steps, pipelineAgents, session);
                     currentInput = BuildTaskGraphReviewInput(plan, activeBoard, task);
                     contextFromPreviousStages = $"Orchestrator plan:\n{stageStep.Output}";
                     continue; // advance to Reviewer
@@ -400,7 +398,7 @@ public class AiService
                     var revised = await ReviseFailedSubtasksAsync(
                         activePlan, feedback, activeBoard,
                         messageId, targetProvider, userId, chatSessionId,
-                        onStepComplete, steps, session);
+                        onStepComplete, steps, pipelineAgents!, session);
 
                     if (revised)
                     {
@@ -1500,9 +1498,8 @@ public class AiService
         OrchestratorPlan plan, string originalTask, int messageId,
         string defaultProvider, int userId, int? chatSessionId,
         Func<string, string, Task>? onStepComplete, List<AgentStep> steps,
-        ChatSession? session = null)
+        List<AgentDefinition> allAgents, ChatSession? session = null)
     {
-        var allAgents   = await GetAvailableAgentsAsync(userId);
         var projectRoot = await GetProjectRootAsync(chatSessionId);
         var board       = new TaskBlackboard();
         var layers      = TopologicalLayers(plan.Subtasks);
@@ -1520,7 +1517,7 @@ public class AiService
         OrchestratorPlan plan, ReviewerFeedback feedback, TaskBlackboard board,
         int messageId, string defaultProvider, int userId, int? chatSessionId,
         Func<string, string, Task>? onStepComplete, List<AgentStep> steps,
-        ChatSession? session = null)
+        List<AgentDefinition> allAgents, ChatSession? session = null)
     {
         var failedIds = feedback.SubtaskReviews
             .Where(r => r.Verdict is "revision_needed" or "failed")
@@ -1543,7 +1540,6 @@ public class AiService
 
         var subtasksToRevise = plan.Subtasks.Where(s => toRevise.Contains(s.Id)).ToList();
         var layers = TopologicalLayers(subtasksToRevise);
-        var allAgents = await GetAvailableAgentsAsync(userId);
         var projectRoot = await GetProjectRootAsync(chatSessionId);
 
         _logger.LogInformation("Directing revision for {Count} subtasks: {Ids}",

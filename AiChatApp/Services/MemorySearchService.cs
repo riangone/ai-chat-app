@@ -17,22 +17,27 @@ public class MemorySearchService
         _graphService = graphService;
     }
 
-    /// <summary>プロンプトに関連する記憶をmdファイルから検索する。キーワード検索 + グラフ拡張の2段階。</summary>
+    /// <summary>プロンプトに関連する記憶をmdファイルから検索する。キーワード検索 + 必要時のみグラフ拡張。</summary>
     public async Task<List<LongTermMemory>> SearchAsync(string prompt, int userId, int maxResults = 5)
     {
-        // 1. キーワードベースの広域検索 (Top 15)
-        var initialResults = await _fileService.SearchAsync(prompt, userId, 15);
+        // 1. キーワードベースの検索（目標数だけ取得）
+        var initialResults = await _fileService.SearchAsync(prompt, userId, maxResults);
 
-        // 2. グラフ拡張 (Knowledge Graph expansion)
+        // 2. 結果が目標数に満たない場合のみグラフ拡張
+        if (initialResults.Count >= maxResults)
+            return initialResults;
+
         _graphService.BuildGraph(userId);
         var expandedResults = new List<LongTermMemory>(initialResults);
         var seenFiles = initialResults.Select(m => m.SourceFile).ToHashSet();
 
         foreach (var mem in initialResults)
         {
+            if (expandedResults.Count >= maxResults) break;
             var related = _graphService.GetRelatedMemories(mem, userId, limit: 2);
             foreach (var r in related)
             {
+                if (expandedResults.Count >= maxResults) break;
                 if (r.SourceFile != null && !seenFiles.Contains(r.SourceFile))
                 {
                     expandedResults.Add(r);
@@ -41,7 +46,7 @@ public class MemorySearchService
             }
         }
 
-        return expandedResults.Take(maxResults).ToList();
+        return expandedResults;
     }
 
     /// <summary>有効スキルをトリガーキーワードで検索する（DB）。</summary>

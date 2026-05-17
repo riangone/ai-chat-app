@@ -1,5 +1,6 @@
 using AiChatApp.Models;
 using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace AiChatApp.Services;
@@ -17,16 +18,25 @@ public class MemoryConsolidationService
         _logger = logger;
     }
 
-    private static int _consolidationCounter;
-    private const int ConsolidationSampleRate = 10;
+    // Per-user cooldown: each user triggers consolidation at most once per interval
+    private static readonly ConcurrentDictionary<int, DateTime> _lastConsolidationTime = new();
+    private static readonly TimeSpan ConsolidationMinInterval = TimeSpan.FromMinutes(5);
+    private const int MaxConsolidationLength = 800;
+
+    private static string Truncate(string text, int maxLength) =>
+        text.Length <= maxLength ? text : text[..maxLength] + "…";
 
     public async Task TryConsolidateAsync(string userMessage, string aiResponse, int userId)
     {
         if (string.IsNullOrWhiteSpace(userMessage) || string.IsNullOrWhiteSpace(aiResponse)) return;
         if (userMessage.Length + aiResponse.Length < 100) return;
 
-        Interlocked.Increment(ref _consolidationCounter);
-        if (_consolidationCounter % ConsolidationSampleRate != 0) return;
+        if (_lastConsolidationTime.TryGetValue(userId, out var last) &&
+            DateTime.UtcNow - last < ConsolidationMinInterval) return;
+        _lastConsolidationTime[userId] = DateTime.UtcNow;
+
+        var truncatedUser = Truncate(userMessage, MaxConsolidationLength);
+        var truncatedAi   = Truncate(aiResponse,  MaxConsolidationLength);
 
         string extractionPrompt = $$"""
             Extract key facts, user preferences, and important information from the following conversation for long-term memory.
@@ -35,8 +45,8 @@ public class MemoryConsolidationService
             If no new important information is found, return an empty array [].
 
             CONVERSATION:
-            User: {{userMessage}}
-            Assistant: {{aiResponse}}
+            User: {{truncatedUser}}
+            Assistant: {{truncatedAi}}
 
             OUTPUT FORMAT (JSON only):
             {
