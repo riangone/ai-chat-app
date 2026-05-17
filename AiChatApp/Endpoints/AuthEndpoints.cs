@@ -43,10 +43,11 @@ public static class AuthEndpoints
             user.LastLoginAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
 
-            var claims = new List<Claim> { 
-                new Claim(ClaimTypes.Name, user.Username), 
+            var claims = new List<Claim> {
+                new Claim(ClaimTypes.Name, user.Username),
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-                new Claim("IsAdmin", user.IsAdmin.ToString().ToLower())
+                new Claim("IsAdmin", user.IsAdmin.ToString().ToLower()),
+                new Claim("DefaultProvider", user.DefaultProvider ?? "")
             };
             var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
             await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
@@ -83,7 +84,7 @@ public static class AuthEndpoints
             });
         }).RequireAuthorization();
 
-        group.MapPut("/profile", async ([FromForm] string? email, [FromForm] string? defaultProvider, AppDbContext db, ClaimsPrincipal user) => {
+        group.MapPut("/profile", async ([FromForm] string? email, [FromForm] string? defaultProvider, AppDbContext db, ClaimsPrincipal user, HttpContext context) => {
             var userIdStr = user.FindFirstValue(ClaimTypes.NameIdentifier);
             if (userIdStr == null) return Results.Unauthorized();
             var userId = int.Parse(userIdStr);
@@ -92,6 +93,17 @@ public static class AuthEndpoints
             if (!string.IsNullOrWhiteSpace(email)) dbUser.Email = email.Trim();
             if (!string.IsNullOrWhiteSpace(defaultProvider)) dbUser.DefaultProvider = defaultProvider;
             await db.SaveChangesAsync();
+
+            // Refresh cookie so DefaultProvider claim stays current
+            var claims = new List<Claim> {
+                new Claim(ClaimTypes.Name, dbUser.Username),
+                new Claim(ClaimTypes.NameIdentifier, dbUser.Id.ToString()),
+                new Claim("IsAdmin", dbUser.IsAdmin.ToString().ToLower()),
+                new Claim("DefaultProvider", dbUser.DefaultProvider ?? "")
+            };
+            await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
+                new ClaimsPrincipal(new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)));
+
             return Results.Ok("Profile updated successfully.");
         }).RequireAuthorization().DisableAntiforgery();
 

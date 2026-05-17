@@ -257,20 +257,23 @@ public static class HarnessEndpoints
         });
 
         group.MapGet("/evaluations/summary", async (AppDbContext db) => {
-            var all = await db.Evaluations.ToListAsync();
-            if (!all.Any()) return Results.Ok(new { count = 0, avgScore = 0 });
-            
-            return Results.Ok(new {
-                count = all.Count,
-                avgScore = all.Average(e => e.Score),
-                byCriteria = all.GroupBy(e => e.Criteria)
-                    .Select(g => new { Criteria = g.Key, Avg = g.Average(e => e.Score) })
-            });
+            var totalCount = await db.Evaluations.CountAsync();
+            if (totalCount == 0) return Results.Ok(new { count = 0, avgScore = 0 });
+
+            // Push aggregation to DB — no need to load all rows into memory
+            var byCriteria = await db.Evaluations
+                .GroupBy(e => e.Criteria)
+                .Select(g => new { Criteria = g.Key, Avg = g.Average(e => e.Score) })
+                .ToListAsync();
+            var avgScore = byCriteria.Any() ? byCriteria.Average(c => c.Avg) : 0;
+
+            return Results.Ok(new { count = totalCount, avgScore, byCriteria });
         });
 
         // Add advanced visualizer and A/B test endpoints
         group.MapGet("/visualizer/model-stats", async (AppDbContext db) => {
-            var steps = await db.AgentSteps.Include(s => s.Evaluations).ToListAsync();
+            var steps = await db.AgentSteps.Include(s => s.Evaluations)
+                .OrderByDescending(s => s.CreatedAt).Take(500).ToListAsync();
             var stats = steps.GroupBy(s => new { s.Role, s.Model })
                 .Select(g => new {
                     Role = g.Key.Role,
@@ -575,7 +578,8 @@ public static class HarnessEndpoints
         });
 
         group.MapGet("/visualizer/stats", async (AppDbContext db) => {
-            var steps = await db.AgentSteps.Include(s => s.Evaluations).ToListAsync();
+            var steps = await db.AgentSteps.Include(s => s.Evaluations)
+                .OrderByDescending(s => s.CreatedAt).Take(500).ToListAsync();
             var stats = steps.GroupBy(s => s.Role)
                 .Select(g => new {
                     Role = g.Key,

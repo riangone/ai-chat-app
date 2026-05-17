@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
@@ -215,6 +217,19 @@ public static class ChatEndpoints
             if (u != null) {
                 u.DefaultProvider = provider;
                 await db.SaveChangesAsync();
+
+                // Refresh cookie so DefaultProvider claim stays current in subsequent requests
+                var claims = new List<System.Security.Claims.Claim> {
+                    new(System.Security.Claims.ClaimTypes.Name, u.Username),
+                    new(System.Security.Claims.ClaimTypes.NameIdentifier, u.Id.ToString()),
+                    new("IsAdmin", u.IsAdmin.ToString().ToLower()),
+                    new("DefaultProvider", provider)
+                };
+                await context.SignInAsync(
+                    Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme,
+                    new System.Security.Claims.ClaimsPrincipal(
+                        new System.Security.Claims.ClaimsIdentity(claims,
+                            Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme)));
             }
             return Results.Ok();
         }).DisableAntiforgery();
@@ -246,8 +261,7 @@ public static class ChatEndpoints
             int? agentId = int.TryParse(agentIdStr, out var aid) ? aid : null;
             int? sessionId = int.TryParse(sessionIdStr, out var id) ? id : null;
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-
-            var u = await db.Users.FindAsync(userId);
+            var userDefaultProvider = user.FindFirstValue("DefaultProvider") ?? "";
             var isCooperative = form["mode"] == "cooperative";
 
             ChatSession? session = sessionId.HasValue
@@ -255,18 +269,21 @@ public static class ChatEndpoints
                 : null;
 
             if (session == null) {
-                session = new ChatSession { 
-                    UserId = userId, 
-                    ProjectId = projectId, 
+                session = new ChatSession {
+                    UserId = userId,
+                    ProjectId = projectId,
                     Title = content.Length > 20 ? content[..20] + "..." : content,
-                    PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? ai.DefaultProvider) : provider
+                    PreferredProvider = string.IsNullOrEmpty(provider)
+                        ? (string.IsNullOrEmpty(userDefaultProvider) ? ai.DefaultProvider : userDefaultProvider)
+                        : provider
                 };
                 db.ChatSessions.Add(session);
                 await db.SaveChangesAsync();
             }
 
             if (string.IsNullOrEmpty(provider)) {
-                provider = session.PreferredProvider ?? u?.DefaultProvider ?? ai.DefaultProvider;
+                provider = session.PreferredProvider
+                    ?? (string.IsNullOrEmpty(userDefaultProvider) ? ai.DefaultProvider : userDefaultProvider);
             }
 
             var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
@@ -333,26 +350,28 @@ public static class ChatEndpoints
                 int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
                 int? sessionId = int.TryParse(sessionIdStr, out var id) ? id : null;
                 var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-
-                var u = await db.Users.FindAsync(userId);
+                var userDefaultProvider = user.FindFirstValue("DefaultProvider") ?? "";
 
                 ChatSession? session = sessionId.HasValue
                     ? await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == sessionId && s.UserId == userId)
                     : null;
 
                 if (session == null) {
-                    session = new ChatSession { 
-                        UserId = userId, 
-                        ProjectId = projectId, 
+                    session = new ChatSession {
+                        UserId = userId,
+                        ProjectId = projectId,
                         Title = content.Length > 20 ? content[..20] + "..." : content,
-                        PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? ai.DefaultProvider) : provider
+                        PreferredProvider = string.IsNullOrEmpty(provider)
+                            ? (string.IsNullOrEmpty(userDefaultProvider) ? ai.DefaultProvider : userDefaultProvider)
+                            : provider
                     };
                     db.ChatSessions.Add(session);
                     await db.SaveChangesAsync();
                 }
 
                 if (string.IsNullOrEmpty(provider)) {
-                    provider = session.PreferredProvider ?? u?.DefaultProvider ?? ai.DefaultProvider;
+                    provider = session.PreferredProvider
+                        ?? (string.IsNullOrEmpty(userDefaultProvider) ? ai.DefaultProvider : userDefaultProvider);
                 }
 
                 var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
@@ -435,8 +454,7 @@ public static class ChatEndpoints
             var sessionIdStr = form["sessionId"].ToString();
             int? sessionId = int.TryParse(sessionIdStr, out var sid) ? sid : null;
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-
-            var u = await db.Users.FindAsync(userId);
+            var userDefaultProvider = user.FindFirstValue("DefaultProvider") ?? "";
 
             context.Response.Headers.Append("Content-Type", "text/event-stream");
             context.Response.Headers.Append("Cache-Control", "no-cache");
@@ -453,18 +471,21 @@ public static class ChatEndpoints
                 : null;
             if (session == null)
             {
-                session = new ChatSession { 
-                    UserId = userId, 
-                    ProjectId = projectId, 
+                session = new ChatSession {
+                    UserId = userId,
+                    ProjectId = projectId,
                     Title = content.Length > 20 ? content[..20] + "..." : content,
-                    PreferredProvider = string.IsNullOrEmpty(provider) ? (u?.DefaultProvider ?? ai.DefaultProvider) : provider
+                    PreferredProvider = string.IsNullOrEmpty(provider)
+                        ? (string.IsNullOrEmpty(userDefaultProvider) ? ai.DefaultProvider : userDefaultProvider)
+                        : provider
                 };
                 db.ChatSessions.Add(session);
                 await db.SaveChangesAsync();
             }
 
             if (string.IsNullOrEmpty(provider)) {
-                provider = session.PreferredProvider ?? u?.DefaultProvider ?? ai.DefaultProvider;
+                provider = session.PreferredProvider
+                    ?? (string.IsNullOrEmpty(userDefaultProvider) ? ai.DefaultProvider : userDefaultProvider);
             }
 
             context.Response.Headers.Append("X-Session-Id", session.Id.ToString());

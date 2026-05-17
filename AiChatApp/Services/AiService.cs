@@ -834,6 +834,9 @@ public class AiService
         return lastMsg?.Id ?? 0;
     }
 
+    private const int MaxStoredPersonaLength = 1000;
+    private const int MaxStoredInputLength  = 2000;
+
     private async Task LogAgentStepAsync(int messageId, string role, string model, string provider, string persona, string input, string output, int durationMs, int promptTokens = 0, int completionTokens = 0, int totalTokens = 0)
     {
         if (messageId <= 0) return;
@@ -846,8 +849,8 @@ public class AiService
             PromptTokens = promptTokens,
             CompletionTokens = completionTokens,
             TotalTokens = totalTokens,
-            Persona = persona ?? "Default Assistant",
-            Input = input,
+            Persona = TruncateMessage(persona ?? "Default Assistant", MaxStoredPersonaLength),
+            Input  = TruncateMessage(input, MaxStoredInputLength),
             Output = output,
             DurationMs = durationMs,
             WasAccepted = true,
@@ -958,8 +961,8 @@ public class AiService
             PromptTokens = result.PromptTokens,
             CompletionTokens = result.CompletionTokens,
             TotalTokens = result.TotalTokens,
-            Persona = fullPersona,
-            Input = input,
+            Persona = TruncateMessage(fullPersona, MaxStoredPersonaLength),
+            Input  = TruncateMessage(input, MaxStoredInputLength),
             Output = result.Output,
             AttemptNumber = attemptNumber,
             WasAccepted = true,
@@ -977,18 +980,16 @@ public class AiService
 
     private async Task ParseAndSaveMemoryAsync(int sessionId, string role, string output)
     {
-        var lines = output.Split('\n');
-        foreach (var line in lines)
+        // Fast path: skip line-by-line scan when output has no MEMORY: marker (the common case)
+        if (!output.Contains("MEMORY:", StringComparison.OrdinalIgnoreCase)) return;
+
+        foreach (var line in output.Split('\n'))
         {
-            if (line.Contains("MEMORY:", StringComparison.OrdinalIgnoreCase))
-            {
-                var content = line.Substring(line.IndexOf("MEMORY:", StringComparison.OrdinalIgnoreCase) + 7).Trim();
-                var parts = content.Split('=');
-                if (parts.Length == 2)
-                {
-                    await _sessionMemory.WriteAsync(sessionId, role, parts[0].Trim(), parts[1].Trim());
-                }
-            }
+            if (!line.Contains("MEMORY:", StringComparison.OrdinalIgnoreCase)) continue;
+            var content = line[(line.IndexOf("MEMORY:", StringComparison.OrdinalIgnoreCase) + 7)..].Trim();
+            var parts = content.Split('=', 2);
+            if (parts.Length == 2)
+                await _sessionMemory.WriteAsync(sessionId, role, parts[0].Trim(), parts[1].Trim());
         }
     }
 
