@@ -1,14 +1,14 @@
 ---
 name: project,NetYamlForge
-description: The user is working on a project called 'NetYamlForge'.
+description: User is developing NetYamlForge project.
 type: user
 userId: 1
 tags: project,NetYamlForge
-relations: relevanceScore: 80
-relevanceScore: 80
-accessCount: 4
+relations: relevanceScore: 80,NetYamlForge,riangone
+relevanceScore: 85
+accessCount: 5
 createdAt: 2026-05-12T01:15:25.7847460Z
-lastAccessedAt: 2026-05-14T06:28:12.6073448Z
+lastAccessedAt: 2026-05-15T06:10:10.7890853Z
 ---
 
-The user is working on a project called 'NetYamlForge'.
+User is developing NetYamlForge project.

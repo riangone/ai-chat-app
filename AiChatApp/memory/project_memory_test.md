@@ -9,9 +9,9 @@ userId: 0
 tags: 記憶機能テスト記録
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 88
+accessCount: 99
 createdAt: 2026-04-26T23:54:47.4544884Z
-lastAccessedAt: 2026-05-14T23:46:35.3286944Z
+lastAccessedAt: 2026-05-17T02:56:02.0457663Z
 ---
 
 ユーザーはAIチャットアプリの記憶機能（`MemoryConsolidationService`）をテストした。

@@ -17,9 +17,16 @@ public class MemoryConsolidationService
         _logger = logger;
     }
 
+    private int _consolidationCounter;
+    private const int ConsolidationSampleRate = 10;
+
     public async Task TryConsolidateAsync(string userMessage, string aiResponse, int userId)
     {
         if (string.IsNullOrWhiteSpace(userMessage) || string.IsNullOrWhiteSpace(aiResponse)) return;
+        if (userMessage.Length + aiResponse.Length < 100) return;
+
+        Interlocked.Increment(ref _consolidationCounter);
+        if (_consolidationCounter % ConsolidationSampleRate != 0) return;
 
         string extractionPrompt = $$"""
             Extract key facts, user preferences, and important information from the following conversation for long-term memory.

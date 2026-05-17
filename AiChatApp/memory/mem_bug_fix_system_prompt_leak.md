@@ -9,9 +9,9 @@ userId: 0
 tags: mem_bug_fix_system_prompt_leak
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 69
+accessCount: 102
 createdAt: 2026-05-07T23:25:23.2073626Z
-lastAccessedAt: 2026-05-14T23:46:35.3276755Z
+lastAccessedAt: 2026-05-17T02:56:02.0424409Z
 ---
 
 # Bug Fix: System Prompt Leak in Responses

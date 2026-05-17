@@ -1561,37 +1561,19 @@ function handleSuggestionAction(command, payload) {
             loadMemoryGraph(currentMindmapRoot);
         };
 
-        let lastClickTime = 0;
-        let lastClickNodeId = null;
-        let clickTimeout = null;
-
-        window.expandNode = function(nodeId) {
-            if (nodeId.startsWith('rel_')) return;
-            
-            const now = Date.now();
-            if (lastClickNodeId === nodeId && now - lastClickTime < 350) {
-                // Double Click -> Focus/Drill-down
-                if (clickTimeout) clearTimeout(clickTimeout);
-                drillDownNode(nodeId);
-                lastClickTime = 0;
-                lastClickNodeId = null;
-                return;
-            }
-            
-            lastClickTime = now;
-            lastClickNodeId = nodeId;
-
-            if (clickTimeout) clearTimeout(clickTimeout);
-            clickTimeout = setTimeout(() => {
-                // Single Click -> Toggle Collapse
+        // Tap handler: tag nodes toggle collapse, memory nodes drill down
+        window.handleNodeTap = function(nodeId) {
+            if (!nodeId || nodeId === 'overview_root' || nodeId.startsWith('rel_')) return;
+            if (nodeId.startsWith('tag_')) {
                 if (collapsedNodeIds.has(nodeId)) {
                     collapsedNodeIds.delete(nodeId);
                 } else {
                     collapsedNodeIds.add(nodeId);
                 }
                 loadMemoryGraph(currentMindmapRoot);
-                lastClickNodeId = null;
-            }, 350);
+            } else {
+                drillDownNode(nodeId);
+            }
         };
 
         function drillDownNode(nodeId) {
@@ -1662,44 +1644,27 @@ function handleSuggestionAction(command, payload) {
 
                     this.hammer.get('pinch').set({enable: true});
 
-                    // Recognizers for single and double tap
-                    const doubleTap = new Hammer.Tap({ event: 'doubletap', taps: 2 });
-                    const singleTap = new Hammer.Tap({ event: 'singletap' });
-                    
-                    this.hammer.add([doubleTap, singleTap]);
-                    singleTap.requireFailure(doubleTap);
+                    // Single tap: tag nodes collapse/expand, memory nodes drill down
+                    const singleTap = new Hammer.Tap({ event: 'tap' });
+                    this.hammer.add([singleTap]);
 
-                    const handleTap = (ev, isDouble) => {
+                    this.hammer.on('tap', (ev) => {
                         let target = ev.target;
-                        // Find the closest parent that is a node
                         while (target && target !== options.svgElement) {
-                            if (target.classList && (target.classList.contains('node') || target.closest('.node'))) {
-                                const nodeEl = target.classList.contains('node') ? target : target.closest('.node');
-                                // Extract nodeId from element ID (e.g., "mermaid-123-node_abc" -> "node_abc")
-                                const idParts = nodeEl.id.split('-');
-                                const nodeId = idParts[idParts.length - 1];
-                                
-                                if (nodeId && nodeId !== 'overview_root' && !nodeId.startsWith('rel_')) {
-                                    if (isDouble) {
-                                        drillDownNode(nodeId);
-                                    } else {
-                                        // Toggle collapse
-                                        if (collapsedNodeIds.has(nodeId)) {
-                                            collapsedNodeIds.delete(nodeId);
-                                        } else {
-                                            collapsedNodeIds.add(nodeId);
-                                        }
-                                        loadMemoryGraph(currentMindmapRoot);
-                                    }
-                                }
+                            const nodeEl = target.classList && target.classList.contains('node')
+                                ? target
+                                : (target.closest ? target.closest('.node') : null);
+                            if (nodeEl) {
+                                // Mermaid SVG IDs: "flowchart-NODE_ID-N" → extract NODE_ID (middle part)
+                                const rawId = nodeEl.id || '';
+                                const parts = rawId.split('-');
+                                const nodeId = parts.length >= 3 ? parts.slice(1, -1).join('-') : (parts[1] || '');
+                                window.handleNodeTap(nodeId);
                                 break;
                             }
                             target = target.parentNode;
                         }
-                    };
-
-                    this.hammer.on('singletap', (ev) => handleTap(ev, false));
-                    this.hammer.on('doubletap', (ev) => handleTap(ev, true));
+                    });
 
                     this.hammer.on('panstart panmove', function(ev) {
                         if (ev.type === 'panstart') {
@@ -1733,7 +1698,7 @@ function handleSuggestionAction(command, payload) {
                 minZoom: 0.1,
                 maxZoom: 10,
                 zoomScaleSensitivity: 0.2,
-                dblClickZoomEnabled: false, // We handle double click manually
+                dblClickZoomEnabled: false,
                 customEventsHandler: eventsHandler
             });
 

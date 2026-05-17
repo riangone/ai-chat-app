@@ -62,9 +62,11 @@ public class SessionMemoryService
         return sb.ToString();
     }
 
-    /// <summary>
-    /// セッション終了時に重要エントリをLongTermMemoryへ昇格（簡略化実装）
-    /// </summary>
+    private static readonly HashSet<string> LowValueKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "status", "ok", "done", "acknowledged", "progress", "step", "result_summary", "note"
+    };
+
     public async Task PromoteToLongTermAsync(int sessionId, int userId)
     {
         var memories = await _db.SessionMemories
@@ -73,6 +75,9 @@ public class SessionMemoryService
 
         foreach (var m in memories)
         {
+            if (LowValueKeys.Contains(m.Key)) continue;
+            if (string.IsNullOrWhiteSpace(m.Value) || m.Value.Length < 10) continue;
+
             _db.LongTermMemories.Add(new LongTermMemory
             {
                 UserId = userId,

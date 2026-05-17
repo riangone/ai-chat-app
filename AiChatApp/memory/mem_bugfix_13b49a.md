@@ -6,9 +6,9 @@ userId: 1
 tags: bugfix, entities, configuration
 relations: order.yml,employee.yml,employeeterritory.yml
 relevanceScore: 80
-accessCount: 0
+accessCount: 1
 createdAt: 2026-05-13T01:50:02.3502143Z
-lastAccessedAt: 2026-05-13T01:50:02.3502144Z
+lastAccessedAt: 2026-05-15T00:23:37.8816787Z
 ---
 
 在实体配置文件 `entities/order.yml`、`entities/employee.yml` 和 `entities/employeeterritory.yml` 中，将 `displayColumn` 从 SQL 拼接表达式修正为简单的列名 `LastName`。

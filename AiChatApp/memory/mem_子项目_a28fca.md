@@ -6,9 +6,9 @@ userId: 1
 tags: 子项目, northwind-retail, 零售ERP
 relations: northwind-retail,NetYamlForge
 relevanceScore: 80
-accessCount: 6
+accessCount: 7
 createdAt: 2026-05-14T00:43:57.0703362Z
-lastAccessedAt: 2026-05-14T08:17:29.0075560Z
+lastAccessedAt: 2026-05-15T08:15:55.4101602Z
 ---
 
 北风贸易 (northwind-retail) 子项目经过深度定制，作为零售 ERP 示例，包含销售工作台、智能库存和客户 360 模块。
