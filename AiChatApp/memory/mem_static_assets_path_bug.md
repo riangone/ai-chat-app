@@ -6,9 +6,9 @@ userId: 0
 tags: bug,frontend,static-assets,daisyui,css,js,path
 relations: relevanceScore: 80
 relevanceScore: 80
-accessCount: 153
+accessCount: 154
 createdAt: 2026-04-30T11:04:48.0253430Z
-lastAccessedAt: 2026-05-17T12:44:26.4393605Z
+lastAccessedAt: 2026-05-17T23:14:28.0418889Z
 ---
 
 NetYamlForge 项目中，前端静态资源（JS/CSS）路径缺少 `/nyf` 前缀，导致加载失败（如 `https://ai.0101.click/lib/daisyui/daisyui.min.css` 应为 `https://ai.0101.click/nyf/lib/daisyui/daisyui.min.css`）。

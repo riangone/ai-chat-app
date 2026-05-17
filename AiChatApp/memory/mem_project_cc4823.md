@@ -6,9 +6,9 @@ userId: 1
 tags: project,blog,subproject
 relations: blog,NetYamlForge
 relevanceScore: 80
-accessCount: 45423
+accessCount: 46602
 createdAt: 2026-05-15T00:07:56.6373417Z
-lastAccessedAt: 2026-05-17T23:09:36.8872100Z
+lastAccessedAt: 2026-05-17T23:34:30.8734890Z
 ---
 
 项目新增了 blog 子项目（位于 NetYamlForge/projects/blog/），包含 entities、pages、views、dashboard 和 database 等组件。
