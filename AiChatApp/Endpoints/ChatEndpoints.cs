@@ -84,12 +84,12 @@ public static class ChatEndpoints
             var p = page ?? 1;
             var ps = pageSize ?? 20;
 
-            var query = db.ChatSessions.Where(s => s.UserId == userId);
+            var query = db.ChatSessions.AsNoTracking().Where(s => s.UserId == userId);
             if (projectId.HasValue)
                 query = query.Where(s => s.ProjectId == projectId);
             else
                 query = query.Where(s => s.ProjectId == null);
-                
+
             var sessions = await query.OrderByDescending(s => s.UpdatedAt)
                                      .Skip((p - 1) * ps)
                                      .Take(ps + 1)
@@ -136,12 +136,12 @@ public static class ChatEndpoints
 
         group.MapGet("/chat/load/{id}", async (int id, AppDbContext db, ClaimsPrincipal user) => {
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var session = await db.ChatSessions
+            var session = await db.ChatSessions.AsNoTracking()
                 .FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
             if (session == null) return Results.NotFound();
 
             const int pageSize = 20;
-            var messages = await db.Messages
+            var messages = await db.Messages.AsNoTracking()
                 .Where(m => m.ChatSessionId == id)
                 .Include(m => m.AgentSteps)
                 .OrderByDescending(m => m.Timestamp)
@@ -180,11 +180,11 @@ public static class ChatEndpoints
 
         group.MapGet("/chat/{id}/older-messages", async (int id, int beforeId, AppDbContext db, ClaimsPrincipal user) => {
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var session = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
+            var session = await db.ChatSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
             if (session == null) return Results.NotFound();
 
             const int pageSize = 20;
-            var messages = await db.Messages
+            var messages = await db.Messages.AsNoTracking()
                 .Where(m => m.ChatSessionId == id && m.Id < beforeId)
                 .Include(m => m.AgentSteps)
                 .OrderByDescending(m => m.Timestamp)

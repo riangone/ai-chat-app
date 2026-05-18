@@ -6,9 +6,9 @@ userId: 1
 tags: performance, parallelism, AI, dotnet
 relations: AiChatApp,AiService
 relevanceScore: 80
-accessCount: 11
+accessCount: 13
 createdAt: 2026-05-14T23:50:46.6494256Z
-lastAccessedAt: 2026-05-17T23:14:28.0484587Z
+lastAccessedAt: 2026-05-18T00:24:28.4368164Z
 ---
 
 Optimized the AI system prompt generation process by ensuring BuildSystemPromptAsync utilizes parallel tasks for memory searching and strategy loading.

@@ -6,9 +6,9 @@ userId: 1
 tags: optimization, csharp, AiService
 relations: AiService,BuildSystemPromptAsync,Task.WhenAll
 relevanceScore: 80
-accessCount: 12
+accessCount: 16
 createdAt: 2026-05-14T23:17:14.7796271Z
-lastAccessedAt: 2026-05-17T23:14:28.0467745Z
+lastAccessedAt: 2026-05-18T01:44:29.0663111Z
 ---
 
 AiService.cs in AiChatApp contains multiple sequential awaits in BuildSystemPromptAsync (SearchAsync, SearchSkillsAsync, LoadPoliciesAsync, session queries) that should be parallelized using Task.WhenAll.

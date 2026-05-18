@@ -21,6 +21,7 @@ public static class ServiceExtensions
         
         services.AddMemoryCache();
         services.AddSingleton<IBackgroundTaskTracker, BackgroundTaskTracker>();
+        services.AddSingleton<ICliExecutor, CliExecutorService>();
         services.AddSingleton<MemoryFileService>();
         services.AddSingleton<MemoryGraphService>();
         services.AddScoped<MemorySearchService>();
