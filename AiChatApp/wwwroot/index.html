@@ -520,7 +520,7 @@
                 const re=r.body.getReader(),de=new TextDecoder();
                 while(true){const{done,value}=await re.read(); if(done)break;
                     const t=de.decode(value);
-                    t.split('\n').forEach(l=>{if(l.startsWith('data: ')){const d=l.slice(6); if(d.startsWith('[DONE')){const m=d.match(/^\[DONE:(\d+):(\d+):(\d+)\]$/);if(m)updateTokenInfo(id,+m[1],+m[2],+m[3]);}else{acc+=d.replace(/\\n/g,'\n').replace(/\\r/g,'\r'); b.innerHTML=marked.parse(acc); scrollToBottom();}}});
+                    t.split('\n').forEach(l=>{if(l.startsWith('data: ')){const d=l.slice(6); if(d.startsWith('[DONE')){const m=d.match(/^\[DONE:(\d+):(\d+):(\d+)\]$/);if(m)updateTokenInfo(id,+m[1],+m[2],+m[3]);}else if(d.startsWith('[ERROR:')){b.innerHTML=`<span class="text-error">${d.slice(7,-1)}</span>`;}else{acc+=d.replace(/\\n/g,'\n').replace(/\\r/g,'\r'); b.innerHTML=marked.parse(acc); scrollToBottom();}}});
                 }
             } catch(err) { b.innerHTML=`<span class="text-error">${i18n('request-error')}</span>`; }
         }

@@ -34,6 +34,9 @@ public static class ServiceExtensions
         services.AddScoped<SchemaValidationService>();
         services.AddScoped<ToolExecutorService>();
         services.AddScoped<EvalService>();
+        services.AddScoped<AiPromptService>();
+        services.AddScoped<AiResponseProcessor>();
+        services.AddScoped<AiCollaborationService>();
         services.AddScoped<AiService>();
         services.AddSingleton<ProactiveBrainService>();
 

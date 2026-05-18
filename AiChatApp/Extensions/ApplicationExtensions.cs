@@ -181,9 +181,9 @@ public static class ApplicationExtensions
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
                 EnableRaisingEvents = true
             };
-            policyWatcher.Changed += (_, _) => AiChatApp.Services.AiService.InvalidatePolicyCache();
-            policyWatcher.Created += (_, _) => AiChatApp.Services.AiService.InvalidatePolicyCache();
-            policyWatcher.Deleted += (_, _) => AiChatApp.Services.AiService.InvalidatePolicyCache();
+            policyWatcher.Changed += (_, _) => AiChatApp.Services.AiPromptService.InvalidatePolicyCache();
+            policyWatcher.Created += (_, _) => AiChatApp.Services.AiPromptService.InvalidatePolicyCache();
+            policyWatcher.Deleted += (_, _) => AiChatApp.Services.AiPromptService.InvalidatePolicyCache();
         }
     }
 

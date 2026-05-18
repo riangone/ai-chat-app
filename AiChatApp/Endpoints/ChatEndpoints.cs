@@ -299,53 +299,55 @@ public static class ChatEndpoints
 
             string aiResponse;
             if (isCooperative || selectedAgents.Any()) {
-                // Save uMsg + aMsg together in one round-trip (both IDs needed before CooperateAsync)
                 var aMsg = new Message { ChatSessionId = session.Id, Content = "", IsAi = true, AgentName = "Multi-Agent" };
                 db.Messages.Add(aMsg);
                 await db.SaveChangesAsync();
 
-                var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, session.Id, provider, selectedAgents.Any() ? selectedAgents : null);
-                aMsg.Content = html;
-                aiResponse = html;
-
-                tracker.FireAndForget(() => consolidation.TryConsolidateAsync(content, html, userId), "Memory Consolidation");
-
-                session.UpdatedAt = DateTime.UtcNow;
-                if (session.Title.StartsWith("New Chat") || session.Title == content[..Math.Min(content.Length, 20)] + (content.Length > 20 ? "..." : "")) {
-                    session.Title = await ai.GenerateTitleAsync(content, html, provider);
+                try {
+                    var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, session.Id, provider, selectedAgents.Any() ? selectedAgents : null);
+                    aMsg.Content = html;
+                    aiResponse = html;
+                    tracker.FireAndForget(() => consolidation.TryConsolidateAsync(content, html, userId), "Memory Consolidation");
+                    session.UpdatedAt = DateTime.UtcNow;
+                    if (session.Title.StartsWith("New Chat") || session.Title == content[..Math.Min(content.Length, 20)] + (content.Length > 20 ? "..." : ""))
+                        session.Title = await ai.GenerateTitleAsync(content, html, provider);
+                } catch (Exception ex) {
+                    aMsg.Content = ex is TimeoutException ? "[AI タイムアウト。もう一度お試しください。]" : "[AI 処理エラー。もう一度お試しください。]";
+                    session.UpdatedAt = DateTime.UtcNow;
+                    aiResponse = aMsg.Content;
                 }
-                await db.SaveChangesAsync(); // single save: aMsg.Content + session
+                await db.SaveChangesAsync();
 
-                var aSteps1 = db.ChangeTracker.Entries<AgentStep>()
-                    .Select(e => e.Entity)
-                    .Where(s => s.MessageId == aMsg.Id || s.MessageId == uMsg.Id)
-                    .ToList();
+                var aSteps1 = db.ChangeTracker.Entries<AgentStep>().Select(e => e.Entity)
+                    .Where(s => s.MessageId == aMsg.Id || s.MessageId == uMsg.Id).ToList();
                 context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
                 return Results.Content(HtmlUtils.RenderMessage(uMsg) + HtmlUtils.RenderMessage(aMsg, aSteps1), "text/html");
             } else {
-                await db.SaveChangesAsync(); // save uMsg (needs ID for GetLatestUserMessageIdAsync)
+                await db.SaveChangesAsync();
 
-                aiResponse = await ai.GetResponseAsync(content, userId, session.Id, provider, agentId);
-                string agentName = provider;
-                if (agentId.HasValue) {
-                    var agentProfile = await db.AgentProfiles.FindAsync(agentId.Value);
-                    if (agentProfile != null) agentName = agentProfile.RoleName;
+                Message aMsg;
+                try {
+                    aiResponse = await ai.GetResponseAsync(content, userId, session.Id, provider, agentId);
+                    string agentName = provider;
+                    if (agentId.HasValue) {
+                        var agentProfile = await db.AgentProfiles.FindAsync(agentId.Value);
+                        if (agentProfile != null) agentName = agentProfile.RoleName;
+                    }
+                    aMsg = new Message { ChatSessionId = session.Id, Content = aiResponse, IsAi = true, AgentName = agentName };
+                    tracker.FireAndForget(() => consolidation.TryConsolidateAsync(content, aiResponse, userId), "Memory Consolidation");
+                    session.UpdatedAt = DateTime.UtcNow;
+                    if (session.Title.StartsWith("New Chat") || session.Title == content[..Math.Min(content.Length, 20)] + (content.Length > 20 ? "..." : ""))
+                        session.Title = await ai.GenerateTitleAsync(content, aiResponse, provider);
+                } catch (Exception ex) {
+                    aiResponse = ex is TimeoutException ? "[AI タイムアウト。もう一度お試しください。]" : "[AI 処理エラー。もう一度お試しください。]";
+                    aMsg = new Message { ChatSessionId = session.Id, Content = aiResponse, IsAi = true, AgentName = provider };
+                    session.UpdatedAt = DateTime.UtcNow;
                 }
-                var aMsg = new Message { ChatSessionId = session.Id, Content = aiResponse, IsAi = true, AgentName = agentName };
                 db.Messages.Add(aMsg);
+                await db.SaveChangesAsync();
 
-                tracker.FireAndForget(() => consolidation.TryConsolidateAsync(content, aiResponse, userId), "Memory Consolidation");
-
-                session.UpdatedAt = DateTime.UtcNow;
-                if (session.Title.StartsWith("New Chat") || session.Title == content[..Math.Min(content.Length, 20)] + (content.Length > 20 ? "..." : "")) {
-                    session.Title = await ai.GenerateTitleAsync(content, aiResponse, provider);
-                }
-                await db.SaveChangesAsync(); // single save: aMsg + session
-
-                var aSteps2 = db.ChangeTracker.Entries<AgentStep>()
-                    .Select(e => e.Entity)
-                    .Where(s => s.MessageId == uMsg.Id)
-                    .ToList();
+                var aSteps2 = db.ChangeTracker.Entries<AgentStep>().Select(e => e.Entity)
+                    .Where(s => s.MessageId == uMsg.Id).ToList();
                 context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
                 return Results.Content(HtmlUtils.RenderMessage(uMsg) + HtmlUtils.RenderMessage(aMsg, aSteps2), "text/html");
             }
@@ -379,59 +381,66 @@ public static class ChatEndpoints
                 context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
 
                 var fullResponse = new StringBuilder();
+                string? streamError = null;
                 using var keepAliveCts = new CancellationTokenSource();
                 _ = StartKeepAliveAsync(context, keepAliveCts.Token);
-                
-                await foreach (var chunk in ai.GetResponseStreamAsync(content, userId, session.Id, provider, agentId))
-                {
-                    fullResponse.Append(chunk);
-                    var data = chunk.Replace("\n", "\\n").Replace("\r", "\\r");
-                    await context.Response.WriteAsync($"data: {data}\n\n");
+
+                try {
+                    await foreach (var chunk in ai.GetResponseStreamAsync(content, userId, session.Id, provider, agentId))
+                    {
+                        fullResponse.Append(chunk);
+                        var data = chunk.Replace("\n", "\\n").Replace("\r", "\\r");
+                        await context.Response.WriteAsync($"data: {data}\n\n");
+                        await context.Response.Body.FlushAsync();
+                    }
+                } catch (Exception ex) {
+                    streamError = ex is TimeoutException ? "AI タイムアウト。もう一度お試しください。" : "AI 処理エラー。もう一度お試しください。";
+                    await context.Response.WriteAsync($"data: [ERROR:{streamError}]\n\n");
                     await context.Response.Body.FlushAsync();
+                } finally {
+                    keepAliveCts.Cancel();
                 }
-                keepAliveCts.Cancel();
 
                 string agentName = provider;
                 if (agentId.HasValue) {
                     var agentProfile = await db.AgentProfiles.FindAsync(agentId.Value);
                     if (agentProfile != null) agentName = agentProfile.RoleName;
                 }
-                var responseText = fullResponse.ToString();
+                var responseText = streamError != null ? $"[Error: {streamError}]" : fullResponse.ToString();
                 var aMsg = new Message { ChatSessionId = session.Id, Content = responseText, IsAi = true, AgentName = agentName };
                 db.Messages.Add(aMsg);
 
                 session.UpdatedAt = DateTime.UtcNow;
-                await db.SaveChangesAsync(); // save aMsg + session.UpdatedAt
+                await db.SaveChangesAsync();
 
-                var streamSteps = db.ChangeTracker.Entries<AgentStep>()
-                    .Select(e => e.Entity)
-                    .Where(s => s.MessageId == uMsg.Id)
-                    .ToList();
-                var spt = streamSteps.Sum(s => s.PromptTokens);
-                var sct = streamSteps.Sum(s => s.CompletionTokens);
-                var stt = streamSteps.Sum(s => s.TotalTokens);
-                if (stt == 0) stt = spt + sct;
-                await context.Response.WriteAsync($"data: [DONE:{spt}:{sct}:{stt}]\n\n");
+                if (streamError == null) {
+                    var streamSteps = db.ChangeTracker.Entries<AgentStep>()
+                        .Select(e => e.Entity).Where(s => s.MessageId == uMsg.Id).ToList();
+                    var spt = streamSteps.Sum(s => s.PromptTokens);
+                    var sct = streamSteps.Sum(s => s.CompletionTokens);
+                    var stt = streamSteps.Sum(s => s.TotalTokens);
+                    if (stt == 0) stt = spt + sct;
+                    await context.Response.WriteAsync($"data: [DONE:{spt}:{sct}:{stt}]\n\n");
 
-                // 背景でタイトル生成と記憶抽出（クライアントへの応答を遅らせない）
-                if (session.Title.StartsWith("New Chat")) {
-                    var capturedSessionId = session.Id;
-                    var capturedContent = content;
-                    var capturedResponse = responseText;
-                    var capturedProvider = provider;
-                    var sp = context.RequestServices;
-                    _ = Task.Run(async () => {
-                        using var scope = sp.CreateScope();
-                        var titleAi = scope.ServiceProvider.GetRequiredService<AiService>();
-                        var titleDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                        var s = await titleDb.ChatSessions.FindAsync(capturedSessionId);
-                        if (s != null && s.Title.StartsWith("New Chat")) {
-                            s.Title = await titleAi.GenerateTitleAsync(capturedContent, capturedResponse, capturedProvider);
-                            await titleDb.SaveChangesAsync();
-                        }
-                    });
+                    if (session.Title.StartsWith("New Chat")) {
+                        var capturedSessionId = session.Id;
+                        var capturedContent = content;
+                        var capturedResponse = responseText;
+                        var capturedProvider = provider;
+                        var sp = context.RequestServices;
+                        _ = Task.Run(async () => {
+                            using var scope = sp.CreateScope();
+                            var titleAi = scope.ServiceProvider.GetRequiredService<AiService>();
+                            var titleDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                            var s = await titleDb.ChatSessions.FindAsync(capturedSessionId);
+                            if (s != null && s.Title.StartsWith("New Chat")) {
+                                s.Title = await titleAi.GenerateTitleAsync(capturedContent, capturedResponse, capturedProvider);
+                                await titleDb.SaveChangesAsync();
+                            }
+                        });
+                    }
+                    _ = Task.Run(() => consolidation.TryConsolidateAsync(content, responseText, userId));
                 }
-                _ = Task.Run(() => consolidation.TryConsolidateAsync(content, responseText, userId));
         }).DisableAntiforgery();
 
         group.MapPost("/chat/cooperate/stream", async (
@@ -496,40 +505,50 @@ public static class ChatEndpoints
                         try { await context.Response.WriteAsync(": ping\n\n"); await context.Response.Body.FlushAsync(); } catch { }
                 }
             });
-            var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, session.Id, provider,
-                onStepComplete: async (role, stepHtml) =>
-                {
-                    var payload = JsonSerializer.Serialize(new { role, html = stepHtml });
-                    await SendEvent("step-complete", payload);
-                });
-            keepAliveCts2.Cancel();
 
-            aMsg.Content = html;
-            session.UpdatedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync(); // save aMsg.Content + session.UpdatedAt
+            string html;
+            try {
+                (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, session.Id, provider,
+                    onStepComplete: async (role, stepHtml) =>
+                    {
+                        var payload = JsonSerializer.Serialize(new { role, html = stepHtml });
+                        await SendEvent("step-complete", payload);
+                    });
+                keepAliveCts2.Cancel();
+                aMsg.Content = html;
+                session.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
 
-            await SendEvent("final", html);
-            await SendEvent("done", "");
+                await SendEvent("final", html);
+                await SendEvent("done", "");
 
-            // 背景でタイトル生成と記憶抽出（SSE完了後にブロックしない）
-            if (session.Title.StartsWith("New Chat")) {
-                var capturedSessionId = session.Id;
-                var capturedContent = content;
-                var capturedHtml = html;
-                var capturedProvider = provider;
-                var sp = context.RequestServices;
-                _ = Task.Run(async () => {
-                    using var scope = sp.CreateScope();
-                    var titleAi = scope.ServiceProvider.GetRequiredService<AiService>();
-                    var titleDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    var s = await titleDb.ChatSessions.FindAsync(capturedSessionId);
-                    if (s != null && s.Title.StartsWith("New Chat")) {
-                        s.Title = await titleAi.GenerateTitleAsync(capturedContent, capturedHtml, capturedProvider);
-                        await titleDb.SaveChangesAsync();
-                    }
-                });
+                if (session.Title.StartsWith("New Chat")) {
+                    var capturedSessionId = session.Id;
+                    var capturedContent = content;
+                    var capturedHtml = html;
+                    var capturedProvider = provider;
+                    var sp = context.RequestServices;
+                    _ = Task.Run(async () => {
+                        using var scope = sp.CreateScope();
+                        var titleAi = scope.ServiceProvider.GetRequiredService<AiService>();
+                        var titleDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        var s = await titleDb.ChatSessions.FindAsync(capturedSessionId);
+                        if (s != null && s.Title.StartsWith("New Chat")) {
+                            s.Title = await titleAi.GenerateTitleAsync(capturedContent, capturedHtml, capturedProvider);
+                            await titleDb.SaveChangesAsync();
+                        }
+                    });
+                }
+                _ = Task.Run(() => consolidation.TryConsolidateAsync(content, html, userId));
+            } catch (Exception ex) {
+                keepAliveCts2.Cancel();
+                var errMsg = ex is TimeoutException ? "AI タイムアウト。もう一度お試しください。" : "AI 処理エラー。もう一度お試しください。";
+                aMsg.Content = $"[Error: {errMsg}]";
+                session.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+                await SendEvent("error", errMsg);
+                await SendEvent("done", "");
             }
-            _ = Task.Run(() => consolidation.TryConsolidateAsync(content, html, userId));
         }).DisableAntiforgery();
     }
 }
