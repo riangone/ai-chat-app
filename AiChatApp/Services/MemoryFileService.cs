@@ -100,10 +100,17 @@ public class MemoryFileService : IDisposable
             .ToList();
     }
 
+    private const int MaxScoringCandidates = 150;
+
     /// <summary>プロンプトに関連する記憶を多段スコアリングで検索する。</summary>
     public async Task<List<LongTermMemory>> SearchAsync(string prompt, int userId, int maxResults = 5)
     {
-        var all = (await GetMemoriesForUserAsync(userId)).Where(m => m.RelevanceScore > 20).ToList();
+        // Cap candidates before the O(n) scoring loop to prevent unbounded CPU growth.
+        var all = (await GetMemoriesForUserAsync(userId))
+            .Where(m => m.RelevanceScore > 20)
+            .OrderByDescending(m => m.RelevanceScore)
+            .Take(MaxScoringCandidates)
+            .ToList();
 
         // 单词分割（主要针对英文）
         var wordTokens = prompt

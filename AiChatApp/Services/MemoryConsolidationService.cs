@@ -2,6 +2,7 @@ using AiChatApp.Models;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AiChatApp.Services.Infrastructure;
 
 namespace AiChatApp.Services;
@@ -34,9 +35,15 @@ public class MemoryConsolidationService
     private static string Truncate(string text, int maxLength) =>
         text.Length <= maxLength ? text : text[..maxLength] + "…";
 
+    // Skip consolidation when the exchange carries too little information to produce useful memories.
+    private static bool IsWorthConsolidating(string userMessage, string aiResponse) =>
+        userMessage.Length + aiResponse.Length >= 100 &&
+        !Regex.IsMatch(userMessage.Trim(), @"^(ok|okay|yes|no|thanks|thank you|got it|sure|great|good|hi|hello|ありがとう|はい|いいえ|わかった|了解|好的|谢谢|是|否)[\s。！!]*$", RegexOptions.IgnoreCase);
+
     public async Task TryConsolidateAsync(string userMessage, string aiResponse, int userId)
     {
         if (string.IsNullOrWhiteSpace(userMessage) || string.IsNullOrWhiteSpace(aiResponse)) return;
+        if (!IsWorthConsolidating(userMessage, aiResponse)) return;
 
         var batch = _userBatches.GetOrAdd(userId, _ => new UserBatch());
         

@@ -130,34 +130,41 @@ public class AiPromptService
         await Task.WhenAll(memoriesTask, policiesTask, dbTask);
 
         var (skills, session, sessionMemoryContext) = await dbTask;
-        var memories = (await memoriesTask).Take(5);
+        var memories = (await memoriesTask).Take(5).ToList();
         var policies = await policiesTask;
+
+        // Skip policies for trivial short messages to reduce input token count.
+        bool isSubstantialPrompt = prompt.Length > 80 || prompt.Contains("```") ||
+            prompt.Contains('\n') || prompt.Contains("def ") || prompt.Contains("function ") ||
+            prompt.Contains("エラー") || prompt.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+            prompt.Contains("問題") || prompt.Contains("修正");
+
         var sb = new StringBuilder(GetSystemPromptTemplate("Default", "あなたは高度なAIアシスタントです。現在はソフトウェア開発プロジェクトのコンテキストで動作しています。"));
-        sb.Append(policies);
+        if (isSubstantialPrompt) sb.Append(policies);
         if (selectedAgent != null) sb.Append($"\n\n[現在のアクティブエージェント]:\n役割: {selectedAgent.RoleName}\n指示: {selectedAgent.SystemPrompt}");
-        if (session?.Project != null) { 
-            sb.Append($"\n\n[プロジェクト文脈]:\nプロジェクト名: {session.Project.Name}\nルートパス: {session.Project.RootPath}"); 
-            if (session.Project.Agents.Any(a => a.IsActive)) { 
-                sb.Append("\n\n[利用可能なエージェント役割]:\n"); 
-                foreach (var agent in session.Project.Agents.Where(a => a.IsActive).Take(3)) { 
-                    if (selectedAgent != null && agent.Id == selectedAgent.Id) continue; 
-                    sb.Append($"- {agent.RoleName}: {TruncateMessage(agent.SystemPrompt, 100)}\n"); 
-                } 
-            } 
+        if (session?.Project != null) {
+            sb.Append($"\n\n[プロジェクト文脈]:\nプロジェクト名: {session.Project.Name}\nルートパス: {session.Project.RootPath}");
+            if (session.Project.Agents.Any(a => a.IsActive)) {
+                sb.Append("\n\n[利用可能なエージェント役割]:\n");
+                foreach (var agent in session.Project.Agents.Where(a => a.IsActive).Take(3)) {
+                    if (selectedAgent != null && agent.Id == selectedAgent.Id) continue;
+                    sb.Append($"- {agent.RoleName}: {TruncateMessage(agent.SystemPrompt, 100)}\n");
+                }
+            }
         }
-        if (!string.IsNullOrEmpty(sessionMemoryContext)) sb.Append("\n\n" + sessionMemoryContext);
-        if (memories.Any()) { sb.Append("\n\n[ユーザーの既知情報・長期記憶]:\n"); foreach (var m in memories) sb.Append($"- {m.Content}\n"); }
+        if (!string.IsNullOrEmpty(sessionMemoryContext)) sb.Append("\n\n" + Truncate(sessionMemoryContext, 2000));
+        if (memories.Any()) { sb.Append("\n\n[ユーザーの既知情報・長期記憶]:\n"); foreach (var m in memories) sb.Append($"- {Truncate(m.Content, 300)}\n"); }
         if (skills.Any()) { sb.Append("\n\n[有效技能指示]:\n"); foreach (var s in skills) sb.Append($"- {s.Description}\n"); }
         if (chatSessionId.HasValue) sb.Append(GetSystemPromptTemplate("MemoryInstruction", "\n\n[MEMORY INSTRUCTION]: 重要な発見があれば \"MEMORY: key=value\" 形式で行末に出力してください。"));
         return sb.ToString();
     }
 
-    public async Task<(string History, int MessageId)> LoadHistoryAndMessageIdAsync(int? chatSessionId, int limit = 5)
+    public async Task<(string History, int MessageId)> LoadHistoryAndMessageIdAsync(int? chatSessionId, int limit = 20)
     {
         if (!chatSessionId.HasValue) return ("", 0);
         var msgs = await _db.Messages.Where(m => m.ChatSessionId == chatSessionId.Value).OrderByDescending(m => m.Timestamp).Take(limit).OrderBy(m => m.Timestamp).ToListAsync();
         if (!msgs.Any()) return ("", 0);
-        var sb = new StringBuilder("[会話履歴]:\n"); foreach (var m in msgs) sb.Append($"{(m.IsAi ? "Assistant" : "User")}: {TruncateMessage(m.Content, 500)}\n");
+        var sb = new StringBuilder("[会話履歴]:\n"); foreach (var m in msgs) sb.Append($"{(m.IsAi ? "Assistant" : "User")}: {TruncateMessage(m.Content, 2000)}\n");
         var latestUserMsgId = msgs.LastOrDefault(m => !m.IsAi)?.Id ?? 0; return (sb.ToString(), latestUserMsgId);
     }
 }
