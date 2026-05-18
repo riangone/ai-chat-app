@@ -30,7 +30,6 @@ public class PromptBuilder
         var skillsTask = depth == AiService.ContextDepth.Full ? _memorySearch.SearchSkillsAsync(prompt, userId, agentRole) : Task.FromResult(new List<Skill>());
 
         ChatSession? session = preloadedSession;
-        string sessionMemoryContext = "";
         if (chatSessionId.HasValue && session == null)
         {
             // In case not preloaded
