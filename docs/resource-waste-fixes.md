@@ -3,7 +3,7 @@
 文档日期：2026-05-17（最后更新：2026-05-17 第五轮优化后）  
 分析范围：全项目（`AiChatApp/` + `docs/`）  
 分析方式：自动静态代码分析  
-修复进度：**40/52 已修复，7 个新问题发现并修复**（共59条）
+修复进度：**50/52 已修复，7 个新问题发现并修复**（共59条）
 
 ---
 
@@ -24,7 +24,7 @@
 | 9 | ✅ | P1 | Token 浪费 | 全量策略文件注入：无论任务类型均加载所有 policy.md | `AiService.cs:1225` | 第六轮 |
 | 10 | ❌ | P1 | 性能 | CLI 进程开销：每次 AI 调用均通过 `Process.Start` 创建新进程 | `AiService.cs:1765` | — |
 | 11 | ❌ | P2 | 性能 | HTML 传输效率：后端直接返回渲染后的 HTML 块而非 JSON | `ChatEndpoints.cs` | — |
-| 12 | ❌ | P3 | 架构 | AiService 职责过重（God Class）：超 2000 行，耦合严重 | `AiService.cs` | — |
+| 12 | ⚠️ | P3 | 架构 | AiService 职责过重（God Class）：超 2000 行，耦合严重 | `AiService.cs` | 第七轮 |
 | 13 | ✅ | P1 | N+1 查询 | `StatsEndpoints` 缺失 `Include` — N+1 懒加载 | `StatsEndpoints.cs:26` | 第四轮 |
 | 14 | ✅ | P1 | N+1 查询 | Pipeline-logs 端点为每个 session 执行子查询 | `ProjectApiController.cs:123` | 第四轮 |
 | 15 | ✅ | P1 | 同步阻塞 | `GetMemoriesForUser` 同步 `Wait()` 阻塞线程池 | `MemoryFileService.cs:69-72` | 第六轮 |
@@ -33,7 +33,7 @@
 | 18 | ✅ | P1 | Token 浪费 | 每次 AI 调用注入全量上下文（记忆+会话+技能+策略+项目） | `AiService.cs:1027-1097` | 第六轮 |
 | 19 | ✅ | P1 | Token 浪费 | Pipeline 上下文二次累积，O(n²) token 增长 | `AiService.cs:306-308,392-393` | 第六轮 |
 | 20 | ⚠️ | P1 | Token 浪费 | 每条消息触发 `TryConsolidateAsync` 记忆合并（LLM 调用） | `ChatEndpoints.cs:303,329,450,567` | 第一轮 |
-| 21 | ⚠️ | P1 | Token 浪费 | 三语系统提示碎片（日/简中/繁中/英共 49 条重复） | `AiService.cs:42-90` | 第三轮 |
+| 21 | ✅ | P1 | Token 浪费 | 三语系统提示碎片（日/简中/繁中/英共 49 条重复） | `AiService.cs:42-90` | 第七轮 |
 | 22 | ✅ | P2 | Token 浪费 | ~170 行 tokenizer/前缀剥离启发式代码 | `AiService.cs:1202-1308,1630-1700` | 第六轮 |
 | 23 | ✅ | P2 | Token 浪费 | 每条对话首条消息都调用 AI 生成标题 | `ChatEndpoints.cs:307,332,433-448,550-566` | 第二轮 |
 | 24 | ✅ | P1 | 冗余代码 | Chat bubble HTML 在 3 处重复渲染 | `ChatEndpoints.cs:571-602`, `CliEndpoints.cs:117-133`, `index.html:534-548` | 第六轮 |
@@ -42,7 +42,7 @@
 | 27 | ✅ | P2 | 冗余代码 | `@` 图片处理逻辑在 vision 流 and CLI 调用中重复 | `AiService.cs:538-555,1954-1972` | 第六轮 |
 | 28 | ✅ | P2 | 冗余代码 | `ExtractJson` 方法在 2 个文件中重复 | `AiService.cs:1167-1173`, `EvalService.cs:85-91` | 第六轮 |
 | 29 | ✅ | P2 | 冗余代码 | "Load More" 按钮 HTML 重复 | `ChatEndpoints.cs:125-135,176-186` | 第六轮 |
-| 30 | ❌ | P2 | 冗余代码 | Provider 名字/颜色/逻辑分散在 3+ 处 | `HarnessEndpoints.cs:302-331,355-366,392` | — |
+| 30 | ✅ | P2 | 冗余代码 | Provider 名字/颜色/逻辑分散在 3+ 处 | `HarnessEndpoints.cs:302-331,355-366,392` | 第七轮 |
 | 31 | ✅ | P1 | 内存泄漏 | `MemoryGraphService._adjList` 无上限增长，永不释放 | `MemoryGraphService.cs:16` | 第六轮 |
 | 32 | ✅ | P1 | 内存泄漏 | `MemoryFileService._cache` 加载后永不刷新/释放 | `MemoryFileService.cs:12` | 第六轮 |
 | 33 | ✅ | P2 | 内存泄漏 | `SkillManagerService._systemCache` 和 `_userCache` 无上限 | `SkillManagerService.cs:13-14` | 第二轮 |
@@ -50,21 +50,21 @@
 | 35 | ⚠️ | P2 | 设计缺陷 | Fire-and-forget 任务 15+ 处（无错误处理） | 多处 | 第三轮 |
 | 36 | ✅ | P3 | 设计缺陷 | SSE keep-alive ping 用 `Task.Run` 实现循环 | `ChatEndpoints.cs:394-400,527-533` | 第六轮 |
 | 37 | ✅ | P2 | DB 浪费 | `HarnessEndpoints` `.Take(500).ToListAsync()` 再在 C# 中聚合 | `HarnessEndpoints.cs:274-276,580-582` | 第四轮 |
-| 38 | ❌ | P2 | 性能 | ReDoS 风险：Regex `<.*?>`, `.*?\n\n` 等 | `AiService.cs:1640-1646` | — |
+| 38 | ✅ | P2 | 性能 | ReDoS 风险：Regex `<.*?>`, `.*?\n\n` 等 | `AiService.cs:1640-1646` | 第七轮 |
 | 39 | ✅ | P2 | 性能 | JSON 被解析两次（ParseCliOutput 策略 1→策略 2） | `AiService.cs:2057-2091` | 第六轮 |
 | 40 | ✅ | P2 | 性能 | 静态可变缓存无同步保护（`_cachedPolicies = null` 竞态） | `AiService.cs:100,104` | 第五轮 |
 | 41 | ✅ | P2 | 性能 | Prompt 模板文件每次从磁盘读取，无缓存 | `PipelineLoaderService.cs:88-104` | 第五轮 |
 | 42 | ✅ | P2 | 性能 | `MemoryGraphService` 同步 `File.ReadAllText` 阻塞 | `MemoryGraphService.cs:33` | 第六轮 |
-| 43 | ❌ | P2 | 安全 | `UseStaticFiles()` 在认证中间件之前注册 | `Program.cs:17` | — |
+| 43 | ✅ | P2 | 安全 | `UseStaticFiles()` 在认证中间件之前注册 | `Program.cs:17` | 第七轮 |
 | 44 | ✅ | P3 | 安全 | `Project.CreatedAt` 用 `DateTime.Now`（非 UTC） | `Project.cs:17` | 第六轮 |
-| 45 | ❌ | P2 | 死代码 | `SkillLearningService.LearnFromInteractionAsync` 为空实现 | `SkillLearningService.cs:25-29` | — |
-| 46 | ❌ | P3 | 死代码 | `BuildHistoryBlockAsync` 定义未调用 | `AiService.cs:1104-1108` | — |
+| 45 | ✅ | P2 | 死代码 | `SkillLearningService.LearnFromInteractionAsync` 为空实现 | `SkillLearningService.cs:25-29` | 第七轮 |
+| 46 | ✅ | P3 | 死代码 | `BuildHistoryBlockAsync` 定义未调用 | `AiService.cs:1104-1108` | 第七轮 |
 | 47 | ✅ | P3 | 死代码 | `GetProjectIdFromPath` 废弃，始终返回 null | `FileWatcherService.cs:122-135` | 第六轮 |
-| 48 | ❌ | P3 | 死代码 | `PipelineLoaderService.GetNames` 无调用者 | `PipelineLoaderService.cs:80-86` | — |
+| 48 | ✅ | P3 | 死代码 | `PipelineLoaderService.GetNames` 无调用者 | `PipelineLoaderService.cs:80-86` | 第七轮 |
 | 49 | ✅ | P3 | 死代码 | `Skill.ExampleInput` 和 `Skill.SourceInteractionId` 声明未使用 | `Skill.cs:9,20` | 第六轮 |
-| 50 | ❌ | P3 | 死代码 | Frontend `applySuggestion`, `viewFile` 仅 console.log | `index.html:886-889,880-884` | — |
-| 51 | ❌ | P3 | 死代码 | test-project/ 和 test-project-2/ 已 Compile Remove 但仍存在 | `test-project/` | — |
-| 52 | ❌ | P3 | 死代码 | `test_multi_agent_flow.py` 等 Python 测试脚本 | `AiChatApp/` | — |
+| 50 | ✅ | P3 | 死代码 | Frontend `applySuggestion`, `viewFile` 仅 console.log | `index.html:886-889,880-884` | 第七轮 |
+| 51 | ✅ | P3 | 死代码 | test-project/ 和 test-project-2/ 已 Compile Remove 但仍存在 | `test-project/` | 第七轮 |
+| 52 | ✅ | P3 | 死代码 | `test_multi_agent_flow.py` 等 Python 测试脚本 | `AiChatApp/` | 第七轮 |
 
 ### 五轮优化中新发现并修复的问题
 
@@ -150,6 +150,19 @@
 - **#36** SSE 优化：简化 keep-alive ping 逻辑，移除零散的 `Task.Run` 轮询
 - **#5** `SearchSkillsAsync`：在数据库层根据 Agent 角色先行过滤，减少内存处理负担
 - **#44, #49, #47** 清理：`Project.CreatedAt` 统一为 UTC；移除 `Skill` 模型废弃字段；移除 `FileWatcherService` 失效代码
+
+### 第七轮（2026-05-17 23:58，commit `pending`）
+
+修复问题：**#12 (部分), #21, #30, #38, #43, #45, #46, #48, #50, #51, #52**
+
+- **#38** ReDoS 风险修复：为 `AiService.cs` 和 `HarnessEndpoints.cs` 中所有复杂的 `Regex` 操作添加了 1 秒超时限制
+- **#30** 提供商配置中心化：创建 `ProviderRegistry.cs`，统一管理模型名称规范化、颜色和 Token 配额，消除了多处重复的硬编码映射表
+- **#21** 系统提示碎片优化：创建 `LocalizationRegistry.cs`，将多语言提示碎片中心化管理，减少了 `AiService` 中的静态字符串负载
+- **#12** God Class 拆分（初步）：创建 `PromptBuilder.cs` 并迁移了部分提示词构建逻辑，开始减轻 `AiService` 的负担
+- **#45, #46, #48** 死代码移除：删除了 `LearnFromInteractionAsync`、`BuildHistoryBlockAsync` 和 `GetNames` 等从未被调用的方法
+- **#51, #52** 物理清理：删除了 `test-project/` 文件夹及多余的 Python 测试脚本，保持工作区整洁
+- **#50, #43** 体验与安全：改进了前端 `viewFile` 和 `applySuggestion` 的实际行为；确认了 `UseStaticFiles` 顺序已处于安全状态
+- **index.html**：清理了末尾重复的 ServiceWorker 注册脚本和闭合标签
 
 ---
 

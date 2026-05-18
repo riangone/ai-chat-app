@@ -77,14 +77,6 @@ public class PipelineLoaderService
         }
     }
 
-    public IReadOnlyList<string> GetNames()
-    {
-        lock (_lockObj)
-        {
-            return _cache.Keys.ToList().AsReadOnly();
-        }
-    }
-
     public async Task<string> GetPromptTemplateAsync(string templatePath)
     {
         if (string.IsNullOrEmpty(templatePath))

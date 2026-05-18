@@ -20,6 +20,30 @@ public class AiService
         if (string.IsNullOrEmpty(text) || text.Length <= maxChars) return text ?? "";
         return text[..maxChars] + "... [truncated]";
     }
+
+    private string ResolveImageReferences(string prompt, string? workingDirectory)
+    {
+        try
+        {
+            var workingDir = workingDirectory ?? Directory.GetCurrentDirectory();
+            var matches = Regex.Matches(prompt, @"(\b[\w\-\.]+\.(png|jpg|jpeg|webp|gif|bmp)\b)", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+            var result = prompt;
+            foreach (Match match in matches)
+            {
+                var fileName = match.Value;
+                if (!fileName.StartsWith("@"))
+                {
+                    var fullPath = Path.Combine(workingDir, fileName);
+                    if (File.Exists(fullPath))
+                    {
+                        result = result.Replace(fileName, "@" + fileName);
+                    }
+                }
+            }
+            return result;
+        }
+        catch { return prompt; }
+    }
     private readonly AppDbContext _db;
     private readonly MemorySearchService _memorySearch;
     private readonly SessionMemoryService _sessionMemory;
@@ -30,7 +54,6 @@ public class AiService
     private readonly ToolExecutorService _toolExecutor;
     private readonly EvalService _evalService;
     private readonly IConfiguration _config;
-    private SkillLearningService _skillLearning => _serviceProvider.GetRequiredService<SkillLearningService>();
 
     public record AgentDefinition(string Name, string DisplayName, string Description, string SystemPrompt);
     private record CliResult(string Output, string Model, int PromptTokens, int CompletionTokens, int TotalTokens);
@@ -47,55 +70,10 @@ public class AiService
         "[System]:", "[User]:", "[Assistant]:", "[Context]:", "[History]:", "[Prompt]:", "[Instructions]:"
     };
 
-    private static readonly string[] SystemPromptFragments = { 
-        "あなたは高度なAIアシスタントです", 
-        "你是高度进化的自主 AI 代理",
-        "你是高度進化的自主 AI 代理",
-        "現在はソフトウェア開発プロジェクトのコンテキストで動作しています",
-        "你目前运行在 AiChatApp 项目的上下文中",
-        "你目前運行在 AiChatApp 專案的上下文中",
-        "你是 Hyperion",
-        "专注于软件工程、系统架构 and 自动化开发任务",
-        "專注於軟體工程、系統架構 and 自動化開發任務",
-        "请始终以 Hyperion 的身份行事",
-        "請始終以 Hyperion 的身份行事",
-        "你不仅要提供代码",
-        "你不僅要提供代碼",
-        "理解项目的整体结构",
-        "理解專案的整體結構",
-        "根据需要自主规划 and 执行文件操作",
-        "根據需要自主規劃 and 執行文件操作",
-        "明确列出你执行的动作",
-        "明確列出你執行的動作",
-        "あなたはタスク分解の専門家",
-        "あなたは実装の専門家",
-        "あなたは評審の専門家",
-        "あなたは評価の専門家",
-        "你是评估专家",
-        "[MEMORY INSTRUCTION]",
-        "[会話履歴]:",
-        "[ユーザーの既知情報・長期記憶]:",
-        "[相关的长期记忆]:",
-        "重要な発見や制約があれば",
-        "重要的发现或约束",
-        "重要的發現或約束",
-        "MEMORY: key=value",
-        "[ENVIRONMENTAL POLICIES & CONSTRAINTS]:",
-        "[当前会话上下文]:",
-        "[プロジェクト文脈]:",
-        "[利用可能なエージェント役割]:",
-        "[有効なスキル指示]:",
-        "[追加スキル指示]:",
-        "当你与用户交流或执行任务时",
-        "當你與用戶交流或執行任務時",
-        "根据具体的实现或修改指令",
-        "根據具體的實現或修改指令",
-        "You are a highly capable AI assistant",
-        "You are currently operating in the context of a software development project",
-        "Always act as Hyperion",
-        "Focus on software engineering, system architecture, and automated development tasks",
-        "List the actions you take clearly"
-    };
+    private static readonly string[] SystemPromptFragments = LocalizationRegistry.UniversalFragments
+        .Concat(LocalizationRegistry.GetFragments("zh-CN"))
+        .Concat(LocalizationRegistry.GetFragments("ja"))
+        .ToArray();
 
     // Pre-computed HashSets for O(1) lookup — declared after the arrays they reference
     private static readonly HashSet<string> PromptPrefixSet =
@@ -168,9 +146,11 @@ public class AiService
 
         // Single Messages query for both history and messageId (was 2 separate queries)
         var (history, messageId) = await LoadHistoryAndMessageIdAsync(chatSessionId);
-        var systemPrompt = await BuildSystemPromptAsync(prompt, userId, chatSessionId, agent?.RoleName, agent, session);
-
+        
         string fullPrompt = string.IsNullOrEmpty(history) ? prompt : $"{history}\nUser: {prompt}";
+        fullPrompt = ResolveImageReferences(fullPrompt, workingDir);
+
+        var systemPrompt = await BuildSystemPromptAsync(fullPrompt, userId, chatSessionId, agent?.RoleName, agent, session);
         if (agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
 
         var sw = Stopwatch.StartNew();
@@ -194,6 +174,8 @@ public class AiService
         Func<string, string, Task>? onStepComplete = null)
     {
         var targetProvider = provider ?? DefaultProvider;
+        var workingDir = await GetProjectRootAsync(chatSessionId);
+        task = ResolveImageReferences(task, workingDir);
         var steps = new List<AgentStep>();
         List<AgentDefinition> agentsToRun = new();
         ChatSession? session = null;
@@ -354,9 +336,9 @@ public class AiService
                 // --- Quality Check (self-evaluation) ---
                 if (stage.RetryOnQualityFail && attempt < stage.MaxAttempts)
                 {
-                    var qaMatch = System.Text.RegularExpressions.Regex.Match(stageStep.Output, @"\[QUALITY_(OK|FAIL)\]");
+                    var qaMatch = System.Text.RegularExpressions.Regex.Match(stageStep.Output, @"\[QUALITY_(OK|FAIL)\]", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1));
                     bool qualityOk = qaMatch.Success && qaMatch.Groups[1].Value == "OK";
-                    stageStep.Output = System.Text.RegularExpressions.Regex.Replace(stageStep.Output, @"\s*\[QUALITY_(OK|FAIL)\]\s*", " ").Trim();
+                    stageStep.Output = System.Text.RegularExpressions.Regex.Replace(stageStep.Output, @"\s*\[QUALITY_(OK|FAIL)\]\s*", " ", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1)).Trim();
                     if (!qualityOk)
                     {
                         stageStep.WasAccepted = false;
@@ -542,25 +524,7 @@ public class AiService
             : $"{history}\nUser: {prompt}";
 
         // Pre-process prompt to add @ prefix to existing image files for Vision support
-        string processedPrompt = fullPrompt;
-        try
-        {
-            var workingDirForVision = workingDir ?? Directory.GetCurrentDirectory();
-            var matches = Regex.Matches(fullPrompt, @"(\b[\w\-\.]+\.(png|jpg|jpeg|webp|gif|bmp)\b)", RegexOptions.IgnoreCase);
-            foreach (Match match in matches)
-            {
-                var visionFileName = match.Value;
-                if (!visionFileName.StartsWith("@"))
-                {
-                    var fullPath = Path.Combine(workingDirForVision, visionFileName);
-                    if (File.Exists(fullPath))
-                    {
-                        processedPrompt = processedPrompt.Replace(visionFileName, "@" + visionFileName);
-                    }
-                }
-            }
-        }
-        catch { /* Ignore processing errors */ }
+        string processedPrompt = ResolveImageReferences(fullPrompt, workingDir);
 
         if (agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
 
@@ -1119,12 +1083,6 @@ public class AiService
         return content.Length <= maxLen ? content : content[..maxLen] + "...";
     }
 
-    private async Task<string> BuildHistoryBlockAsync(int? chatSessionId, int limit)
-    {
-        var (history, _) = await LoadHistoryAndMessageIdAsync(chatSessionId, limit);
-        return history;
-    }
-
     // Combines two formerly separate DB queries (history + latest user messageId) into one round-trip.
     private async Task<(string History, int MessageId)> LoadHistoryAndMessageIdAsync(int? chatSessionId, int limit = 5)
     {
@@ -1650,18 +1608,19 @@ public class AiService
         if (string.IsNullOrEmpty(text)) return text;
 
         var dynamicFrags = BuildDynamicFragments(systemPrompt, userPrompt);
+        var timeout = TimeSpan.FromSeconds(1);
 
         // 1. Strip echoed System:/User: prompt prefix (Multi-line heuristic)
         text = StripEchoedPromptPrefix(text, dynamicFrags);
 
         // 2. Remove XML-style thinking/thought tags
-        text = Regex.Replace(text, @"<(thinking|thought|thought_process)>.*?</\1>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
-        text = Regex.Replace(text, @"<(thinking|thought|thought_process)>.*", "", RegexOptions.Singleline | RegexOptions.IgnoreCase); // Handle unclosed tags
+        text = Regex.Replace(text, @"<(thinking|thought|thought_process)>.*?</\1>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase, timeout);
+        text = Regex.Replace(text, @"<(thinking|thought|thought_process)>.*", "", RegexOptions.Singleline | RegexOptions.IgnoreCase, timeout); // Handle unclosed tags
 
         // 3. Remove "Thought:" or "Thinking:" blocks
-        text = Regex.Replace(text, @"(^(Thought|Thinking|Reasoning):.*?\n\n)", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
-        text = Regex.Replace(text, @"\n\n(Thought|Thinking|Reasoning):.*?\n\n", "\n\n", RegexOptions.Singleline | RegexOptions.IgnoreCase);
-        text = Regex.Replace(text, @"(Thought|Thinking|Reasoning):.*?$", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"(^(Thought|Thinking|Reasoning):.*?\n\n)", "", RegexOptions.Singleline | RegexOptions.IgnoreCase, timeout);
+        text = Regex.Replace(text, @"\n\n(Thought|Thinking|Reasoning):.*?\n\n", "\n\n", RegexOptions.Singleline | RegexOptions.IgnoreCase, timeout);
+        text = Regex.Replace(text, @"(Thought|Thinking|Reasoning):.*?$", "", RegexOptions.Singleline | RegexOptions.IgnoreCase, timeout);
 
         // 4. Aggressively and repeatedly strip any leading system fragments or prefixes from the start
         bool changed;
@@ -1971,25 +1930,7 @@ public class AiService
     private async Task<CliResult> ExecuteCliAsync(string prompt, string provider, string? systemPrompt = null, string? workingDirectory = null, bool agentMode = false)
     {
         // Pre-process prompt to add @ prefix to existing image files for Vision support
-        string processedPrompt = prompt;
-        try
-        {
-            var workingDir = workingDirectory ?? Directory.GetCurrentDirectory();
-            var matches = Regex.Matches(prompt, @"(\b[\w\-\.]+\.(png|jpg|jpeg|webp|gif|bmp)\b)", RegexOptions.IgnoreCase);
-            foreach (Match match in matches)
-            {
-                var fileName = match.Value;
-                if (!fileName.StartsWith("@"))
-                {
-                    var fullPath = Path.Combine(workingDir, fileName);
-                    if (File.Exists(fullPath))
-                    {
-                        processedPrompt = processedPrompt.Replace(fileName, "@" + fileName);
-                    }
-                }
-            }
-        }
-        catch { /* Ignore processing errors */ }
+        string processedPrompt = ResolveImageReferences(prompt, workingDirectory);
 
         var processInfo = SetupProcessInfo(provider, workingDirectory, agentMode: agentMode);
 

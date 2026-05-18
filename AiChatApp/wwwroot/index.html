@@ -878,14 +878,22 @@ function handleSuggestionAction(command, payload) {
         }
 
         function viewFile(filePath) {
-            // Navigate to file manager or open file
-            switchMainTab(10); // Assuming file manager is tab 10
-            console.log('View file:', filePath);
+            // Find Files slide index
+            const filesSlide = document.getElementById('files-slide');
+            if (filesSlide) {
+                const index = Array.from(filesSlide.parentElement.children).indexOf(filesSlide);
+                if (index >= 0) switchMainTab(index);
+            }
+            browsePath(filePath);
         }
 
         function applySuggestion(message) {
-            console.log('Apply suggestion:', message);
-            // Implement suggestion application logic
+            const input = document.getElementById('chat-input');
+            if (input) {
+                input.value = message;
+                input.focus();
+                autoExpand(input);
+            }
         }
 
         // Initialize on page load
@@ -2202,15 +2210,6 @@ function handleSuggestionAction(command, payload) {
     <div hx-get="/components/modals.html" hx-trigger="load" hx-swap="outerHTML"></div>
 
     <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(() => {});
-        });
-      }
-    </script>
-</body>
-</html>
-<script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js').catch(() => {});

@@ -20,16 +20,8 @@ namespace AiChatApp.Services
         }
 
         /// <summary>
-        /// AIのインタラクション結果から学習し、スキルの統計を更新します。
-        /// </summary>
-        public Task LearnFromInteractionAsync(string taskDescription, string finalResult, List<AgentStep> steps, int userId)
-        {
-            // Placeholder: actual learning logic not yet implemented — return immediately to avoid scope/DB overhead
-            return Task.CompletedTask;
-        }
-
-        /// <summary>
         /// スキルの使用メトリクスを更新します。
+
         /// </summary>
         public async Task UpdateSkillMetricsAsync(int skillId, bool isUsed)
         {

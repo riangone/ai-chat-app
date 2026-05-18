@@ -4,6 +4,7 @@ using AiChatApp.Data;
 using AiChatApp.Models;
 using AiChatApp.Services;
 using Microsoft.EntityFrameworkCore;
+using AiChatApp.Services.Infrastructure;
 
 namespace AiChatApp.Endpoints;
 
@@ -298,71 +299,12 @@ public static class HarnessEndpoints
                 })
                 .ToListAsync();
 
-            // 辅助：标准化 provider 名称为显示名称
-            string NormalizeProvider(string provider, string? model = null) {
-                var p = provider.ToLower();
-                var m = model?.ToLower() ?? "";
-                
-                // If the provider is explicitly copilot, return Copilot
-                if (p.Contains("copilot")) return "Copilot";
-                
-                // If provider is gemini or model contains gemini
-                if (p.Contains("gemini") || m.Contains("gemini")) return "Gemini";
-                
-                // If it's claude or model contains claude/anthropic/sonnet/haiku
-                if (p.Contains("claude") || p.Contains("anthropic") || m.Contains("claude") || m.Contains("anthropic") || m.Contains("sonnet") || m.Contains("haiku") || m.Contains("opus")) return "Claude";
-                
-                // If it's codex
-                if (p.Contains("codex") || m.Contains("codex")) return "Codex";
-                
-                // If it's opencode
-                if (p.Contains("opencode") || p.Contains("open-code") || m.Contains("opencode") || m.Contains("open-code")) return "OpenCode";
-                
-                // If it's deepseek
-                if (p.Contains("deepseek") || m.Contains("deepseek")) return "DeepSeek";
-
-                // Special case for Copilot returning gpt-4 models but provider field being empty/incorrect
-                if (p.Contains("gh-copilot") || m.Contains("gpt-4") && p == "copilot") return "Copilot";
-
-                // If it's gpt/openai
-                if (p.Contains("gpt") || p.Contains("openai") || m.Contains("gpt-") || m.Contains("o1-") || m.Contains("o3-")) return "OpenAI";
-                
-                return "Other";
-            }
-
             // 确定每个 step 的显示名称
             string GetProviderDisplayName(AgentStep step, string sessionProvider) {
-                // 优先使用新的 Provider 字段，并同时参考 Model
-                return NormalizeProvider(
+                return ProviderRegistry.NormalizeProvider(
                     !string.IsNullOrEmpty(step.Provider) ? step.Provider : sessionProvider, 
                     step.Model
                 );
-            }
-
-            // 2. 提供商配额设定 (软配额) - 为每个请求的工具设定独立配额
-            var quotas = new Dictionary<string, long> {
-                { "Gemini", 10000000 },
-                { "Claude", 5000000 },
-                { "Codex", 2000000 },
-                { "Copilot", 2000000 },
-                { "OpenCode", 5000000 },
-                { "OpenAI", 2000000 },
-                { "DeepSeek", 20000000 },
-                { "Other", 1000000 }
-            };
-
-            // 3. UI 辅助逻辑
-            string GetColor(string provider) {
-                return provider switch {
-                    "Gemini" => "text-blue-400",
-                    "Claude" => "text-orange-400",
-                    "Codex" => "text-emerald-400",
-                    "Copilot" => "text-indigo-400",
-                    "OpenCode" => "text-yellow-400",
-                    "OpenAI" => "text-emerald-500",
-                    "DeepSeek" => "text-cyan-400",
-                    _ => "text-primary"
-                };
             }
 
             // 4. 聚合数据 — 使用 GetProviderDisplayName 判断 provider
@@ -389,11 +331,10 @@ public static class HarnessEndpoints
                 }).OrderByDescending(s => s.TotalTokens).ToList();
 
             // 5. 按提供商聚合 — 始终显示所有已知提供商（即使使用量为 0）
-            var allProviders = new[] { "Gemini", "Claude", "Codex", "Copilot", "OpenCode" };
             var usageByProvider = modelStats.GroupBy(s => s.Provider).ToDictionary(g => g.Key, g => g);
 
-            var providerStats = allProviders.Select(providerName => {
-                var quota = quotas.ContainsKey(providerName) ? quotas[providerName] : 1000000;
+            var providerStats = ProviderRegistry.AllProviders.Select(providerName => {
+                var quota = ProviderRegistry.Quotas.ContainsKey(providerName) ? ProviderRegistry.Quotas[providerName] : 1000000;
                 if (usageByProvider.TryGetValue(providerName, out var g)) {
                     var used = g.Sum(s => s.TotalTokens);
                     return new {
@@ -405,7 +346,7 @@ public static class HarnessEndpoints
                         AvgSuccess = g.Average(s => s.SuccessRate),
                         ModelCount = g.Count(),
                         TotalCalls = g.Sum(s => s.Count),
-                        Color = GetColor(providerName)
+                        Color = ProviderRegistry.GetColorClass(providerName)
                     };
                 }
                 // Provider exists in config but no usage yet
@@ -418,7 +359,7 @@ public static class HarnessEndpoints
                     AvgSuccess = 1.0,
                     ModelCount = 0,
                     TotalCalls = 0,
-                    Color = GetColor(providerName)
+                    Color = ProviderRegistry.GetColorClass(providerName)
                 };
             }).OrderByDescending(s => s.Used).ToList();
 
@@ -658,7 +599,7 @@ public static class HarnessEndpoints
             ";
 
             var rule = await ai.ExecuteCliDirectAsync(prompt, "claude");
-            rule = System.Text.RegularExpressions.Regex.Replace(rule, @"^```markdown\n|```$", "").Trim();
+            rule = System.Text.RegularExpressions.Regex.Replace(rule, @"^```markdown\n|```$", "", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1)).Trim();
             
             return Results.Ok(new { rule });
         }).DisableAntiforgery();
