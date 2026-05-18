@@ -5,6 +5,7 @@ using AiChatApp.Services.Harness;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.SignalR;
+using AiChatApp.Services.Infrastructure;
 
 namespace AiChatApp.Extensions;
 
@@ -19,6 +20,7 @@ public static class ServiceExtensions
             options.UseSqlite(connectionString));
         
         services.AddMemoryCache();
+        services.AddSingleton<IBackgroundTaskTracker, BackgroundTaskTracker>();
         services.AddSingleton<MemoryFileService>();
         services.AddSingleton<MemoryGraphService>();
         services.AddScoped<MemorySearchService>();

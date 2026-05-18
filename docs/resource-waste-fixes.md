@@ -5,6 +5,7 @@
 分析方式：自动静态代码分析  
 修复进度：**50/52 已修复，7 个新问题发现并修复**（共59条）
 
+
 ---
 
 ## 问题总览
@@ -32,7 +33,7 @@
 | 17 | ✅ | P1 | 磁盘 IO | 每次搜索重写所有匹配记忆文件以递增 AccessCount | `MemoryFileService.cs:170-197` | 第六轮 |
 | 18 | ✅ | P1 | Token 浪费 | 每次 AI 调用注入全量上下文（记忆+会话+技能+策略+项目） | `AiService.cs:1027-1097` | 第六轮 |
 | 19 | ✅ | P1 | Token 浪费 | Pipeline 上下文二次累积，O(n²) token 增长 | `AiService.cs:306-308,392-393` | 第六轮 |
-| 20 | ⚠️ | P1 | Token 浪费 | 每条消息触发 `TryConsolidateAsync` 记忆合并（LLM 调用） | `ChatEndpoints.cs:303,329,450,567` | 第一轮 |
+| 20 | ✅ | P1 | Token 浪费 | 每条消息触发 `TryConsolidateAsync` 记忆合并（LLM 调用） | `ChatEndpoints.cs:303,329,450,567` | 第七轮 |
 | 21 | ✅ | P1 | Token 浪费 | 三语系统提示碎片（日/简中/繁中/英共 49 条重复） | `AiService.cs:42-90` | 第七轮 |
 | 22 | ✅ | P2 | Token 浪费 | ~170 行 tokenizer/前缀剥离启发式代码 | `AiService.cs:1202-1308,1630-1700` | 第六轮 |
 | 23 | ✅ | P2 | Token 浪费 | 每条对话首条消息都调用 AI 生成标题 | `ChatEndpoints.cs:307,332,433-448,550-566` | 第二轮 |
@@ -47,7 +48,7 @@
 | 32 | ✅ | P1 | 内存泄漏 | `MemoryFileService._cache` 加载后永不刷新/释放 | `MemoryFileService.cs:12` | 第六轮 |
 | 33 | ✅ | P2 | 内存泄漏 | `SkillManagerService._systemCache` 和 `_userCache` 无上限 | `SkillManagerService.cs:13-14` | 第二轮 |
 | 34 | ✅ | P2 | 设计缺陷 | `FileWatcherService` 发消息到 `"user-all"` 组，无客户端加入 | `FileWatcherService.cs:97` | 第六轮 |
-| 35 | ⚠️ | P2 | 设计缺陷 | Fire-and-forget 任务 15+ 处（无错误处理） | 多处 | 第三轮 |
+| 35 | ✅ | P2 | 设计缺陷 | Fire-and-forget 任务 15+ 处（无错误处理） | 多处 | 第七轮 |
 | 36 | ✅ | P3 | 设计缺陷 | SSE keep-alive ping 用 `Task.Run` 实现循环 | `ChatEndpoints.cs:394-400,527-533` | 第六轮 |
 | 37 | ✅ | P2 | DB 浪费 | `HarnessEndpoints` `.Take(500).ToListAsync()` 再在 C# 中聚合 | `HarnessEndpoints.cs:274-276,580-582` | 第四轮 |
 | 38 | ✅ | P2 | 性能 | ReDoS 风险：Regex `<.*?>`, `.*?\n\n` 等 | `AiService.cs:1640-1646` | 第七轮 |
@@ -155,6 +156,8 @@
 
 修复问题：**#12 (部分), #21, #30, #38, #43, #45, #46, #48, #50, #51, #52**
 
+- **#20** 记忆整合批量化：重构了 `MemoryConsolidationService.cs`，从\"每条消息触发\"改为\"累积 5 条消息或 10 分钟\"后批量处理，显著降低 LLM 调用频率
+- **#35** 后台任务追踪：创建 `IBackgroundTaskTracker` 接口及其实现，统一管理所有 fire-and-forget 异步任务，并添加全局日志和错误捕获，消除静默失败
 - **#38** ReDoS 风险修复：为 `AiService.cs` 和 `HarnessEndpoints.cs` 中所有复杂的 `Regex` 操作添加了 1 秒超时限制
 - **#30** 提供商配置中心化：创建 `ProviderRegistry.cs`，统一管理模型名称规范化、颜色和 Token 配额，消除了多处重复的硬编码映射表
 - **#21** 系统提示碎片优化：创建 `LocalizationRegistry.cs`，将多语言提示碎片中心化管理，减少了 `AiService` 中的静态字符串负载

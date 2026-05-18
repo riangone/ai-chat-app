@@ -19,10 +19,17 @@ public class MemoryConsolidationService
         _logger = logger;
     }
 
-    // Per-user cooldown: each user triggers consolidation at most once per interval
-    private static readonly ConcurrentDictionary<int, DateTime> _lastConsolidationTime = new();
-    private static readonly TimeSpan ConsolidationMinInterval = TimeSpan.FromMinutes(5);
-    private const int MaxConsolidationLength = 800;
+    private class UserBatch
+    {
+        public List<string> Messages { get; } = new();
+        public DateTime LastTriggerTime { get; set; } = DateTime.UtcNow;
+        public readonly SemaphoreSlim Lock = new(1, 1);
+    }
+
+    private static readonly ConcurrentDictionary<int, UserBatch> _userBatches = new();
+    private const int TriggerBatchSize = 5;
+    private static readonly TimeSpan MaxWaitTime = TimeSpan.FromMinutes(10);
+    private const int MaxConsolidationLength = 1000;
 
     private static string Truncate(string text, int maxLength) =>
         text.Length <= maxLength ? text : text[..maxLength] + "…";
@@ -30,24 +37,41 @@ public class MemoryConsolidationService
     public async Task TryConsolidateAsync(string userMessage, string aiResponse, int userId)
     {
         if (string.IsNullOrWhiteSpace(userMessage) || string.IsNullOrWhiteSpace(aiResponse)) return;
-        if (userMessage.Length + aiResponse.Length < 100) return;
 
-        if (_lastConsolidationTime.TryGetValue(userId, out var last) &&
-            DateTime.UtcNow - last < ConsolidationMinInterval) return;
-        _lastConsolidationTime[userId] = DateTime.UtcNow;
+        var batch = _userBatches.GetOrAdd(userId, _ => new UserBatch());
+        
+        await batch.Lock.WaitAsync();
+        try
+        {
+            batch.Messages.Add($"User: {Truncate(userMessage, 400)}\nAssistant: {Truncate(aiResponse, 600)}");
 
-        var truncatedUser = Truncate(userMessage, MaxConsolidationLength);
-        var truncatedAi   = Truncate(aiResponse,  MaxConsolidationLength);
+            bool shouldTrigger = batch.Messages.Count >= TriggerBatchSize || 
+                                (DateTime.UtcNow - batch.LastTriggerTime > MaxWaitTime && batch.Messages.Any());
 
+            if (!shouldTrigger) return;
+
+            var conversationToProcess = string.Join("\n\n---\n\n", batch.Messages);
+            batch.Messages.Clear();
+            batch.LastTriggerTime = DateTime.UtcNow;
+
+            // Trigger actual consolidation
+            await PerformConsolidationAsync(conversationToProcess, userId);
+        }
+        finally
+        {
+            batch.Lock.Release();
+        }
+    }
+
+    private async Task PerformConsolidationAsync(string conversation, int userId)
+    {
         string extractionPrompt = $$"""
             Extract key facts, user preferences, and important information from the following conversation for long-term memory.
             Also, extract entities and their relationships to build a knowledge graph (mindmap).
-            Include things like name, interests, tech stack, goals, or specific decisions.
             If no new important information is found, return an empty array [].
 
-            CONVERSATION:
-            User: {{truncatedUser}}
-            Assistant: {{truncatedAi}}
+            CONVERSATION BATCH:
+            {{conversation}}
 
             OUTPUT FORMAT (JSON only):
             {
@@ -59,8 +83,7 @@ public class MemoryConsolidationService
 
         string provider = _aiService.DefaultProvider;
         string rawJson = await _aiService.ExecuteCliDirectAsync(extractionPrompt, provider);
-        _logger.LogDebug("[Memory] Raw {Provider} output ({Length} chars): {Preview}", provider, rawJson.Length, rawJson[..Math.Min(300, rawJson.Length)]);
-
+        
         string jsonPart = JsonUtils.ExtractJson(rawJson);
 
         try
@@ -68,19 +91,15 @@ public class MemoryConsolidationService
             var root = JsonSerializer.Deserialize<ConsolidationRoot>(jsonPart,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            if (root?.Memories == null || !root.Memories.Any())
-            {
-                _logger.LogDebug("[Memory] No items extracted.");
-                return;
-            }
+            if (root?.Memories == null || !root.Memories.Any()) return;
 
             var existingMemories = await _fileService.GetMemoriesForUserAsync(userId);
 
-            // O(1) lookup: index by normalised tag and by normalised content
-            var byTag     = existingMemories
+            var byTag = existingMemories
                 .Where(m => !string.IsNullOrWhiteSpace(m.Tags))
                 .GroupBy(m => m.Tags.ToLowerInvariant())
                 .ToDictionary(g => g.Key, g => g.First());
+            
             var byContent = existingMemories
                 .Where(m => !string.IsNullOrWhiteSpace(m.Content))
                 .GroupBy(m => m.Content.ToLowerInvariant())
@@ -99,14 +118,12 @@ public class MemoryConsolidationService
                     existing.LastAccessedAt = DateTime.UtcNow;
                     existing.RelevanceScore = Math.Min(100, existing.RelevanceScore + 5);
                     
-                    // Merge relations
                     if (item.Relations != null)
                     {
                         var currentRelations = existing.Relations?.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(r => r.Trim()) ?? Enumerable.Empty<string>();
                         var newRelations = currentRelations.Union(item.Relations).Distinct();
                         existing.Relations = string.Join(",", newRelations);
                     }
-
                     await _fileService.WriteAsync(existing);
                 }
                 else
@@ -124,16 +141,11 @@ public class MemoryConsolidationService
                     await _fileService.WriteAsync(memory);
                 }
             }
-
-            _logger.LogDebug("[Memory] Saved {Count} memory items for userId={UserId}", root.Memories.Count, userId);
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogWarning(ex, "[Memory] JSON parse error: {Message}", ex.Message);
+            _logger.LogInformation("[Memory] Batch consolidation completed for userId={UserId}, saved {Count} items.", userId, root.Memories.Count);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[Memory] Unexpected error: {Message}", ex.Message);
+            _logger.LogWarning(ex, "[Memory] Batch consolidation error: {Message}", ex.Message);
         }
     }
 

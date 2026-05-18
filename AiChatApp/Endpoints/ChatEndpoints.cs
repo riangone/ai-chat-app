@@ -275,7 +275,7 @@ public static class ChatEndpoints
         }).DisableAntiforgery();
 
         group.MapPost("/chat", async (HttpContext context, AppDbContext db, AiService ai, 
-            MemoryConsolidationService consolidation, ClaimsPrincipal user) => {
+            MemoryConsolidationService consolidation, IBackgroundTaskTracker tracker, ClaimsPrincipal user) => {
             var form = await context.Request.ReadFormAsync();
             var content = form["content"].ToString();
             if (string.IsNullOrWhiteSpace(content))
@@ -308,7 +308,7 @@ public static class ChatEndpoints
                 aMsg.Content = html;
                 aiResponse = html;
 
-                _ = Task.Run(() => consolidation.TryConsolidateAsync(content, html, userId));
+                tracker.FireAndForget(() => consolidation.TryConsolidateAsync(content, html, userId), "Memory Consolidation");
 
                 session.UpdatedAt = DateTime.UtcNow;
                 if (session.Title.StartsWith("New Chat") || session.Title == content[..Math.Min(content.Length, 20)] + (content.Length > 20 ? "..." : "")) {
@@ -334,7 +334,7 @@ public static class ChatEndpoints
                 var aMsg = new Message { ChatSessionId = session.Id, Content = aiResponse, IsAi = true, AgentName = agentName };
                 db.Messages.Add(aMsg);
 
-                _ = Task.Run(() => consolidation.TryConsolidateAsync(content, aiResponse, userId));
+                tracker.FireAndForget(() => consolidation.TryConsolidateAsync(content, aiResponse, userId), "Memory Consolidation");
 
                 session.UpdatedAt = DateTime.UtcNow;
                 if (session.Title.StartsWith("New Chat") || session.Title == content[..Math.Min(content.Length, 20)] + (content.Length > 20 ? "..." : "")) {
