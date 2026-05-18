@@ -94,14 +94,7 @@ public class FileWatcherService : BackgroundService
                 timestamp = DateTime.UtcNow
             };
 
-            await _hubContext.Clients.Group("user-all").SendAsync("FileChanged", message);
-            
-            // Also notify specific project groups based on file path
-            var projectId = GetProjectIdFromPath(filePath);
-            if (!string.IsNullOrEmpty(projectId))
-            {
-                await _hubContext.Clients.Group($"project-{projectId}").SendAsync("FileChanged", message);
-            }
+            await _hubContext.Clients.All.SendAsync("FileChanged", message);
         }
         catch (Exception ex)
         {
@@ -117,21 +110,6 @@ public class FileWatcherService : BackgroundService
     {
         var basePath = _configuration.GetValue<string>("FileWatcher:Path") ?? "/home/ubuntu/ws/ai-chat-app";
         return Path.GetRelativePath(basePath, fullPath);
-    }
-
-    private string? GetProjectIdFromPath(string filePath)
-    {
-        // Extract project ID from path - customize based on your project structure
-        // Example: /home/ubuntu/ws/ai-chat-app/projects/{projectId}/...
-        var segments = filePath.Split(Path.DirectorySeparatorChar);
-        for (int i = 0; i < segments.Length - 1; i++)
-        {
-            if (segments[i] == "projects" && i + 1 < segments.Length)
-            {
-                return segments[i + 1];
-            }
-        }
-        return null;
     }
 
     public override void Dispose()

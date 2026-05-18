@@ -7,11 +7,19 @@ using AiChatApp.Data;
 using AiChatApp.Models;
 using AiChatApp.Services.Harness;
 using Microsoft.EntityFrameworkCore;
+using AiChatApp.Services.Infrastructure;
 
 namespace AiChatApp.Services;
 
 public class AiService
 {
+    public enum ContextDepth { Light, Standard, Full }
+
+    private string Truncate(string? text, int maxChars)
+    {
+        if (string.IsNullOrEmpty(text) || text.Length <= maxChars) return text ?? "";
+        return text[..maxChars] + "... [truncated]";
+    }
     private readonly AppDbContext _db;
     private readonly MemorySearchService _memorySearch;
     private readonly SessionMemoryService _sessionMemory;
@@ -389,7 +397,7 @@ public class AiService
                 }
             }
 
-            contextFromPreviousStages += $"\n--- Stage: {stage.Name} ---\n{stageStep.Output}\n";
+            contextFromPreviousStages += $"\n--- Stage: {stage.Name} ---\n{Truncate(stageStep.Output, 2000)}\n";
             currentInput = stageStep.Output;
 
             if (stage.IsFinalStage) break;
@@ -994,14 +1002,14 @@ public class AiService
         }
     }
 
-    private async Task<string> LoadPoliciesAsync()
+    private async Task<string> LoadPoliciesAsync(string? category = null)
     {
-        if (_cachedPolicies != null) return _cachedPolicies;
+        if (_cachedPolicies != null && category == null) return _cachedPolicies;
 
         await _policiesCacheLock.WaitAsync();
         try
         {
-            if (_cachedPolicies != null) return _cachedPolicies;
+            if (_cachedPolicies != null && category == null) return _cachedPolicies;
 
             var path = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies");
             if (!Directory.Exists(path)) return _cachedPolicies = "";
@@ -1012,11 +1020,16 @@ public class AiService
             var sb = new StringBuilder("\n\n[ENVIRONMENTAL POLICIES & CONSTRAINTS]:\n");
             foreach (var file in files)
             {
+                var fileName = Path.GetFileNameWithoutExtension(file).ToLowerInvariant();
+                if (category != null && !fileName.Contains(category.ToLowerInvariant())) continue;
+
                 var content = await File.ReadAllTextAsync(file);
                 sb.Append($"--- Policy: {Path.GetFileNameWithoutExtension(file)} ---\n{content}\n");
             }
 
-            return _cachedPolicies = sb.ToString();
+            var result = sb.ToString();
+            if (category == null) _cachedPolicies = result;
+            return result;
         }
         finally
         {
@@ -1024,12 +1037,17 @@ public class AiService
         }
     }
 
-    private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int? chatSessionId, string? agentRole, AgentProfile? selectedAgent = null, ChatSession? preloadedSession = null)
+    private async Task<string> BuildSystemPromptAsync(string prompt, int userId, int? chatSessionId, string? agentRole, AgentProfile? selectedAgent = null, ChatSession? preloadedSession = null, ContextDepth depth = ContextDepth.Full)
     {
+        if (depth == ContextDepth.Light)
+        {
+            return GetSystemPromptTemplate(agentRole ?? "Assistant", "You are a helpful AI assistant.");
+        }
+
         // Fire file-based tasks immediately
-        var memoriesTask = _memorySearch.SearchAsync(prompt, userId);
-        var policiesTask = LoadPoliciesAsync();
-        var skillsTask = _memorySearch.SearchSkillsAsync(prompt, userId, agentRole);
+        var memoriesTask = depth == ContextDepth.Full ? _memorySearch.SearchAsync(prompt, userId) : Task.FromResult(new List<LongTermMemory>());
+        var policiesTask = depth == ContextDepth.Full ? LoadPoliciesAsync() : Task.FromResult("");
+        var skillsTask = depth == ContextDepth.Full ? _memorySearch.SearchSkillsAsync(prompt, userId, agentRole) : Task.FromResult(new List<Skill>());
 
         // Use pre-loaded session if provided; otherwise load from DB (avoids duplicate query when caller already has session)
         ChatSession? session = preloadedSession;
@@ -1890,6 +1908,8 @@ public class AiService
         {
             processInfo.ArgumentList.Add("-p");
             processInfo.ArgumentList.Add(""); // Headless mode, read from stdin
+            processInfo.ArgumentList.Add("--output-format");
+            processInfo.ArgumentList.Add(outputFormat ?? "json");
 
             if (provider == "claude" || fileName == "claude" || provider == "claudecode" || fileName == "claudecode")
             {
@@ -2055,7 +2075,7 @@ public class AiService
         Console.WriteLine($"[AiService] Parsing output from {provider} ({output.Length} chars).");
 
         // Strategy 1: Try parsing the ENTIRE output as a single JSON object (for pretty-printed outputs)
-        var fullJsonText = ExtractJson(output);
+        var fullJsonText = JsonUtils.ExtractJson(output);
         if (!string.IsNullOrEmpty(fullJsonText) && fullJsonText != "{}")
         {
             try
@@ -2075,7 +2095,7 @@ public class AiService
             var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             foreach (var line in lines)
             {
-                var jsonText = ExtractJson(line);
+                var jsonText = JsonUtils.ExtractJson(line);
                 if (string.IsNullOrEmpty(jsonText) || jsonText == "{}") continue;
 
                 try

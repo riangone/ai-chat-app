@@ -2,6 +2,7 @@ using AiChatApp.Models;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Text.Json;
+using AiChatApp.Services.Infrastructure;
 
 namespace AiChatApp.Services;
 
@@ -60,17 +61,7 @@ public class MemoryConsolidationService
         string rawJson = await _aiService.ExecuteCliDirectAsync(extractionPrompt, provider);
         _logger.LogDebug("[Memory] Raw {Provider} output ({Length} chars): {Preview}", provider, rawJson.Length, rawJson[..Math.Min(300, rawJson.Length)]);
 
-        rawJson = System.Text.RegularExpressions.Regex.Replace(rawJson, @"```(?:json)?\s*", "").Trim();
-
-        int start = rawJson.IndexOf('{');
-        int end = rawJson.LastIndexOf('}');
-        if (start < 0 || end < 0 || end <= start)
-        {
-            _logger.LogDebug("[Memory] No JSON object found. start={Start}, end={End}", start, end);
-            return;
-        }
-
-        string jsonPart = rawJson[start..(end + 1)];
+        string jsonPart = JsonUtils.ExtractJson(rawJson);
 
         try
         {
@@ -83,7 +74,7 @@ public class MemoryConsolidationService
                 return;
             }
 
-            var existingMemories = _fileService.GetMemoriesForUser(userId);
+            var existingMemories = await _fileService.GetMemoriesForUserAsync(userId);
 
             // O(1) lookup: index by normalised tag and by normalised content
             var byTag     = existingMemories

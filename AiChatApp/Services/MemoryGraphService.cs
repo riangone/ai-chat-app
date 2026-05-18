@@ -1,5 +1,6 @@
 using AiChatApp.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Caching.Memory;
 using System.Collections.Concurrent;
 
 namespace AiChatApp.Services;
@@ -11,27 +12,42 @@ public class MemoryGraphService
 {
     private readonly MemoryFileService _fileService;
     private readonly ILogger<MemoryGraphService> _logger;
+    private readonly IMemoryCache _cache;
 
-    // グラフ構造: Entity -> List of related Memory IDs/FileNames
-    private readonly ConcurrentDictionary<string, HashSet<string>> _adjList = new(StringComparer.OrdinalIgnoreCase);
-    private DateTime _lastBuildTime = DateTime.MinValue;
+    // グラフ構造をユーザーごとにキャッシュする (TTL: 10分)
+    private class UserGraph
+    {
+        public ConcurrentDictionary<string, HashSet<string>> AdjList { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public DateTime LastBuildTime { get; set; } = DateTime.MinValue;
+    }
 
-    public MemoryGraphService(MemoryFileService fileService, ILogger<MemoryGraphService> logger)
+    public MemoryGraphService(MemoryFileService fileService, ILogger<MemoryGraphService> logger, IMemoryCache cache)
     {
         _fileService = fileService;
         _logger = logger;
+        _cache = cache;
+    }
+
+    private UserGraph GetUserGraph(int userId)
+    {
+        return _cache.GetOrCreate($"graph_{userId}", entry =>
+        {
+            entry.SlidingExpiration = TimeSpan.FromMinutes(10);
+            return new UserGraph();
+        })!;
     }
 
     /// <summary>
     /// 全ての記憶ファイルから関係性をスキャンし、メモリ内グラフを構築する。
     /// 最後に構築してから1分以内であればキャッシュを再利用する。
     /// </summary>
-    public void BuildGraph(int userId, bool force = false)
+    public async Task BuildGraphAsync(int userId, bool force = false)
     {
-        if (!force && DateTime.UtcNow - _lastBuildTime < TimeSpan.FromMinutes(1)) return;
+        var graph = GetUserGraph(userId);
+        if (!force && DateTime.UtcNow - graph.LastBuildTime < TimeSpan.FromMinutes(1)) return;
 
-        var memories = _fileService.GetMemoriesForUser(userId);
-        _adjList.Clear();
+        var memories = await _fileService.GetMemoriesForUserAsync(userId);
+        graph.AdjList.Clear();
 
         foreach (var mem in memories)
         {
@@ -43,7 +59,7 @@ public class MemoryGraphService
 
             foreach (var entity in entities)
             {
-                _adjList.AddOrUpdate(entity, 
+                graph.AdjList.AddOrUpdate(entity, 
                     _ => new HashSet<string> { mem.SourceFile },
                     (_, set) => { set.Add(mem.SourceFile); return set; });
                 
@@ -52,23 +68,24 @@ public class MemoryGraphService
                     .Where(IsValidEntity);
                 foreach (var tag in tags)
                 {
-                     _adjList.AddOrUpdate(tag, 
+                     graph.AdjList.AddOrUpdate(tag, 
                         _ => new HashSet<string> { mem.SourceFile },
                         (_, set) => { set.Add(mem.SourceFile); return set; });
                 }
             }
         }
-        _lastBuildTime = DateTime.UtcNow;
-        _logger.LogInformation("[MemoryGraph] Graph built with {Count} entities.", _adjList.Count);
+        graph.LastBuildTime = DateTime.UtcNow;
+        _logger.LogInformation("[MemoryGraph] Graph built for user {UserId} with {Count} entities.", userId, graph.AdjList.Count);
     }
 
     /// <summary>
     /// 指定された記憶に関連する他の記憶を探索する（1ステップ）。
     /// </summary>
-    public List<LongTermMemory> GetRelatedMemories(LongTermMemory seed, int userId, int limit = 3)
+    public async Task<List<LongTermMemory>> GetRelatedMemoriesAsync(LongTermMemory seed, int userId, int limit = 3)
     {
         if (string.IsNullOrEmpty(seed.Relations) && string.IsNullOrEmpty(seed.Tags)) return [];
 
+        var graph = GetUserGraph(userId);
         var relatedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var entities = (seed.Relations ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Union(seed.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries))
@@ -76,7 +93,7 @@ public class MemoryGraphService
 
         foreach (var entity in entities)
         {
-            if (_adjList.TryGetValue(entity, out var files))
+            if (graph.AdjList.TryGetValue(entity, out var files))
             {
                 foreach (var f in files)
                 {
@@ -85,7 +102,7 @@ public class MemoryGraphService
             }
         }
 
-        var allMemories = _fileService.GetMemoriesForUser(userId);
+        var allMemories = await _fileService.GetMemoriesForUserAsync(userId);
         return allMemories
             .Where(m => m.SourceFile != null && relatedFiles.Contains(m.SourceFile))
             .Take(limit)
@@ -96,9 +113,9 @@ public class MemoryGraphService
 /// 前端表示用のMermaidグラフ形式を生成する。
 /// 支持分级加载和展开（Hierarchical Drill-Down）。
 /// </summary>
-public string GenerateMermaidGraph(int userId, string? rootId = null, int depth = 1, string? collapsedIds = null)
+public async Task<string> GenerateMermaidGraphAsync(int userId, string? rootId = null, int depth = 1, string? collapsedIds = null)
 {
-    var memories = _fileService.GetMemoriesForUser(userId);
+    var memories = await _fileService.GetMemoriesForUserAsync(userId);
     if (!memories.Any())
     {
         return "graph TD\n  no_mem[\"No memories found yet. Start chatting to build your knowledge map!\"]";

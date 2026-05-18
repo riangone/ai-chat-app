@@ -6,11 +6,12 @@ namespace AiChatApp.Services;
 /// <summary>
 /// mdファイルを唯一の記憶ストアとして管理する。DBは使用しない。
 /// </summary>
-public class MemoryFileService
+public class MemoryFileService : IDisposable
 {
     private readonly string _memoryDir;
     private List<LongTermMemory>? _cache;
     private readonly SemaphoreSlim _cacheLock = new(1, 1);
+    private readonly FileSystemWatcher? _watcher;
 
     public MemoryFileService(IConfiguration config)
     {
@@ -27,6 +28,34 @@ public class MemoryFileService
 
         _memoryDir = dir.Replace("~/", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + "/");
         Directory.CreateDirectory(_memoryDir);
+
+        try
+        {
+            _watcher = new FileSystemWatcher(_memoryDir, "*.md")
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.CreationTime,
+                EnableRaisingEvents = true
+            };
+            _watcher.Changed += OnFileChanged;
+            _watcher.Created += OnFileChanged;
+            _watcher.Deleted += OnFileChanged;
+            _watcher.Renamed += OnFileChanged;
+        }
+        catch { /* Watcher might fail in some environments */ }
+    }
+
+    private void OnFileChanged(object sender, FileSystemEventArgs e)
+    {
+        if (e.Name?.Equals("MEMORY.md", StringComparison.OrdinalIgnoreCase) == true) return;
+        _cacheLock.Wait();
+        try
+        {
+            _cache = null; // Invalidate cache
+        }
+        finally
+        {
+            _cacheLock.Release();
+        }
     }
 
     private async Task EnsureCacheLoadedAsync()
@@ -44,7 +73,7 @@ public class MemoryFileService
                     var fileName = Path.GetFileName(filePath);
                     if (fileName.Equals("MEMORY.md", StringComparison.OrdinalIgnoreCase)) continue;
 
-                    var mem = ParseFile(filePath);
+                    var mem = await ParseFileAsync(filePath);
                     if (mem != null) result.Add(mem);
                 }
             }
@@ -61,42 +90,20 @@ public class MemoryFileService
     // ─── 読み込み ───────────────────────────────────────────────────────────
 
     /// <summary>指定ユーザーの記憶を全件返す。userId=0のファイルは全ユーザーに共有。</summary>
-    public List<LongTermMemory> GetMemoriesForUser(int userId)
+    public async Task<List<LongTermMemory>> GetMemoriesForUserAsync(int userId)
     {
-        // 同期版はキャッシュがある前提か、あるいはロックなしでロード（Singletonなので起動時などにロードされるのが理想）
-        if (_cache == null)
-        {
-            // 同期的にロード（苦肉の策）
-            _cacheLock.Wait();
-            try { if (_cache == null) _cache = LoadAllFromDisk(); }
-            finally { _cacheLock.Release(); }
-        }
+        await EnsureCacheLoadedAsync();
 
-        return [.. _cache
+        return _cache!
             .Where(m => m.UserId == 0 || m.UserId == userId)
-            .OrderByDescending(m => m.CreatedAt)];
-    }
-
-    private List<LongTermMemory> LoadAllFromDisk()
-    {
-        var result = new List<LongTermMemory>();
-        if (!Directory.Exists(_memoryDir)) return result;
-
-        foreach (var filePath in Directory.GetFiles(_memoryDir, "*.md"))
-        {
-            var fileName = Path.GetFileName(filePath);
-            if (fileName.Equals("MEMORY.md", StringComparison.OrdinalIgnoreCase)) continue;
-            var mem = ParseFile(filePath);
-            if (mem != null) result.Add(mem);
-        }
-        return result;
+            .OrderByDescending(m => m.CreatedAt)
+            .ToList();
     }
 
     /// <summary>プロンプトに関連する記憶を多段スコアリングで検索する。</summary>
     public async Task<List<LongTermMemory>> SearchAsync(string prompt, int userId, int maxResults = 5)
     {
-        await EnsureCacheLoadedAsync();
-        var all = GetMemoriesForUser(userId).Where(m => m.RelevanceScore > 20).ToList();
+        var all = (await GetMemoriesForUserAsync(userId)).Where(m => m.RelevanceScore > 20).ToList();
 
         // 单词分割（主要针对英文）
         var wordTokens = prompt
@@ -166,36 +173,12 @@ public class MemoryFileService
             scored = fallback;
         }
 
-        // アクセス数をファイルに更新（一括更新し、インデックス更新は最後に1回だけ行う）
+        // アクセス数をキャッシュのみ更新（ディスクIO削減）
         foreach (var x in scored)
         {
             x.Memory.AccessCount++;
             x.Memory.LastAccessedAt = DateTime.UtcNow;
-            
-            // ファイル書き込みのみ行う（RefreshIndexAsyncを呼ばない内部メソッドがあれば理想だが、
-            // ここでは直接書き込みロジックを回すか、WriteAsyncの引数で制御する）
-            var fileName = x.Memory.SourceFile ?? GenerateFileName(x.Memory.Tags);
-            var filePath = Path.Combine(_memoryDir, fileName);
-            var shortDesc = x.Memory.Content.Length > 80 ? x.Memory.Content[..80] + "..." : x.Memory.Content;
-            var fm = $"""
-                ---
-                name: {x.Memory.Tags}
-                description: {shortDesc}
-                type: user
-                userId: {x.Memory.UserId}
-                tags: {x.Memory.Tags}
-                relations: {x.Memory.Relations}
-                relevanceScore: {x.Memory.RelevanceScore}
-                accessCount: {x.Memory.AccessCount}
-                createdAt: {x.Memory.CreatedAt:O}
-                lastAccessedAt: {x.Memory.LastAccessedAt:O}
-                ---
-
-                {x.Memory.Content}
-                """;
-            await File.WriteAllTextAsync(filePath, fm);
         }
-        await RefreshIndexAsync();
 
         return scored.Select(x => x.Memory).ToList();
     }
@@ -250,21 +233,24 @@ public class MemoryFileService
 
     // ─── 削除 ───────────────────────────────────────────────────────────────
 
-    public void DeleteByFileName(string safeFileName)
+    public async Task DeleteByFileNameAsync(string safeFileName)
     {
         if (safeFileName.Contains('/') || safeFileName.Contains('\\') || safeFileName.Contains("..")) return;
         var path = Path.Combine(_memoryDir, safeFileName);
         if (File.Exists(path)) File.Delete(path);
 
         // キャッシュから削除
-        if (_cache != null)
+        await _cacheLock.WaitAsync();
+        try
         {
-            _cacheLock.Wait();
-            try { _cache.RemoveAll(m => m.SourceFile == safeFileName); }
-            finally { _cacheLock.Release(); }
+            _cache?.RemoveAll(m => m.SourceFile == safeFileName);
+        }
+        finally
+        {
+            _cacheLock.Release();
         }
 
-        _ = RefreshIndexAsync();
+        await RefreshIndexAsync();
     }
 
     // ─── ファイル名生成 ──────────────────────────────────────────────────────
@@ -279,13 +265,11 @@ public class MemoryFileService
 
     // ─── パース ──────────────────────────────────────────────────────────────
 
-    public LongTermMemory? ParseFile(string filePath)
+    public async Task<LongTermMemory?> ParseFileAsync(string filePath)
     {
         try
         {
-            // ParseFile is often called during initial load or for single files,
-            // we keep it working with File.ReadAllText but minimize its calls.
-            var text = File.ReadAllText(filePath);
+            var text = await File.ReadAllTextAsync(filePath);
             var match = Regex.Match(text, @"^---\s*\n(.*?)\n---\s*\n?(.*)", RegexOptions.Singleline);
 
             string fm = "", body = text.Trim();
@@ -347,5 +331,11 @@ public class MemoryFileService
         }
 
         await File.WriteAllTextAsync(indexPath, string.Join("\n", lines) + "\n");
+    }
+
+    public void Dispose()
+    {
+        _watcher?.Dispose();
+        _cacheLock?.Dispose();
     }
 }

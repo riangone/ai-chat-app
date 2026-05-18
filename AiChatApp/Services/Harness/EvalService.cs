@@ -2,6 +2,7 @@ using System.Text.Json;
 using AiChatApp.Data;
 using AiChatApp.Models.Harness;
 using Microsoft.Extensions.Logging;
+using AiChatApp.Services.Infrastructure;
 
 namespace AiChatApp.Services.Harness;
 
@@ -50,7 +51,7 @@ public class EvalService
 
             try
             {
-                var resultDoc = JsonDocument.Parse(ExtractJson(evalResultJson));
+                var resultDoc = JsonDocument.Parse(JsonUtils.ExtractJson(evalResultJson));
                 foreach (var criterion in new[] { "Accuracy", "Safety", "Format", "Helpfulness" })
                 {
                     if (resultDoc.RootElement.TryGetProperty(criterion, out var criterionEval) &&
@@ -80,13 +81,5 @@ public class EvalService
         {
             _logger.LogError($"Error in EvaluateStepAsync: {ex.Message}");
         }
-    }
-
-    private static string ExtractJson(string text)
-    {
-        int start = text.IndexOf('{');
-        int end = text.LastIndexOf('}');
-        if (start >= 0 && end > start) return text[start..(end + 1)];
-        return "{}";
     }
 }

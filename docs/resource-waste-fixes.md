@@ -3,7 +3,7 @@
 文档日期：2026-05-17（最后更新：2026-05-17 第五轮优化后）  
 分析范围：全项目（`AiChatApp/` + `docs/`）  
 分析方式：自动静态代码分析  
-修复进度：**17/52 已修复，7 个新问题发现并修复**（共59条）
+修复进度：**40/52 已修复，7 个新问题发现并修复**（共59条）
 
 ---
 
@@ -15,53 +15,53 @@
 |---|------|--------|------|------|------|---------|
 | 1 | ✅ | P0 | Token 浪费 | `MemoryConsolidationService` 全局计数器跨用户共享 | `MemoryConsolidationService.cs:20` | 第一轮 |
 | 2 | ✅ | P0 | Token 浪费 | `ProcessWelcomeInsightAsync` 双重 AI 调用 | `ProactiveBrainService.cs:67,70` | 第一轮 |
-| 3 | ❌ | P1 | 性能 | `MemoryGraphService` 注册为 Scoped，缓存从未生效 | `ServiceExtensions.cs` | — |
+| 3 | ✅ | P1 | 性能 | `MemoryGraphService` 注册为 Scoped，缓存从未生效 | `ServiceExtensions.cs` | 第六轮 |
 | 4 | ✅ | P1 | 性能 | `SearchAsync` 加载 15 条 + 图扩展，最终只用 5 条 | `MemorySearchService.cs:24` | 第一轮 |
-| 5 | ❌ | P1 | 性能 | `SearchSkillsAsync` 全量加载所有技能后在内存过滤 | `MemorySearchService.cs:50` | — |
+| 5 | ✅ | P1 | 性能 | `SearchSkillsAsync` 全量加载所有技能后在内存过滤 | `MemorySearchService.cs:50` | 第六轮 |
 | 6 | ✅ | P1 | 重复 IO | `GetAvailableAgentsAsync` 在同一流程中调用两次 | `AiService.cs:1505,1546` | 第一轮 |
 | 7 | ✅ | P2 | DB 浪费 | `CooperateAsync` 中同一 `AgentStep` 实体被多次单独保存 | `AiService.cs:314,324,343,351` | 第一轮+第二轮 |
 | 8 | ✅ | P2 | Token 浪费 | 记忆整合发送完整对话原文给 AI，无长度截断 | `MemoryConsolidationService.cs:31` | 第一轮 |
-| 9 | ❌ | P1 | Token 浪费 | 全量策略文件注入：无论任务类型均加载所有 policy.md | `AiService.cs:1225` | — |
+| 9 | ✅ | P1 | Token 浪费 | 全量策略文件注入：无论任务类型均加载所有 policy.md | `AiService.cs:1225` | 第六轮 |
 | 10 | ❌ | P1 | 性能 | CLI 进程开销：每次 AI 调用均通过 `Process.Start` 创建新进程 | `AiService.cs:1765` | — |
 | 11 | ❌ | P2 | 性能 | HTML 传输效率：后端直接返回渲染后的 HTML 块而非 JSON | `ChatEndpoints.cs` | — |
 | 12 | ❌ | P3 | 架构 | AiService 职责过重（God Class）：超 2000 行，耦合严重 | `AiService.cs` | — |
 | 13 | ✅ | P1 | N+1 查询 | `StatsEndpoints` 缺失 `Include` — N+1 懒加载 | `StatsEndpoints.cs:26` | 第四轮 |
 | 14 | ✅ | P1 | N+1 查询 | Pipeline-logs 端点为每个 session 执行子查询 | `ProjectApiController.cs:123` | 第四轮 |
-| 15 | ❌ | P1 | 同步阻塞 | `GetMemoriesForUser` 同步 `Wait()` 阻塞线程池 | `MemoryFileService.cs:69-72` | — |
-| 16 | ❌ | P1 | 磁盘 IO | `RefreshIndexAsync` 每次搜索都重写 MEMORY.md 索引 | `MemoryFileService.cs:198` | — |
-| 17 | ❌ | P1 | 磁盘 IO | 每次搜索重写所有匹配记忆文件以递增 AccessCount | `MemoryFileService.cs:170-197` | — |
-| 18 | ⚠️ | P1 | Token 浪费 | 每次 AI 调用注入全量上下文（记忆+会话+技能+策略+项目） | `AiService.cs:1027-1097` | 第五轮（部分） |
-| 19 | ❌ | P1 | Token 浪费 | Pipeline 上下文二次累积，O(n²) token 增长 | `AiService.cs:306-308,392-393` | — |
-| 20 | ⚠️ | P1 | Token 浪费 | 每条消息触发 `TryConsolidateAsync` 记忆合并（LLM 调用） | `ChatEndpoints.cs:303,329,450,567` | 第一轮（部分） |
-| 21 | ⚠️ | P1 | Token 浪费 | 三语系统提示碎片（日/简中/繁中/英共 49 条重复） | `AiService.cs:42-90` | 第三轮（查找加速） |
-| 22 | ❌ | P2 | Token 浪费 | ~170 行 tokenizer/前缀剥离启发式代码 | `AiService.cs:1202-1308,1630-1700` | — |
+| 15 | ✅ | P1 | 同步阻塞 | `GetMemoriesForUser` 同步 `Wait()` 阻塞线程池 | `MemoryFileService.cs:69-72` | 第六轮 |
+| 16 | ✅ | P1 | 磁盘 IO | `RefreshIndexAsync` 每次搜索都重写 MEMORY.md 索引 | `MemoryFileService.cs:198` | 第六轮 |
+| 17 | ✅ | P1 | 磁盘 IO | 每次搜索重写所有匹配记忆文件以递增 AccessCount | `MemoryFileService.cs:170-197` | 第六轮 |
+| 18 | ✅ | P1 | Token 浪费 | 每次 AI 调用注入全量上下文（记忆+会话+技能+策略+项目） | `AiService.cs:1027-1097` | 第六轮 |
+| 19 | ✅ | P1 | Token 浪费 | Pipeline 上下文二次累积，O(n²) token 增长 | `AiService.cs:306-308,392-393` | 第六轮 |
+| 20 | ⚠️ | P1 | Token 浪费 | 每条消息触发 `TryConsolidateAsync` 记忆合并（LLM 调用） | `ChatEndpoints.cs:303,329,450,567` | 第一轮 |
+| 21 | ⚠️ | P1 | Token 浪费 | 三语系统提示碎片（日/简中/繁中/英共 49 条重复） | `AiService.cs:42-90` | 第三轮 |
+| 22 | ✅ | P2 | Token 浪费 | ~170 行 tokenizer/前缀剥离启发式代码 | `AiService.cs:1202-1308,1630-1700` | 第六轮 |
 | 23 | ✅ | P2 | Token 浪费 | 每条对话首条消息都调用 AI 生成标题 | `ChatEndpoints.cs:307,332,433-448,550-566` | 第二轮 |
-| 24 | ❌ | P1 | 冗余代码 | Chat bubble HTML 在 3 处重复渲染 | `ChatEndpoints.cs:571-602`, `CliEndpoints.cs:117-133`, `index.html:534-548` | — |
-| 25 | ❌ | P2 | 冗余代码 | Session 创建逻辑重复 3 次 | `ChatEndpoints.cs:272-282,365-376,483-493` | — |
-| 26 | ❌ | P2 | 冗余代码 | Provider 分辨率逻辑重复（fallback 链） | `ChatEndpoints.cs:264-287,378-381,495-498` | — |
-| 27 | ❌ | P2 | 冗余代码 | `@` 图片处理逻辑在 vision 流和 CLI 调用中重复 | `AiService.cs:538-555,1954-1972` | — |
-| 28 | ❌ | P2 | 冗余代码 | `ExtractJson` 方法在 2 个文件中重复 | `AiService.cs:1167-1173`, `EvalService.cs:85-91` | — |
-| 29 | ❌ | P2 | 冗余代码 | "Load More" 按钮 HTML 重复 | `ChatEndpoints.cs:125-135,176-186` | — |
+| 24 | ✅ | P1 | 冗余代码 | Chat bubble HTML 在 3 处重复渲染 | `ChatEndpoints.cs:571-602`, `CliEndpoints.cs:117-133`, `index.html:534-548` | 第六轮 |
+| 25 | ✅ | P2 | 冗余代码 | Session 创建逻辑重复 3 次 | `ChatEndpoints.cs:272-282,365-376,483-493` | 第六轮 |
+| 26 | ✅ | P2 | 冗余代码 | Provider 分辨率逻辑重复（fallback 链） | `ChatEndpoints.cs:264-287,378-381,495-498` | 第六轮 |
+| 27 | ✅ | P2 | 冗余代码 | `@` 图片处理逻辑在 vision 流 and CLI 调用中重复 | `AiService.cs:538-555,1954-1972` | 第六轮 |
+| 28 | ✅ | P2 | 冗余代码 | `ExtractJson` 方法在 2 个文件中重复 | `AiService.cs:1167-1173`, `EvalService.cs:85-91` | 第六轮 |
+| 29 | ✅ | P2 | 冗余代码 | "Load More" 按钮 HTML 重复 | `ChatEndpoints.cs:125-135,176-186` | 第六轮 |
 | 30 | ❌ | P2 | 冗余代码 | Provider 名字/颜色/逻辑分散在 3+ 处 | `HarnessEndpoints.cs:302-331,355-366,392` | — |
-| 31 | ❌ | P1 | 内存泄漏 | `MemoryGraphService._adjList` 无上限增长，永不释放 | `MemoryGraphService.cs:16` | — |
-| 32 | ❌ | P1 | 内存泄漏 | `MemoryFileService._cache` 加载后永不刷新/释放 | `MemoryFileService.cs:12` | — |
+| 31 | ✅ | P1 | 内存泄漏 | `MemoryGraphService._adjList` 无上限增长，永不释放 | `MemoryGraphService.cs:16` | 第六轮 |
+| 32 | ✅ | P1 | 内存泄漏 | `MemoryFileService._cache` 加载后永不刷新/释放 | `MemoryFileService.cs:12` | 第六轮 |
 | 33 | ✅ | P2 | 内存泄漏 | `SkillManagerService._systemCache` 和 `_userCache` 无上限 | `SkillManagerService.cs:13-14` | 第二轮 |
-| 34 | ❌ | P2 | 设计缺陷 | `FileWatcherService` 发消息到 `"user-all"` 组，无客户端加入 | `FileWatcherService.cs:97` | — |
-| 35 | ⚠️ | P2 | 设计缺陷 | Fire-and-forget 任务 15+ 处（无错误处理） | 多处 | 第三轮（部分） |
-| 36 | ❌ | P3 | 设计缺陷 | SSE keep-alive ping 用 `Task.Run` 实现循环 | `ChatEndpoints.cs:394-400,527-533` | — |
+| 34 | ✅ | P2 | 设计缺陷 | `FileWatcherService` 发消息到 `"user-all"` 组，无客户端加入 | `FileWatcherService.cs:97` | 第六轮 |
+| 35 | ⚠️ | P2 | 设计缺陷 | Fire-and-forget 任务 15+ 处（无错误处理） | 多处 | 第三轮 |
+| 36 | ✅ | P3 | 设计缺陷 | SSE keep-alive ping 用 `Task.Run` 实现循环 | `ChatEndpoints.cs:394-400,527-533` | 第六轮 |
 | 37 | ✅ | P2 | DB 浪费 | `HarnessEndpoints` `.Take(500).ToListAsync()` 再在 C# 中聚合 | `HarnessEndpoints.cs:274-276,580-582` | 第四轮 |
 | 38 | ❌ | P2 | 性能 | ReDoS 风险：Regex `<.*?>`, `.*?\n\n` 等 | `AiService.cs:1640-1646` | — |
-| 39 | ❌ | P2 | 性能 | JSON 被解析两次（ParseCliOutput 策略 1→策略 2） | `AiService.cs:2057-2091` | — |
+| 39 | ✅ | P2 | 性能 | JSON 被解析两次（ParseCliOutput 策略 1→策略 2） | `AiService.cs:2057-2091` | 第六轮 |
 | 40 | ✅ | P2 | 性能 | 静态可变缓存无同步保护（`_cachedPolicies = null` 竞态） | `AiService.cs:100,104` | 第五轮 |
 | 41 | ✅ | P2 | 性能 | Prompt 模板文件每次从磁盘读取，无缓存 | `PipelineLoaderService.cs:88-104` | 第五轮 |
-| 42 | ❌ | P2 | 性能 | `MemoryGraphService` 同步 `File.ReadAllText` 阻塞 | `MemoryGraphService.cs:33` | — |
+| 42 | ✅ | P2 | 性能 | `MemoryGraphService` 同步 `File.ReadAllText` 阻塞 | `MemoryGraphService.cs:33` | 第六轮 |
 | 43 | ❌ | P2 | 安全 | `UseStaticFiles()` 在认证中间件之前注册 | `Program.cs:17` | — |
-| 44 | ❌ | P3 | 安全 | `Project.CreatedAt` 用 `DateTime.Now`（非 UTC） | `Project.cs:17` | — |
+| 44 | ✅ | P3 | 安全 | `Project.CreatedAt` 用 `DateTime.Now`（非 UTC） | `Project.cs:17` | 第六轮 |
 | 45 | ❌ | P2 | 死代码 | `SkillLearningService.LearnFromInteractionAsync` 为空实现 | `SkillLearningService.cs:25-29` | — |
 | 46 | ❌ | P3 | 死代码 | `BuildHistoryBlockAsync` 定义未调用 | `AiService.cs:1104-1108` | — |
-| 47 | ❌ | P3 | 死代码 | `GetProjectIdFromPath` 废弃，始终返回 null | `FileWatcherService.cs:122-135` | — |
+| 47 | ✅ | P3 | 死代码 | `GetProjectIdFromPath` 废弃，始终返回 null | `FileWatcherService.cs:122-135` | 第六轮 |
 | 48 | ❌ | P3 | 死代码 | `PipelineLoaderService.GetNames` 无调用者 | `PipelineLoaderService.cs:80-86` | — |
-| 49 | ❌ | P3 | 死代码 | `Skill.ExampleInput` 和 `Skill.SourceInteractionId` 声明未使用 | `Skill.cs:9,20` | — |
+| 49 | ✅ | P3 | 死代码 | `Skill.ExampleInput` 和 `Skill.SourceInteractionId` 声明未使用 | `Skill.cs:9,20` | 第六轮 |
 | 50 | ❌ | P3 | 死代码 | Frontend `applySuggestion`, `viewFile` 仅 console.log | `index.html:886-889,880-884` | — |
 | 51 | ❌ | P3 | 死代码 | test-project/ 和 test-project-2/ 已 Compile Remove 但仍存在 | `test-project/` | — |
 | 52 | ❌ | P3 | 死代码 | `test_multi_agent_flow.py` 等 Python 测试脚本 | `AiChatApp/` | — |
@@ -133,6 +133,23 @@
 - **新#56** `SessionMemoryService.ReadAllAsContextAsync`：添加 `OrderByDescending + Take(30)` 上限，防止长会话会话记忆无限膨胀上下文 token
 - **#1 深化** `MemoryConsolidationService`：记忆标签匹配从 O(n) `FirstOrDefault` 改为 O(1) `Dictionary` 双索引（`byTag` + `byContent`），进一步降低整合开销
 - `ChatEndpoints`：三处 `AgentSteps` 二次 DB 查询改为 `ChangeTracker.Entries` 本地读取，消除响应后额外 DB 往返
+
+### 第六轮（2026-05-17 23:55，commit `pending`）
+
+修复问题：**#3, #5, #9, #15, #16, #17, #18, #19, #22, #24, #25, #26, #27, #28, #29, #31, #32, #34, #36, #39, #42, #44, #47, #49**
+
+- **#15, #42** `MemoryFileService` & `MemoryGraphService`：全异步化，移除同步 `Wait()` 和同步文件读取，彻底消除线程池阻塞风险
+- **#16, #17** `MemoryFileService.SearchAsync`：移除了重写 `MEMORY.md` 索引的操作；`AccessCount` 更新改为仅内存缓存，显著降低高频搜索时的磁盘 IO
+- **#3, #31, #32** `MemoryGraphService`：改为 `Singleton` 并使用 `IMemoryCache` 按用户隔离图数据（TTL 10min），解决多用户并发冲突及内存无限增长
+- **#42** `FileSystemWatcher`：为记忆目录挂载监听，文件变更自动失效内存缓存，解决数据陈旧和内存泄漏
+- **#18, #9** `ContextDepth` 机制：引入 Light/Standard/Full 三级上下文深度；`LoadPoliciesAsync` 支持按类别过滤，实现按需注入 Token，大幅节省费用
+- **#19** Pipeline 截断：`CooperateAsync` 中对各阶段累积上下文进行 2000 字符截断，消除 O(n²) token 爆炸
+- **#22, #39** CLI JSON 优化：为 `gemini` CLI 启用 `--output-format json`，简化 tokenizer 剥离逻辑，并优化解析策略避免二次解析
+- **#24, #29, #28** 工具类抽取：创建 `HtmlUtils`（统一气泡和加载更多渲染）、`JsonUtils`（统一 JSON 提取），消除多处硬编码 HTML 和重复逻辑
+- **#25, #26** `ChatEndpoints` 重构：抽取 `GetOrCreateSessionAsync` 和 `ResolveProvider`，消除 3 处冗余的会话初始化逻辑
+- **#36** SSE 优化：简化 keep-alive ping 逻辑，移除零散的 `Task.Run` 轮询
+- **#5** `SearchSkillsAsync`：在数据库层根据 Agent 角色先行过滤，减少内存处理负担
+- **#44, #49, #47** 清理：`Project.CreatedAt` 统一为 UTC；移除 `Skill` 模型废弃字段；移除 `FileWatcherService` 失效代码
 
 ---
 

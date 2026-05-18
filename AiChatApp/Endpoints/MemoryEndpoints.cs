@@ -11,12 +11,12 @@ public static class MemoryEndpoints
     {
         var group = app.MapGroup("/api/memories").RequireAuthorization();
 
-        group.MapGet("/", (ClaimsPrincipal user, MemoryFileService fileService, [FromQuery] int? page, [FromQuery] int? pageSize) => {
+        group.MapGet("/", async (ClaimsPrincipal user, MemoryFileService fileService, [FromQuery] int? page, [FromQuery] int? pageSize) => {
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var p = page ?? 1;
             var ps = pageSize ?? 20;
 
-            var memories = fileService.GetMemoriesForUser(userId);
+            var memories = await fileService.GetMemoriesForUserAsync(userId);
             var paginatedMemories = memories.Skip((p - 1) * ps).Take(ps + 1).ToList();
 
             if (!memories.Any() && p == 1)
@@ -58,15 +58,15 @@ public static class MemoryEndpoints
             return Results.Ok();
         }).DisableAntiforgery();
 
-        group.MapDelete("/{fileName}", (string fileName, MemoryFileService fileService) => {
-            fileService.DeleteByFileName(fileName);
+        group.MapDelete("/{fileName}", async (string fileName, MemoryFileService fileService) => {
+            await fileService.DeleteByFileNameAsync(fileName);
             return Results.Ok();
         });
 
-        group.MapGet("/mindmap", (ClaimsPrincipal user, MemoryGraphService graphService, [FromQuery] string? rootId, [FromQuery] int? depth, [FromQuery] string? collapsedIds) => {
+        group.MapGet("/mindmap", async (ClaimsPrincipal user, MemoryGraphService graphService, [FromQuery] string? rootId, [FromQuery] int? depth, [FromQuery] string? collapsedIds) => {
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            graphService.BuildGraph(userId);
-            var mermaid = graphService.GenerateMermaidGraph(userId, rootId, depth ?? 1, collapsedIds);
+            await graphService.BuildGraphAsync(userId);
+            var mermaid = await graphService.GenerateMermaidGraphAsync(userId, rootId, depth ?? 1, collapsedIds);
             return Results.Text(mermaid, "text/plain");
         });
     }
