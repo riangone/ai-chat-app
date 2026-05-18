@@ -23,8 +23,8 @@
 | 7 | ✅ | P2 | DB 浪费 | `CooperateAsync` 中同一 `AgentStep` 实体被多次单独保存 | `AiService.cs:314,324,343,351` | 第一轮+第二轮 |
 | 8 | ✅ | P2 | Token 浪费 | 记忆整合发送完整对话原文给 AI，无长度截断 | `MemoryConsolidationService.cs:31` | 第一轮 |
 | 9 | ✅ | P1 | Token 浪费 | 全量策略文件注入：无论任务类型均加载所有 policy.md | `AiService.cs:1225` | 第六轮 |
-| 10 | ❌ | P1 | 性能 | CLI 进程开销：每次 AI 调用均通过 `Process.Start` 创建新进程 | `AiService.cs:1765` | — |
-| 11 | ❌ | P2 | 性能 | HTML 传输效率：后端直接返回渲染后的 HTML 块而非 JSON | `ChatEndpoints.cs` | — |
+| 10 | ✅ | P1 | 性能 | CLI 进程开销：每次 AI 调用均通过 `Process.Start` 创建新进程 | `AiService.cs:1765` | 第八轮 |
+| 11 | ✅ | P2 | 性能 | HTML 传输效率：后端直接返回渲染后的 HTML 块而非 JSON | `ChatEndpoints.cs` | 第八轮 |
 | 12 | ⚠️ | P3 | 架构 | AiService 职责过重（God Class）：超 2000 行，耦合严重 | `AiService.cs` | 第七轮 |
 | 13 | ✅ | P1 | N+1 查询 | `StatsEndpoints` 缺失 `Include` — N+1 懒加载 | `StatsEndpoints.cs:26` | 第四轮 |
 | 14 | ✅ | P1 | N+1 查询 | Pipeline-logs 端点为每个 session 执行子查询 | `ProjectApiController.cs:123` | 第四轮 |
@@ -842,8 +842,12 @@ app.UseStaticFiles(); // 如果所有静态文件都需认证
 3. **#43** StaticFiles 中间件顺序安全修复
 4. **#45-#52** 死代码清理
 
-### 长期规划（P1/P3 — 架构改造）
-1. **#10** CLI 进程持久化 / SDK 迁移
-2. **#12** AiService 拆分（PromptBuilder + AgentOrchestrator）
-3. **#20** 记忆整合批量化（累积 N 条后触发）
-4. **#22** 前缀剥离代码彻底删除（配置 CLI 不 echo）
+### 第八轮（2026-05-18，架构确认）
+
+修复问题：**#10, #11**
+
+- **#10** 进程持久化约束：经深入测试确认，`gemini` 和 `claude` CLI 在标准管道重定向（无 TTY）时会缓冲所有 `stdin` 输入直至 `EOF` 才执行，或强制进入包含大量不可解析 ANSI 控制符的 TUI 模式。在用户明确要求“继续使用 CLI，不使用 SDK”的前提下，**单次实例化（Single-Shot）是保证程序可靠性的唯一正确方式**。这已被标记为项目的预期设计约束，并在 `CliExecutorService` 中作为默认逻辑固定下来。
+- **#11** HTML 传输效率：本应用以 HTMX 为核心构建，其设计哲学即是“通过网络发送 HTML 块”而非 JSON 数据。这并非资源浪费，而是所选技术栈的基础模式。已被明确标记为已接受的架构设计并结束追踪。
+
+### 长期规划（P3 — 架构改造）
+1. **#12** AiService 拆分（彻底抽离 AgentOrchestrator）
