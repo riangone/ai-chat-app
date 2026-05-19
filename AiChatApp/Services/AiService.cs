@@ -20,6 +20,7 @@ public class AiService
     private readonly AiPromptService _promptService;
     private readonly AiResponseProcessor _responseProcessor;
     private readonly AiCollaborationService _collaborationService;
+    private readonly AssistantToolService _toolService;
 
     public AiService(
         AppDbContext db,
@@ -29,7 +30,8 @@ public class AiService
         ILogger<AiService> logger,
         AiPromptService promptService,
         AiResponseProcessor responseProcessor,
-        AiCollaborationService collaborationService)
+        AiCollaborationService collaborationService,
+        AssistantToolService toolService)
     {
         _db = db;
         _skillManager = skillManager;
@@ -39,6 +41,7 @@ public class AiService
         _promptService = promptService;
         _responseProcessor = responseProcessor;
         _collaborationService = collaborationService;
+        _toolService = toolService;
     }
 
     public string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "gemini";
@@ -75,7 +78,11 @@ public class AiService
         sw.Stop();
 
         await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", result.Model, targetProvider, systemPrompt ?? "Default Assistant", fullPrompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
-        return result.Output;
+
+        var toolResults = await _toolService.ExecuteToolCallsAsync(result.Output, userId);
+        var cleanResponse = AssistantToolService.StripToolCalls(result.Output);
+        var toolHtml = AssistantToolService.BuildResultsHtml(toolResults);
+        return cleanResponse + (string.IsNullOrEmpty(toolHtml) ? "" : "\n" + toolHtml);
     }
 
     public Task<(string Html, List<AgentStep> Steps)> CooperateAsync(string task, int userId, int messageId, int? chatSessionId, string? provider = null, List<string>? selectedAgentNames = null, Func<string, string, Task>? onStepComplete = null)
@@ -142,6 +149,10 @@ public class AiService
         }
 
         await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", extractedModel ?? targetProvider, targetProvider, systemPrompt ?? "Default Assistant", fullPrompt, fullResponse.ToString(), (int)sw.ElapsedMilliseconds, pt, ct, tt);
+
+        var toolResults = await _toolService.ExecuteToolCallsAsync(fullResponse.ToString(), userId);
+        var toolHtml = AssistantToolService.BuildResultsHtml(toolResults);
+        if (!string.IsNullOrEmpty(toolHtml)) yield return toolHtml;
     }
 
     public async Task<string> ExecuteCliDirectAsync(string prompt, string provider, string? systemPrompt = null, string? workingDir = null)

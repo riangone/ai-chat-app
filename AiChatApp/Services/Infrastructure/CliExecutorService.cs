@@ -363,18 +363,8 @@ public class CliExecutorService : ICliExecutor, IDisposable
             }
             else
             {
-                if (agentMode || persistent || (provider != "gemini" && fileName != "gemini"))
-                {
-                    processInfo.ArgumentList.Add("--yolo");
-                }
-                else
-                {
-                    processInfo.ArgumentList.Add("--approval-mode");
-                    processInfo.ArgumentList.Add("plan");
-                }
-                processInfo.ArgumentList.Add("--sandbox");
-                processInfo.ArgumentList.Add("false");
-                
+                processInfo.ArgumentList.Add("--yolo");
+
                 if (provider == "gemini" || fileName == "gemini")
                 {
                     if (provider.ToLower() != "gemini")
@@ -428,8 +418,13 @@ public class CliExecutorService : ICliExecutor, IDisposable
         }
 
         if (totalTt == 0 && (totalPt > 0 || totalCt > 0)) totalTt = totalPt + totalCt;
-        
-        var cleanedOutput = CleanResponse(finalContent ?? output, systemPrompt, userPrompt);
+
+        // If JSON was found but content wasn't extracted, don't fall back to raw JSON output
+        string? displayContent = finalContent;
+        if (displayContent == null && !foundAnyJson)
+            displayContent = output.Trim(); // plain text fallback (non-JSON providers)
+
+        var cleanedOutput = CleanResponse(displayContent ?? string.Empty, systemPrompt, userPrompt);
         return new CliResult(cleanedOutput, finalModel ?? provider, totalPt, totalCt, totalTt);
     }
 
@@ -522,6 +517,12 @@ public class CliExecutorService : ICliExecutor, IDisposable
         else if (root.TryGetProperty("response", out var res)) { content = (content ?? "") + res.GetString(); foundSomething = true; }
         else if (root.TryGetProperty("content", out var res3)) { content = (content ?? "") + res3.GetString(); foundSomething = true; }
         else if (root.TryGetProperty("text", out var res4)) { content = (content ?? "") + res4.GetString(); foundSomething = true; }
+        else if (root.TryGetProperty("error", out var errProp))
+        {
+            var errMsg = errProp.ValueKind == JsonValueKind.String ? errProp.GetString() :
+                         errProp.TryGetProperty("message", out var em) ? em.GetString() : errProp.ToString();
+            if (!string.IsNullOrEmpty(errMsg)) { content = $"[Error: {errMsg}]"; foundSomething = true; }
+        }
 
         return foundSomething;
     }

@@ -38,6 +38,7 @@ public static class ServiceExtensions
         services.AddScoped<AiResponseProcessor>();
         services.AddScoped<AiCollaborationService>();
         services.AddScoped<AiService>();
+        services.AddScoped<AssistantToolService>();
         services.AddSingleton<ProactiveBrainService>();
 
         services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options => {

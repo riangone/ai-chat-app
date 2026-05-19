@@ -1,12 +1,6 @@
-const CACHE_NAME = 'ai-chat-v2';
+const CACHE_NAME = 'ai-chat-v4';
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/login.html',
-  '/register.html',
   '/translations.js',
-  '/components/footer.html',
-  '/components/modals.html'
 ];
 
 self.addEventListener('install', (event) => {
@@ -28,29 +22,32 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Skip non-GET requests for caching
   if (event.request.method !== 'GET') {
     event.respondWith(fetch(event.request));
     return;
   }
 
-  // API requests: network first, no cache
-  if (url.pathname.startsWith('/api/')) {
+  // HTML pages and API: always network, never cache
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/components/') ||
+    url.pathname.endsWith('.html') ||
+    url.pathname === '/'
+  ) {
     event.respondWith(fetch(event.request));
     return;
   }
 
-  // Static assets: cache first
+  // JS/CSS: network first, fall back to cache
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((response) => {
+    fetch(event.request)
+      .then((response) => {
         if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
         return response;
-      });
-    })
+      })
+      .catch(() => caches.match(event.request))
   );
 });

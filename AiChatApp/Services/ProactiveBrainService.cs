@@ -35,7 +35,18 @@ public class ProactiveBrainService
     {
         try
         {
-            await _hubContext.Clients.All.SendAsync("ProactiveMessage", suggestion);
+            using (var scope = _serviceProvider.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                db.ProactiveSuggestions.Add(suggestion);
+                await db.SaveChangesAsync();
+            }
+
+            if (suggestion.UserId.HasValue)
+                await _hubContext.Clients.User(suggestion.UserId.Value.ToString())
+                                 .SendAsync("ProactiveMessage", suggestion);
+            else
+                _logger.LogWarning("Proactive suggestion '{Title}' has no UserId, broadcast skipped", suggestion.Title);
         }
         catch (Exception ex)
         {
@@ -68,6 +79,7 @@ public class ProactiveBrainService
 
                 await SendSuggestionAsync(new ProactiveSuggestion
                 {
+                    UserId = userId,
                     Title = "Hyperion 欢迎洞察",
                     Content = insight,
                     Type = "insight",
@@ -130,6 +142,7 @@ public class ProactiveBrainService
 
                     await SendSuggestionAsync(new ProactiveSuggestion
                     {
+                        UserId = userId,
                         Title = "项目脉搏洞察",
                         Content = advice,
                         Type = "insight",
@@ -203,6 +216,7 @@ public class ProactiveBrainService
                         // 3. 通知前端 (不仅发送弹窗，还通知有新消息)
                         await SendSuggestionAsync(new ProactiveSuggestion
                         {
+                            UserId = item.UserId,
                             Title = "收到新洞察",
                             Content = advice,
                             Type = "task",
@@ -258,6 +272,7 @@ public class ProactiveBrainService
 
             await SendSuggestionAsync(new ProactiveSuggestion
             {
+                UserId = item.UserId,
                 Title = title,
                 Content = content,
                 Type = "success",
@@ -283,6 +298,7 @@ public class ProactiveBrainService
             {
                 await SendSuggestionAsync(new ProactiveSuggestion
                 {
+                    UserId = note.UserId,
                     Title = "知识沉淀建议",
                     Content = $"你的笔记 \"{note.Title}\" 内容很丰富。是否需要我将其总结并存入长期记忆库？",
                     Type = "insight",

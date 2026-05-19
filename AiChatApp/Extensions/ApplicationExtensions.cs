@@ -137,6 +137,21 @@ public static class ApplicationExtensions
             command.CommandText = "ALTER TABLE TodoItems ADD COLUMN UserId INTEGER;";
             command.ExecuteNonQuery();
         }
+        if (!todoColumns.Contains("DueDate"))
+        {
+            command.CommandText = "ALTER TABLE TodoItems ADD COLUMN DueDate TEXT;";
+            command.ExecuteNonQuery();
+        }
+
+        // 5a. Add UpdatedAt to LongTermMemories if missing
+        command.CommandText = "PRAGMA table_info(LongTermMemories);";
+        var memoryColumns = new List<string>();
+        using (var reader = command.ExecuteReader()) { while (reader.Read()) memoryColumns.Add(reader.GetString(1)); }
+        if (!memoryColumns.Contains("UpdatedAt"))
+        {
+            command.CommandText = "ALTER TABLE LongTermMemories ADD COLUMN UpdatedAt DATETIME NOT NULL DEFAULT '2025-01-01 00:00:00';";
+            command.ExecuteNonQuery();
+        }
 
         // 5. Explicitly create InputHistories table if it doesn't exist
         command.CommandText = @"
@@ -171,6 +186,47 @@ public static class ApplicationExtensions
         {
             await pipelineLoader.ReloadPipelineAsync(fileName);
         });
+
+        // 5c. Ensure ProactiveSuggestions and SuggestionAction tables exist
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS ProactiveSuggestions (
+                Id TEXT PRIMARY KEY,
+                UserId INTEGER,
+                Title TEXT NOT NULL,
+                Content TEXT NOT NULL,
+                Type TEXT NOT NULL,
+                Timestamp TEXT NOT NULL,
+                IsRead INTEGER NOT NULL DEFAULT 0,
+                Metadata TEXT
+            );";
+        command.ExecuteNonQuery();
+
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS SuggestionAction (
+                Id TEXT PRIMARY KEY,
+                Label TEXT NOT NULL,
+                Command TEXT NOT NULL,
+                Payload TEXT,
+                Style TEXT NOT NULL,
+                ProactiveSuggestionId TEXT,
+                CONSTRAINT FK_SuggestionAction_ProactiveSuggestions_ProactiveSuggestionId FOREIGN KEY (ProactiveSuggestionId) REFERENCES ProactiveSuggestions (Id) ON DELETE CASCADE
+            );";
+        command.ExecuteNonQuery();
+
+        // 6. Add UserId and IsRead to ProactiveSuggestions if missing
+        command.CommandText = "PRAGMA table_info(ProactiveSuggestions);";
+        var suggestionsColumns = new List<string>();
+        using (var reader = command.ExecuteReader()) { while (reader.Read()) suggestionsColumns.Add(reader.GetString(1)); }
+        if (!suggestionsColumns.Contains("UserId"))
+        {
+            command.CommandText = "ALTER TABLE ProactiveSuggestions ADD COLUMN UserId INTEGER;";
+            command.ExecuteNonQuery();
+        }
+        if (!suggestionsColumns.Contains("IsRead"))
+        {
+            command.CommandText = "ALTER TABLE ProactiveSuggestions ADD COLUMN IsRead INTEGER NOT NULL DEFAULT 0;";
+            command.ExecuteNonQuery();
+        }
 
         // Invalidate policy cache when policy files change
         var policiesPath = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies");

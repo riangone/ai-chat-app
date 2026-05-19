@@ -12,6 +12,7 @@ public class LongTermMemory
     public int RelevanceScore { get; set; } = 100;
     public int AccessCount { get; set; } = 0;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastAccessedAt { get; set; } = DateTime.UtcNow;
 
     [NotMapped]

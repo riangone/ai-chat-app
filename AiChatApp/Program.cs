@@ -20,7 +20,22 @@ var app = builder.Build();
 app.UseAntiforgery();
 app.UseAuthentication();
 app.UseAuthorization();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        var path = ctx.File.Name;
+        if (path.EndsWith(".html") || path == "sw.js")
+        {
+            ctx.Context.Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
+            ctx.Context.Response.Headers["Pragma"] = "no-cache";
+        }
+        else if (path.EndsWith(".js") || path.EndsWith(".css"))
+        {
+            ctx.Context.Response.Headers["Cache-Control"] = "public, max-age=3600";
+        }
+    }
+});
 
 // Initialize Database and Pipelines
 await app.InitializeDatabaseAsync();
@@ -38,6 +53,8 @@ app.MapTodoEndpoints();
 app.MapNotesEndpoints();
 app.MapFileManagerEndpoints();
 app.MapStatsEndpoints();
+app.MapInboxEndpoints();
+app.MapBriefingEndpoints();
 
 app.MapHub<ProactiveAgentHub>("/hub/proactive-agent");
 

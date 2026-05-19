@@ -21,6 +21,7 @@ public class AppDbContext : DbContext
     public DbSet<InputHistory> InputHistories => Set<InputHistory>();
     public DbSet<TodoItem> TodoItems => Set<TodoItem>();
     public DbSet<Note> Notes => Set<Note>();
+    public DbSet<ProactiveSuggestion> ProactiveSuggestions => Set<ProactiveSuggestion>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
