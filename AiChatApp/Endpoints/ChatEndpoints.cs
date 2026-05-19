@@ -353,32 +353,39 @@ public static class ChatEndpoints
             }
         }).DisableAntiforgery();
 
-        group.MapPost("/chat/stream", async (HttpContext context, AppDbContext db, AiService ai, 
+        group.MapPost("/chat/stream", async (HttpContext context, AppDbContext db, AiService ai,
             MemoryConsolidationService consolidation, ClaimsPrincipal user) => {
             var form = await context.Request.ReadFormAsync();
             var content = form["content"].ToString();
             if (string.IsNullOrWhiteSpace(content))
-                content = ""; // Allow empty to avoid compile error
+                content = "";
             var provider = form["provider"].ToString();
-                var sessionIdStr = form["sessionId"].ToString();
-                var agentIdStr = form["agentId"].ToString();
-                int? agentId = int.TryParse(agentIdStr, out var aid) ? aid : null;
-                int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
-                int? sessionId = int.TryParse(sessionIdStr, out var id) ? id : null;
-                var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-                var userDefaultProvider = user.FindFirstValue("DefaultProvider") ?? "";
+            var sessionIdStr = form["sessionId"].ToString();
+            var agentIdStr = form["agentId"].ToString();
+            int? agentId = int.TryParse(agentIdStr, out var aid) ? aid : null;
+            int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
+            int? sessionId = int.TryParse(sessionIdStr, out var id) ? id : null;
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var userDefaultProvider = user.FindFirstValue("DefaultProvider") ?? "";
 
-                var session = await GetOrCreateSessionAsync(db, ai, sessionId, projectId, userId, provider, userDefaultProvider, content);
+            context.Response.Headers.Append("Content-Type", "text/event-stream");
+            context.Response.Headers.Append("Cache-Control", "no-cache");
+            context.Response.Headers.Append("X-Accel-Buffering", "no");
+
+            ChatSession session;
+            Message uMsg;
+            try {
+                session = await GetOrCreateSessionAsync(db, ai, sessionId, projectId, userId, provider, userDefaultProvider, content);
                 provider = ResolveProvider(session, provider, userDefaultProvider, ai.DefaultProvider);
-
-                var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
+                uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
                 db.Messages.Add(uMsg);
                 await db.SaveChangesAsync();
-
-                context.Response.Headers.Append("Content-Type", "text/event-stream");
-                context.Response.Headers.Append("Cache-Control", "no-cache");
-                context.Response.Headers.Append("X-Accel-Buffering", "no");
                 context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
+            } catch (Exception) {
+                await context.Response.WriteAsync($"data: [ERROR:セットアップエラー。もう一度お試しください。]\n\n");
+                await context.Response.Body.FlushAsync();
+                return;
+            }
 
                 var fullResponse = new StringBuilder();
                 string? streamError = null;

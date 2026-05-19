@@ -5,6 +5,12 @@ using AiChatApp.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MinResponseDataRate = null;
+    options.Limits.MinRequestBodyDataRate = null;
+});
+
 // Add Services
 builder.Services.AddProjectServices(builder.Configuration);
 
