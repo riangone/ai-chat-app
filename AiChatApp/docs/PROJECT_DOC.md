@@ -52,6 +52,8 @@ AiChatApp/
 - `codex`: OpenAI Codex CLI
 - `opencode`: OpenCode CLI
 
+支持自定义输出格式（如 `json`, `plain`, `stream-json`），通过 `--output-format` 参数传递给 CLI 工具。
+
 ### 3.2 协作模式 (Multi-Agent)
 - **Orchestrator**: 规划任务
 - **Executor**: 执行计划（支持最多2次重试）

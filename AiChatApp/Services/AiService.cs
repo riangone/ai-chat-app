@@ -155,9 +155,9 @@ public class AiService
         if (!string.IsNullOrEmpty(toolHtml)) yield return toolHtml;
     }
 
-    public async Task<string> ExecuteCliDirectAsync(string prompt, string provider, string? systemPrompt = null, string? workingDir = null)
+    public async Task<string> ExecuteCliDirectAsync(string prompt, string provider, string? systemPrompt = null, string? workingDir = null, string? outputFormat = null)
     {
-        var result = await _cliExecutor.ExecuteAsync(prompt, provider, systemPrompt, prompt, workingDir);
+        var result = await _cliExecutor.ExecuteAsync(prompt, provider, systemPrompt, prompt, workingDir, outputFormat: outputFormat);
         return result.Output;
     }
 

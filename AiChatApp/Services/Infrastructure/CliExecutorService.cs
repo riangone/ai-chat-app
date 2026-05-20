@@ -13,8 +13,8 @@ public record StreamChunk(string? Text, string? Model, int PromptTokens, int Com
 
 public interface ICliExecutor
 {
-    Task<CliResult> ExecuteAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false);
-    IAsyncEnumerable<StreamChunk> ExecuteStreamAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false);
+    Task<CliResult> ExecuteAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null);
+    IAsyncEnumerable<StreamChunk> ExecuteStreamAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null);
 }
 
 public class CliExecutorService : ICliExecutor, IDisposable
@@ -60,7 +60,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
     private string FallbackProvider => _config["AiSettings:FallbackProvider"] ?? "gemini";
     private int TimeoutSeconds => int.TryParse(_config["AiSettings:TimeoutSeconds"], out var s) ? s : 300;
 
-    public async Task<CliResult> ExecuteAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false)
+    public async Task<CliResult> ExecuteAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null)
     {
         bool usePersistence = _config.GetValue<bool>("AiSettings:CliPersistenceEnabled", false); // Disabled by default due to CLI constraints
         
@@ -77,7 +77,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
             }
             else
             {
-                result = await ExecuteSingleShotAsync(prompt, provider, systemPrompt, userPrompt, workingDirectory, agentMode);
+                result = await ExecuteSingleShotAsync(prompt, provider, systemPrompt, userPrompt, workingDirectory, agentMode, outputFormat);
             }
         }
         catch (Exception ex)
@@ -86,7 +86,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
             if (provider != FallbackProvider)
             {
                 _logger.LogInformation("Falling back to {Fallback}", FallbackProvider);
-                return await ExecuteAsync(prompt, FallbackProvider, systemPrompt, userPrompt, workingDirectory, agentMode);
+                return await ExecuteAsync(prompt, FallbackProvider, systemPrompt, userPrompt, workingDirectory, agentMode, outputFormat);
             }
             throw;
         }
@@ -94,18 +94,19 @@ public class CliExecutorService : ICliExecutor, IDisposable
         if (result.Output.StartsWith("[Error") && provider != FallbackProvider)
         {
             _logger.LogWarning("CLI returned error for {Provider}, falling back.", provider);
-            return await ExecuteAsync(prompt, FallbackProvider, systemPrompt, userPrompt, workingDirectory, agentMode);
+            return await ExecuteAsync(prompt, FallbackProvider, systemPrompt, userPrompt, workingDirectory, agentMode, outputFormat);
         }
 
         return result;
     }
 
-    public async IAsyncEnumerable<StreamChunk> ExecuteStreamAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false)
+    public async IAsyncEnumerable<StreamChunk> ExecuteStreamAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null)
     {
         var targetProvider = provider ?? DefaultProvider;
         var useJsonStreaming = targetProvider == "gemini" || targetProvider == "claude" || targetProvider == "copilot" || targetProvider == "codex" || targetProvider == "opencode";
         
-        var processInfo = SetupProcessInfo(targetProvider, workingDirectory, useJsonStreaming ? "stream-json" : null, agentMode: agentMode, persistent: false);
+        var format = outputFormat ?? (useJsonStreaming ? "stream-json" : null);
+        var processInfo = SetupProcessInfo(targetProvider, workingDirectory, format, agentMode: agentMode, persistent: false);
 
         string inputToStdin = string.IsNullOrEmpty(systemPrompt)
             ? prompt
@@ -262,9 +263,9 @@ public class CliExecutorService : ICliExecutor, IDisposable
         throw new TimeoutException($"Persistent CLI ({provider}) response timeout.");
     }
 
-    private async Task<CliResult> ExecuteSingleShotAsync(string prompt, string provider, string? systemPrompt, string? userPrompt, string? workingDirectory, bool agentMode)
+    private async Task<CliResult> ExecuteSingleShotAsync(string prompt, string provider, string? systemPrompt, string? userPrompt, string? workingDirectory, bool agentMode, string? outputFormat = null)
     {
-        var processInfo = SetupProcessInfo(provider, workingDirectory, agentMode: agentMode, persistent: false);
+        var processInfo = SetupProcessInfo(provider, workingDirectory, outputFormat: outputFormat, agentMode: agentMode, persistent: false);
         string inputToStdin = string.IsNullOrEmpty(systemPrompt) ? prompt : $"System: {systemPrompt}\n\nUser: {prompt}";
 
         using var process = new Process { StartInfo = processInfo };
@@ -421,8 +422,13 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
         // If JSON was found but content wasn't extracted, don't fall back to raw JSON output
         string? displayContent = finalContent;
-        if (displayContent == null && !foundAnyJson)
-            displayContent = output.Trim(); // plain text fallback (non-JSON providers)
+        if (displayContent == null)
+        {
+            if (foundAnyJson)
+                displayContent = "[Error: Could not extract content from AI response]";
+            else
+                displayContent = output.Trim(); // plain text fallback (non-JSON providers)
+        }
 
         var cleanedOutput = CleanResponse(displayContent ?? string.Empty, systemPrompt, userPrompt);
         return new CliResult(cleanedOutput, finalModel ?? provider, totalPt, totalCt, totalTt);
@@ -521,6 +527,8 @@ public class CliExecutorService : ICliExecutor, IDisposable
             if (root.TryGetProperty("response", out var res)) { content = (content ?? "") + res.GetString(); foundContent = true; }
             else if (root.TryGetProperty("content", out var res3)) { content = (content ?? "") + res3.GetString(); foundContent = true; }
             else if (root.TryGetProperty("text", out var res4)) { content = (content ?? "") + res4.GetString(); foundContent = true; }
+            else if (root.TryGetProperty("data", out var dataProp) && dataProp.TryGetProperty("content", out var dataContent)) { content = (content ?? "") + dataContent.GetString(); foundContent = true; }
+            else if (root.TryGetProperty("message", out var msgProp) && msgProp.TryGetProperty("content", out var msgContent)) { content = (content ?? "") + msgContent.GetString(); foundContent = true; }
         }
 
         if (root.TryGetProperty("error", out var errProp))
