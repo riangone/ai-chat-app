@@ -13,6 +13,7 @@ public class ProactiveBrainService
     private readonly IHubContext<ProactiveAgentHub> _hubContext;
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<ProactiveBrainService> _logger;
+    private readonly WebPushService _webPushService;
 
     // Per-user cooldown to prevent repeated AI calls on reconnect
     private static readonly ConcurrentDictionary<int, DateTime> _lastWelcomeTime = new();
@@ -21,11 +22,13 @@ public class ProactiveBrainService
     public ProactiveBrainService(
         IHubContext<ProactiveAgentHub> hubContext,
         IServiceProvider serviceProvider,
-        ILogger<ProactiveBrainService> logger)
+        ILogger<ProactiveBrainService> logger,
+        WebPushService webPushService)
     {
         _hubContext = hubContext;
         _serviceProvider = serviceProvider;
         _logger = logger;
+        _webPushService = webPushService;
     }
 
     /// <summary>
@@ -43,8 +46,16 @@ public class ProactiveBrainService
             }
 
             if (suggestion.UserId.HasValue)
+            {
                 await _hubContext.Clients.User(suggestion.UserId.Value.ToString())
                                  .SendAsync("ProactiveMessage", suggestion);
+                
+                // ALSO SEND WEB PUSH
+                _ = _webPushService.SendNotificationAsync(
+                    suggestion.UserId.Value, 
+                    suggestion.Title ?? "Hyperion 提醒", 
+                    suggestion.Content ?? "");
+            }
             else
                 _logger.LogWarning("Proactive suggestion '{Title}' has no UserId, broadcast skipped", suggestion.Title);
         }

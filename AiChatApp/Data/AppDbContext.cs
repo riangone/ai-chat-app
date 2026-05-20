@@ -22,6 +22,7 @@ public class AppDbContext : DbContext
     public DbSet<TodoItem> TodoItems => Set<TodoItem>();
     public DbSet<Note> Notes => Set<Note>();
     public DbSet<ProactiveSuggestion> ProactiveSuggestions => Set<ProactiveSuggestion>();
+    public DbSet<PushSubscription> PushSubscriptions => Set<PushSubscription>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

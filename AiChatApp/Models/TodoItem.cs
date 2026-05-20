@@ -8,5 +8,6 @@ public class TodoItem
     public bool IsCompleted { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? DueDate { get; set; }
+    public bool IsNotified { get; set; }
     public int? UserId { get; set; }
 }

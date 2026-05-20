@@ -498,33 +498,39 @@ public class CliExecutorService : ICliExecutor, IDisposable
             if (statsEl.TryGetProperty("total_tokens", out var stt)) { if (isIncremental) tt += stt.GetInt32(); else tt = stt.GetInt32(); }
         }
 
+        // Content extraction - try multiple common keys
+        bool foundContent = false;
         if (root.TryGetProperty("type", out var typeProp))
         {
-            foundSomething = true;
             var t = typeProp.GetString();
             if (t == "text" && root.TryGetProperty("part", out var op) && op.TryGetProperty("text", out var otText))
-                content = (content ?? "") + otText.GetString();
+                { content = (content ?? "") + otText.GetString(); foundContent = true; }
             else if (t == "assistant.message" && root.TryGetProperty("content", out var amc))
-                content = (content ?? "") + amc.GetString();
+                { content = (content ?? "") + amc.GetString(); foundContent = true; }
             else if (t == "message" && root.TryGetProperty("content", out var mMsg) &&
                      (!root.TryGetProperty("role", out var roleProp) || roleProp.GetString() != "user"))
-                content = (content ?? "") + mMsg.GetString();
+                { content = (content ?? "") + mMsg.GetString(); foundContent = true; }
             else if (t == "assistant.message_delta" && root.TryGetProperty("data", out var dd) && dd.TryGetProperty("deltaContent", out var dc))
-                content = (content ?? "") + dc.GetString();
+                { content = (content ?? "") + dc.GetString(); foundContent = true; }
             else if (t == "result" && root.TryGetProperty("result", out var rc))
-                content = rc.GetString();
+                { content = rc.GetString(); foundContent = true; }
         }
-        else if (root.TryGetProperty("response", out var res)) { content = (content ?? "") + res.GetString(); foundSomething = true; }
-        else if (root.TryGetProperty("content", out var res3)) { content = (content ?? "") + res3.GetString(); foundSomething = true; }
-        else if (root.TryGetProperty("text", out var res4)) { content = (content ?? "") + res4.GetString(); foundSomething = true; }
-        else if (root.TryGetProperty("error", out var errProp))
+        
+        if (!foundContent)
+        {
+            if (root.TryGetProperty("response", out var res)) { content = (content ?? "") + res.GetString(); foundContent = true; }
+            else if (root.TryGetProperty("content", out var res3)) { content = (content ?? "") + res3.GetString(); foundContent = true; }
+            else if (root.TryGetProperty("text", out var res4)) { content = (content ?? "") + res4.GetString(); foundContent = true; }
+        }
+
+        if (root.TryGetProperty("error", out var errProp))
         {
             var errMsg = errProp.ValueKind == JsonValueKind.String ? errProp.GetString() :
                          errProp.TryGetProperty("message", out var em) ? em.GetString() : errProp.ToString();
-            if (!string.IsNullOrEmpty(errMsg)) { content = $"[Error: {errMsg}]"; foundSomething = true; }
+            if (!string.IsNullOrEmpty(errMsg)) { content = $"[Error: {errMsg}]"; foundContent = true; }
         }
 
-        return foundSomething;
+        return foundSomething || foundContent;
     }
 
     private string CleanResponse(string text, string? systemPrompt, string? userPrompt)

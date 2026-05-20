@@ -40,6 +40,7 @@ public static class ServiceExtensions
         services.AddScoped<AiService>();
         services.AddScoped<AssistantToolService>();
         services.AddSingleton<ProactiveBrainService>();
+        services.AddSingleton<WebPushService>();
 
         services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options => {
             options.SerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
@@ -60,6 +61,7 @@ public static class ServiceExtensions
         // ENABLED: Proactive Scanning (Sentinel Phase)
         services.AddHostedService<FileWatcherService>();
         services.AddHostedService<ProjectPulseService>();
+        services.AddHostedService<ReminderService>();
 
         return services;
     }

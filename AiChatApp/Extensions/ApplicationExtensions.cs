@@ -142,6 +142,11 @@ public static class ApplicationExtensions
             command.CommandText = "ALTER TABLE TodoItems ADD COLUMN DueDate TEXT;";
             command.ExecuteNonQuery();
         }
+        if (!todoColumns.Contains("IsNotified"))
+        {
+            command.CommandText = "ALTER TABLE TodoItems ADD COLUMN IsNotified INTEGER NOT NULL DEFAULT 0;";
+            command.ExecuteNonQuery();
+        }
 
         // 5a. Add UpdatedAt to LongTermMemories if missing
         command.CommandText = "PRAGMA table_info(LongTermMemories);";
@@ -210,6 +215,18 @@ public static class ApplicationExtensions
                 Style TEXT NOT NULL,
                 ProactiveSuggestionId TEXT,
                 CONSTRAINT FK_SuggestionAction_ProactiveSuggestions_ProactiveSuggestionId FOREIGN KEY (ProactiveSuggestionId) REFERENCES ProactiveSuggestions (Id) ON DELETE CASCADE
+            );";
+        command.ExecuteNonQuery();
+
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS PushSubscriptions (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                UserId INTEGER NOT NULL,
+                Endpoint TEXT NOT NULL,
+                P256dh TEXT NOT NULL,
+                Auth TEXT NOT NULL,
+                CreatedAt DATETIME NOT NULL,
+                CONSTRAINT FK_PushSubscriptions_Users_UserId FOREIGN KEY (UserId) REFERENCES Users (Id) ON DELETE CASCADE
             );";
         command.ExecuteNonQuery();
 

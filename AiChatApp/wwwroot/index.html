@@ -2,7 +2,7 @@
 <html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title data-i18n="app-title">AI Chat Pro</title>
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#6366f1">
@@ -21,6 +21,7 @@
     <script src="/lib/hammer.min.js"></script>
     <script src="/lib/signalr.min.js"></script>
     <script src="translations.js"></script>
+    <script src="push-notifications.js"></script>
     <style>
         .htmx-indicator { display: none; }
         .htmx-request .htmx-indicator { display: inline-block; }
@@ -119,9 +120,11 @@
             .sidebar { position: fixed; top: 0; bottom: 0; left: -260px; }
             .drawer-open .sidebar { left: 0; box-shadow: 10px 0 30px rgba(0,0,0,0.1); }
             .drawer-open .drawer-overlay { opacity: 1; pointer-events: auto; background: rgba(0,0,0,0.3); backdrop-filter: blur(4px); }
-            .main-content { padding-bottom: 4rem; }
-            #proactive-suggestions { bottom: 5.5rem; }
-            #chat-box { padding-bottom: 15rem; }
+            .main-content { padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px)); }
+            #global-footer { bottom: calc(4rem + env(safe-area-inset-bottom, 0px)) !important; }
+            #proactive-suggestions { bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px)); }
+            #chat-box { padding-bottom: calc(15rem + env(safe-area-inset-bottom, 0px)); }
+            .btm-nav { padding-bottom: env(safe-area-inset-bottom, 0px); }
         }
         .notes-explorer-collapsed {
             margin-left: -20rem;
@@ -277,22 +280,22 @@
             }
         }
         function updateTabBar(index) {
-            // sidebar order: Chat(0) History(1) Workspace(2) Notes(3) Memory(4) Projects(5) Settings(6)
+            // sidebar order: Chat(0) Workspace(1) Notes(2) Memory(3) Projects(4) Settings(5)
             const slideToSidebar = {
                 0: 0,   // Chat
-                1: 2,   // Todo → Workspace
-                2: 3,   // Notes → Notes
-                3: 2,   // Files → Workspace
-                4: 4,   // Memory → Memory
-                5: 4,   // Mindmap → Memory
-                6: 5,   // Projects → Projects
-                7: 5,   // Skills → Projects
-                8: 1,   // History → History
-                9: 5,   // CLI → Projects
-                10: 6,  // Settings → Settings
-                11: 5,  // Harness → Projects
-                12: 5,  // Pipeline → Projects
-                13: 5,  // Stats → Projects
+                1: 1,   // Todo → Workspace
+                2: 2,   // Notes → Notes
+                3: 1,   // Files → Workspace
+                4: 3,   // Memory → Memory
+                5: 3,   // Mindmap → Memory
+                6: 4,   // Projects → Projects
+                7: 4,   // Skills → Projects
+                8: 0,   // History → Chat
+                9: 4,   // CLI → Projects
+                10: 5,  // Settings → Settings
+                11: 4,  // Harness → Projects
+                12: 4,  // Pipeline → Projects
+                13: 4,  // Stats → Projects
             };
             const i = slideToSidebar[index] ?? -1;
             document.querySelectorAll('.sidebar-item').forEach((item, idx) => {
@@ -308,7 +311,7 @@
                 5: 2,   // Mindmap → Memory
                 6: 3,   // Projects → Projects
                 7: 3,   // Skills → Projects
-                8: 3,   // History → Projects
+                8: 0,   // History → Chat
                 9: 3,   // CLI → Projects
                 10: 4,  // Settings → Settings
                 11: 3,  // Harness → Projects
@@ -1053,6 +1056,9 @@ function handleSuggestionAction(command, payload) {
             setTimeout(() => {
                 if (typeof signalR !== 'undefined') {
                     initProactiveAgent();
+                }
+                if (window.PushNotifications) {
+                    PushNotifications.init();
                 }
             }, 1000);
         });
@@ -2069,6 +2075,10 @@ function handleSuggestionAction(command, payload) {
                                 </div>
                             </div>
                         </div>
+                        <div class="tabs tabs-boxed bg-base-300/50 p-1 mx-4 mt-2 rounded-2xl justify-center">
+                            <a onclick="switchMainTab(0)" class="tab tab-sm font-bold rounded-xl px-4 tab-active">Chat</a>
+                            <a onclick="switchMainTab(8)" class="tab tab-sm font-bold rounded-xl px-4">History</a>
+                        </div>
                         <div id="chat-panel" class="flex flex-col flex-1">
                             <div id="chat-box" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-8 custom-scrollbar">
                                 <div id="welcome-message" hx-get="/api/assistant/briefing/html" hx-trigger="load" class="h-full">
@@ -2237,16 +2247,23 @@ function handleSuggestionAction(command, payload) {
                         <div class="tabs tabs-boxed bg-base-300/50 p-1 mx-4 mt-2 rounded-2xl justify-center">
                             <a onclick="switchMainTab(6)" class="tab tab-sm font-bold rounded-xl px-4 tab-active">Projects</a>
                             <a onclick="switchMainTab(7)" class="tab tab-sm font-bold rounded-xl px-4">Skills</a>
-                            <a onclick="switchMainTab(8)" class="tab tab-sm font-bold rounded-xl px-4">History</a>
                         </div>
                         <div id="projects-panel" class="flex flex-col flex-1"><div id="projects-list-container" hx-get="/api/projects/list-html" hx-trigger="loadProjects" hx-target="#projects-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto w-full"><div id="selected-project-info" class="hidden mb-8 p-6 bg-primary/10 border border-primary/20 rounded-2xl"><div class="flex justify-between items-start"><div><span class="text-xl font-bold text-primary" id="current-project-name">No Project</span><p class="text-sm opacity-60 mt-1" id="current-project-path"></p></div><button onclick="deselectProject()" class="btn btn-ghost btn-sm text-error">✕ Deselect</button></div><div class="mt-4 flex gap-2"><button onclick="showAgentModal()" class="btn btn-primary">Manage Roles</button></div><div class="divider text-xs opacity-30 mt-8">Project History</div><div id="project-chat-list" class="flex flex-col gap-2"></div></div><div id="projects-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div></div></div></div>
                     </div>
                     <div class="swiper-slide">
                         <div class="shell-header"><div class="shell-badge"><span data-i18n="skills-title">Skills</span></div><div class="right-actions"><button onclick="createSkill()" class="btn btn-ghost btn-sm btn-circle text-primary" data-i18n-title="skills"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button></div></div>
+                        <div class="tabs tabs-boxed bg-base-300/50 p-1 mx-4 mt-2 rounded-2xl justify-center">
+                            <a onclick="switchMainTab(6)" class="tab tab-sm font-bold rounded-xl px-4">Projects</a>
+                            <a onclick="switchMainTab(7)" class="tab tab-sm font-bold rounded-xl px-4 tab-active">Skills</a>
+                        </div>
                         <div id="skills-panel" class="flex flex-col flex-1"><div id="skills-list-container" hx-get="/api/skills" hx-trigger="loadSkills" hx-target="#skills-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6" id="skills-list"></div></div></div>
                     </div>
                     <div class="swiper-slide">
                         <div class="shell-header"><div class="shell-badge"><span data-i18n="history-title">History</span></div></div>
+                        <div class="tabs tabs-boxed bg-base-300/50 p-1 mx-4 mt-2 rounded-2xl justify-center">
+                            <a onclick="switchMainTab(0)" class="tab tab-sm font-bold rounded-xl px-4">Chat</a>
+                            <a onclick="switchMainTab(8)" class="tab tab-sm font-bold rounded-xl px-4 tab-active">History</a>
+                        </div>
                         <div id="history-panel" class="flex flex-col flex-1"><div id="history-list-container" hx-get="/api/chat/list" hx-trigger="loadHistory" hx-target="#chat-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="chat-list"></div></div></div>
                     </div>
                     <div class="swiper-slide">
@@ -2305,6 +2322,16 @@ function handleSuggestionAction(command, payload) {
                                             <div id="settings-language-switcher" class="flex flex-wrap gap-2"></div>
                                         </section>
                                     </div>
+
+                                    <section class="settings-card space-y-4">
+                                        <div class="flex items-center justify-between">
+                                            <div>
+                                                <h3 class="font-bold">Notifications</h3>
+                                                <p class="text-xs opacity-50">Enable system-level push notifications for task reminders.</p>
+                                            </div>
+                                            <button onclick="PushNotifications.requestPermission()" class="btn btn-primary btn-sm rounded-xl">Enable</button>
+                                        </div>
+                                    </section>
 
                                     <section class="settings-card space-y-4">
                                         <div class="settings-section-title" data-i18n="theme">Theme</div>
