@@ -26,6 +26,10 @@ public class User
     public bool IsActive { get; set; } = true;
     
     public bool IsAdmin { get; set; } = false;
+
+    // Cache for AI briefing
+    public string? LastBriefingContent { get; set; }
+    public DateTime? BriefingUpdatedAt { get; set; }
     
     // Navigation properties
     public List<ChatSession> ChatSessions { get; set; } = new();

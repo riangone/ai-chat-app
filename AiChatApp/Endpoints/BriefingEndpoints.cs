@@ -39,11 +39,23 @@ public static class BriefingEndpoints
             });
         }).RequireAuthorization();
 
-        app.MapGet("/api/assistant/briefing/html", async (ClaimsPrincipal user, AppDbContext db, AiService ai) =>
+        app.MapGet("/api/assistant/briefing/html", async (ClaimsPrincipal user, AppDbContext db, AiService ai, bool? force) =>
         {
             var userIdStr = user.FindFirstValue(ClaimTypes.NameIdentifier);
             if (userIdStr is null) return Results.Unauthorized();
             var userId = int.Parse(userIdStr);
+
+            var dbUser = await db.Users.FindAsync(userId);
+            if (dbUser == null) return Results.NotFound();
+
+            // Check Cache (30 minutes) - Bypass if force is true
+            if (force != true && 
+                dbUser.BriefingUpdatedAt.HasValue && 
+                dbUser.BriefingUpdatedAt.Value.AddMinutes(30) > DateTime.UtcNow && 
+                !string.IsNullOrEmpty(dbUser.LastBriefingContent))
+            {
+                return Results.Content(dbUser.LastBriefingContent, "text/html");
+            }
 
             var todayStart = DateTime.UtcNow.Date;
 
@@ -152,6 +164,11 @@ public static class BriefingEndpoints
     </div>
 </div>
 ";
+            // Update Cache
+            dbUser.LastBriefingContent = html;
+            dbUser.BriefingUpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+
             return Results.Content(html, "text/html");
         }).RequireAuthorization();
     }

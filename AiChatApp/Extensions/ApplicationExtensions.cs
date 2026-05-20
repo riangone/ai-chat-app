@@ -39,6 +39,16 @@ public static class ApplicationExtensions
             command.CommandText = "ALTER TABLE Users ADD COLUMN DefaultProvider TEXT NOT NULL DEFAULT '';";
             command.ExecuteNonQuery();
         }
+        if (!usersColumns.Contains("LastBriefingContent"))
+        {
+            command.CommandText = "ALTER TABLE Users ADD COLUMN LastBriefingContent TEXT;";
+            command.ExecuteNonQuery();
+        }
+        if (!usersColumns.Contains("BriefingUpdatedAt"))
+        {
+            command.CommandText = "ALTER TABLE Users ADD COLUMN BriefingUpdatedAt DATETIME;";
+            command.ExecuteNonQuery();
+        }
 
         // 2. Add PreferredProvider to ChatSessions if missing
         command.CommandText = "PRAGMA table_info(ChatSessions);";
