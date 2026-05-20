@@ -24,4 +24,5 @@ public class Message
     public string? AgentName { get; set; }
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     public List<AgentStep> AgentSteps { get; set; } = new();
+    public List<Attachment> Attachments { get; set; } = new();
 }

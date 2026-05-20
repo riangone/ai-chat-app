@@ -498,18 +498,87 @@
                 toggle.checked = (enabled === null || enabled === 'true');
             }
         }
+        // ---- Drag & drop file upload on chat form ----
+        document.addEventListener('DOMContentLoaded', () => {
+            const form = document.getElementById('chat-form');
+            if (!form) return;
+            form.addEventListener('dragover', e => { e.preventDefault(); form.classList.add('ring-2','ring-primary'); });
+            form.addEventListener('dragleave', () => form.classList.remove('ring-2','ring-primary'));
+            form.addEventListener('drop', e => {
+                e.preventDefault(); form.classList.remove('ring-2','ring-primary');
+                if (e.dataTransfer?.files?.length) handleFileSelect(e.dataTransfer.files);
+            });
+        });
+
+        // ---- Attachment state & helpers ----
+        let pendingAttachments = []; // { id, fileName, fileType, url }
+
+        async function handleFileSelect(files) {
+            if (!files || files.length === 0) return;
+            const fd = new FormData();
+            for (const f of files) fd.append('files', f);
+            document.getElementById('file-upload-input').value = '';
+            try {
+                const r = await fetch('/api/attachments/upload', { method: 'POST', body: fd });
+                if (!r.ok) { const t = await r.text(); alert('Upload failed: ' + t); return; }
+                const { attachments, errors } = await r.json();
+                if (errors && errors.length) console.warn('Attachment errors:', errors);
+                for (const a of attachments) pendingAttachments.push(a);
+                renderAttachmentPreview();
+            } catch(err) { console.error('Upload error', err); }
+        }
+
+        function renderAttachmentPreview() {
+            const strip = document.getElementById('attachment-preview');
+            const idsInput = document.getElementById('attachment-ids-input');
+            if (!strip) return;
+            if (pendingAttachments.length === 0) {
+                strip.classList.add('hidden');
+                strip.innerHTML = '';
+                if (idsInput) idsInput.value = '';
+                return;
+            }
+            strip.classList.remove('hidden');
+            strip.innerHTML = pendingAttachments.map(a => {
+                const isImage = a.fileType === 'image';
+                const thumb = isImage
+                    ? `<img src="${a.url}" class="w-8 h-8 object-cover rounded" loading="lazy">`
+                    : `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 opacity-60"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>`;
+                return `<div class="flex items-center gap-1 bg-base-300 rounded-lg px-2 py-1 text-xs max-w-[140px]">
+                    ${thumb}
+                    <span class="truncate flex-1" title="${a.fileName}">${a.fileName}</span>
+                    <button type="button" onclick="removeAttachment(${a.id})" class="opacity-50 hover:opacity-100 ml-1 flex-shrink-0">&times;</button>
+                </div>`;
+            }).join('');
+            if (idsInput) idsInput.value = pendingAttachments.map(a => a.id).join(',');
+        }
+
+        async function removeAttachment(id) {
+            fetch(`/api/attachments/${id}`, { method: 'DELETE' }).catch(console.error);
+            pendingAttachments = pendingAttachments.filter(a => a.id !== id);
+            renderAttachmentPreview();
+        }
+
+        function clearAttachments() {
+            pendingAttachments = [];
+            renderAttachmentPreview();
+        }
+        // ---- End attachment helpers ----
+
         async function handleFormSubmit(e) {
             if(e)e.preventDefault(); if(isSending) return false;
-            const f=document.getElementById('chat-form'),fd=new FormData(f),c=(fd.get('content')||'').trim(); if(!c)return false;
-            
+            const f=document.getElementById('chat-form'),fd=new FormData(f),c=(fd.get('content')||'').trim();
+            if(!c && pendingAttachments.length === 0) return false;
+
             // Save to input history
             const hfd = new FormData();
             hfd.append('content', c);
             fetch('/api/input-history', { method: 'POST', body: hfd }).catch(console.error);
 
-            if(selectedProjectId) fd.set('projectId', selectedProjectId); 
+            if(selectedProjectId) fd.set('projectId', selectedProjectId);
             if(selectedAgentId) fd.set('agentId', selectedAgentId);
-            addUserMessage(c); document.getElementById('chat-input').value=''; resetInputHeight(); setRequestState(true);
+            if(pendingAttachments.length > 0) fd.set('attachmentIds', pendingAttachments.map(a=>a.id).join(','));
+            addUserMessage(c || '[attachment]'); document.getElementById('chat-input').value=''; resetInputHeight(); clearAttachments(); setRequestState(true);
             
             const isStream = document.getElementById('stream-toggle')?.checked !== false;
             
@@ -587,12 +656,17 @@
                 }
             } catch(err) { b.innerHTML=`<span class="text-error">${i18n('request-error')}</span>`; }
         }
-        function addUserMessage(c) { 
-            const wb=document.getElementById('welcome-message'); if(wb)wb.remove(); 
+        function addUserMessage(c) {
+            const wb=document.getElementById('welcome-message'); if(wb)wb.remove();
             const list = document.getElementById('message-list') || document.getElementById('chat-box');
-            list.insertAdjacentHTML('beforeend',`<div class="chat chat-end group message-bubble-container"><div class="chat-bubble shadow-sm bg-primary text-primary-content markdown leading-relaxed p-3 md:p-4 rounded-[18px] rounded-tr-none"><div class="content-body">${c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div></div>${renderChatFooter(false)}</div>`); 
+            const attHtml = pendingAttachments.map(a => {
+                if (a.fileType === 'image') return `<a href="${a.url}" target="_blank" rel="noopener"><img src="${a.url}" class="max-h-32 rounded object-cover border border-base-300" loading="lazy"></a>`;
+                return `<a href="${a.url}" target="_blank" rel="noopener" class="flex items-center gap-1 text-xs underline opacity-70">📎 ${a.fileName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</a>`;
+            }).join('');
+            const attSection = attHtml ? `<div class="flex flex-wrap gap-2 mt-2">${attHtml}</div>` : '';
+            list.insertAdjacentHTML('beforeend',`<div class="chat chat-end group message-bubble-container"><div class="chat-bubble shadow-sm bg-primary text-primary-content markdown leading-relaxed p-3 md:p-4 rounded-[18px] rounded-tr-none"><div class="content-body">${c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>${attSection}</div>${renderChatFooter(false)}</div>`);
             renderMarkdown();
-            scrollToBottom(); 
+            scrollToBottom();
         }
         function renderAiBubbleId(c,id, agentName = '') { return `<div id="${id}" class="chat chat-start group message-bubble-container"><div class="chat-bubble shadow-sm bg-base-200 text-base-content border border-base-300 markdown leading-relaxed p-3 md:p-4 rounded-[18px] rounded-bl-none"><div class="content-body">${c||'<div class="typing-dots"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>'}</div></div>${renderChatFooter(true, agentName)}</div>`; }
         function renderAiBubble(c, agentName = '') { return `<div class="chat chat-start group message-bubble-container"><div class="chat-bubble shadow-sm bg-base-200 text-base-content border border-base-300 markdown leading-relaxed p-3 md:p-4 rounded-[18px] rounded-bl-none"><div class="content-body">${c}</div></div>${renderChatFooter(true, agentName)}</div>`; }

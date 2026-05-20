@@ -23,10 +23,23 @@ public static class HtmlUtils
             ? "<span class='ml-auto text-[10px] opacity-30 font-semibold'>MULTI-AGENT</span>"
             : "";
 
+        var attachmentsHtml = "";
+        if (m.Attachments != null && m.Attachments.Count > 0)
+        {
+            var items = m.Attachments.Select(a =>
+            {
+                if (a.FileType == "image")
+                    return $@"<a href=""{a.StoredPath}"" target=""_blank"" rel=""noopener""><img src=""{a.StoredPath}"" class=""max-h-32 rounded object-cover border border-base-300"" loading=""lazy""></a>";
+                return $@"<a href=""{a.StoredPath}"" target=""_blank"" rel=""noopener"" class=""flex items-center gap-1 text-xs underline opacity-70"">📎 {WebUtility.HtmlEncode(a.FileName)}</a>";
+            });
+            attachmentsHtml = $@"<div class=""flex flex-wrap gap-2 mt-2"">{string.Join("", items)}</div>";
+        }
+
         return $@"
         <div class='chat {(m.IsAi ? "chat-start" : "chat-end")} group message-bubble-container'>
             <div class='chat-bubble shadow-sm {(m.IsAi ? "bg-base-200 text-base-content border border-base-300" : "bg-primary text-primary-content")} markdown leading-relaxed p-3 md:p-4 rounded-[18px] {(m.IsAi ? "rounded-bl-none" : "rounded-tr-none")}'>
                 <div class='content-body'>{WebUtility.HtmlEncode(m.Content)}</div>
+                {attachmentsHtml}
             </div>
             <div class='chat-footer flex items-center gap-3 pt-1 px-1'>
                 {agentBadge}

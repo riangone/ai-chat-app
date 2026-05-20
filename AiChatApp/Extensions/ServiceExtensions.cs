@@ -39,6 +39,7 @@ public static class ServiceExtensions
         services.AddScoped<AiCollaborationService>();
         services.AddScoped<AiService>();
         services.AddScoped<AssistantToolService>();
+        services.AddScoped<AttachmentService>();
         services.AddSingleton<ProactiveBrainService>();
         services.AddSingleton<WebPushService>();
 

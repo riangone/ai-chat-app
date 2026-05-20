@@ -23,6 +23,7 @@ public class AppDbContext : DbContext
     public DbSet<Note> Notes => Set<Note>();
     public DbSet<ProactiveSuggestion> ProactiveSuggestions => Set<ProactiveSuggestion>();
     public DbSet<PushSubscription> PushSubscriptions => Set<PushSubscription>();
+    public DbSet<Attachment> Attachments => Set<Attachment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -49,5 +50,11 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<InputHistory>()
             .HasIndex(h => h.UserId);
+
+        modelBuilder.Entity<Attachment>()
+            .HasIndex(a => a.UserId);
+
+        modelBuilder.Entity<Attachment>()
+            .HasIndex(a => a.MessageId);
     }
 }

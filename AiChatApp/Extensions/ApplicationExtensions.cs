@@ -245,6 +245,26 @@ public static class ApplicationExtensions
             command.ExecuteNonQuery();
         }
 
+        // Attachments table
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS Attachments (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                MessageId INTEGER,
+                UserId INTEGER NOT NULL,
+                FileName TEXT NOT NULL,
+                StoredPath TEXT NOT NULL,
+                FileSize INTEGER NOT NULL DEFAULT 0,
+                MimeType TEXT NOT NULL DEFAULT '',
+                FileType TEXT NOT NULL DEFAULT 'binary',
+                UploadedAt DATETIME NOT NULL,
+                CONSTRAINT FK_Attachments_Messages_MessageId FOREIGN KEY (MessageId) REFERENCES Messages (Id) ON DELETE SET NULL
+            );";
+        command.ExecuteNonQuery();
+        command.CommandText = "CREATE INDEX IF NOT EXISTS IX_Attachments_UserId ON Attachments (UserId);";
+        command.ExecuteNonQuery();
+        command.CommandText = "CREATE INDEX IF NOT EXISTS IX_Attachments_MessageId ON Attachments (MessageId);";
+        command.ExecuteNonQuery();
+
         // Invalidate policy cache when policy files change
         var policiesPath = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies");
         if (Directory.Exists(policiesPath))

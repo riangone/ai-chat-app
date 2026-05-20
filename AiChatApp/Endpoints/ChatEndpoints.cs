@@ -144,6 +144,7 @@ public static class ChatEndpoints
             var messages = await db.Messages.AsNoTracking()
                 .Where(m => m.ChatSessionId == id)
                 .Include(m => m.AgentSteps)
+                .Include(m => m.Attachments)
                 .OrderByDescending(m => m.Timestamp)
                 .Take(pageSize)
                 .ToListAsync();
@@ -187,6 +188,7 @@ public static class ChatEndpoints
             var messages = await db.Messages.AsNoTracking()
                 .Where(m => m.ChatSessionId == id && m.Id < beforeId)
                 .Include(m => m.AgentSteps)
+                .Include(m => m.Attachments)
                 .OrderByDescending(m => m.Timestamp)
                 .Take(pageSize)
                 .ToListAsync();
@@ -274,8 +276,8 @@ public static class ChatEndpoints
             return Results.Ok();
         }).DisableAntiforgery();
 
-        group.MapPost("/chat", async (HttpContext context, AppDbContext db, AiService ai, 
-            MemoryConsolidationService consolidation, IBackgroundTaskTracker tracker, ClaimsPrincipal user) => {
+        group.MapPost("/chat", async (HttpContext context, AppDbContext db, AiService ai,
+            MemoryConsolidationService consolidation, IBackgroundTaskTracker tracker, AttachmentService attachmentSvc, ClaimsPrincipal user) => {
             var form = await context.Request.ReadFormAsync();
             var content = form["content"].ToString();
             if (string.IsNullOrWhiteSpace(content))
@@ -291,20 +293,30 @@ public static class ChatEndpoints
             var userDefaultProvider = user.FindFirstValue("DefaultProvider") ?? "";
             var isCooperative = form["mode"] == "cooperative";
 
+            var attachmentIds = form["attachmentIds"].ToString()
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => int.TryParse(s.Trim(), out var n) ? n : 0)
+                .Where(n => n > 0).ToList();
+            var attachmentContext = attachmentIds.Count > 0
+                ? await attachmentSvc.BuildPromptContextAsync(attachmentIds, userId) : "";
+
             var session = await GetOrCreateSessionAsync(db, ai, sessionId, projectId, userId, provider, userDefaultProvider, content);
             provider = ResolveProvider(session, provider, userDefaultProvider, ai.DefaultProvider);
 
             var uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
             db.Messages.Add(uMsg);
 
+            var enrichedContent = string.IsNullOrEmpty(attachmentContext) ? content : content + "\n" + attachmentContext;
+
             string aiResponse;
             if (isCooperative || selectedAgents.Any()) {
                 var aMsg = new Message { ChatSessionId = session.Id, Content = "", IsAi = true, AgentName = "Multi-Agent" };
                 db.Messages.Add(aMsg);
                 await db.SaveChangesAsync();
+                if (attachmentIds.Count > 0) await attachmentSvc.LinkToMessageAsync(attachmentIds, uMsg.Id, userId);
 
                 try {
-                    var (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, session.Id, provider, selectedAgents.Any() ? selectedAgents : null);
+                    var (html, _) = await ai.CooperateAsync(enrichedContent, userId, aMsg.Id, session.Id, provider, selectedAgents.Any() ? selectedAgents : null);
                     aMsg.Content = html;
                     aiResponse = html;
                     tracker.FireAndForget(() => consolidation.TryConsolidateAsync(content, html, userId), "Memory Consolidation");
@@ -324,10 +336,11 @@ public static class ChatEndpoints
                 return Results.Content(HtmlUtils.RenderMessage(uMsg) + HtmlUtils.RenderMessage(aMsg, aSteps1), "text/html");
             } else {
                 await db.SaveChangesAsync();
+                if (attachmentIds.Count > 0) await attachmentSvc.LinkToMessageAsync(attachmentIds, uMsg.Id, userId);
 
                 Message aMsg;
                 try {
-                    aiResponse = await ai.GetResponseAsync(content, userId, session.Id, provider, agentId);
+                    aiResponse = await ai.GetResponseAsync(enrichedContent, userId, session.Id, provider, agentId);
                     string agentName = provider;
                     if (agentId.HasValue) {
                         var agentProfile = await db.AgentProfiles.FindAsync(agentId.Value);
@@ -354,7 +367,7 @@ public static class ChatEndpoints
         }).DisableAntiforgery();
 
         group.MapPost("/chat/stream", async (HttpContext context, AppDbContext db, AiService ai,
-            MemoryConsolidationService consolidation, ClaimsPrincipal user) => {
+            MemoryConsolidationService consolidation, AttachmentService attachmentSvc, ClaimsPrincipal user) => {
             var form = await context.Request.ReadFormAsync();
             var content = form["content"].ToString();
             if (string.IsNullOrWhiteSpace(content))
@@ -367,6 +380,13 @@ public static class ChatEndpoints
             int? sessionId = int.TryParse(sessionIdStr, out var id) ? id : null;
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var userDefaultProvider = user.FindFirstValue("DefaultProvider") ?? "";
+            var attachmentIds = form["attachmentIds"].ToString()
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => int.TryParse(s.Trim(), out var n) ? n : 0)
+                .Where(n => n > 0).ToList();
+            var attachmentContext = attachmentIds.Count > 0
+                ? await attachmentSvc.BuildPromptContextAsync(attachmentIds, userId) : "";
+            var enrichedContent = string.IsNullOrEmpty(attachmentContext) ? content : content + "\n" + attachmentContext;
 
             context.Response.Headers.Append("Content-Type", "text/event-stream");
             context.Response.Headers.Append("Cache-Control", "no-cache");
@@ -380,6 +400,7 @@ public static class ChatEndpoints
                 uMsg = new Message { ChatSessionId = session.Id, Content = content, IsAi = false };
                 db.Messages.Add(uMsg);
                 await db.SaveChangesAsync();
+                if (attachmentIds.Count > 0) await attachmentSvc.LinkToMessageAsync(attachmentIds, uMsg.Id, userId);
                 context.Response.Headers.Append("X-Session-Id", session.Id.ToString());
             } catch (Exception) {
                 await context.Response.WriteAsync($"data: [ERROR:セットアップエラー。もう一度お試しください。]\n\n");
@@ -393,7 +414,7 @@ public static class ChatEndpoints
                 _ = StartKeepAliveAsync(context, keepAliveCts.Token);
 
                 try {
-                    await foreach (var chunk in ai.GetResponseStreamAsync(content, userId, session.Id, provider, agentId))
+                    await foreach (var chunk in ai.GetResponseStreamAsync(enrichedContent, userId, session.Id, provider, agentId))
                     {
                         fullResponse.Append(chunk);
                         var data = chunk.Replace("\n", "\\n").Replace("\r", "\\r");
@@ -452,18 +473,25 @@ public static class ChatEndpoints
 
         group.MapPost("/chat/cooperate/stream", async (
             HttpContext context, AppDbContext db, AiService ai,
-            MemoryConsolidationService consolidation, ClaimsPrincipal user) =>
+            MemoryConsolidationService consolidation, AttachmentService attachmentSvc, ClaimsPrincipal user) =>
         {
             var form = await context.Request.ReadFormAsync();
             var content = form["content"].ToString();
             if (string.IsNullOrWhiteSpace(content))
-                content = ""; // Allow empty to avoid compile error
+                content = "";
             var provider = form["provider"].ToString();
             int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
             var sessionIdStr = form["sessionId"].ToString();
             int? sessionId = int.TryParse(sessionIdStr, out var sid) ? sid : null;
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var userDefaultProvider = user.FindFirstValue("DefaultProvider") ?? "";
+            var attachmentIds = form["attachmentIds"].ToString()
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => int.TryParse(s.Trim(), out var n) ? n : 0)
+                .Where(n => n > 0).ToList();
+            var attachmentContext = attachmentIds.Count > 0
+                ? await attachmentSvc.BuildPromptContextAsync(attachmentIds, userId) : "";
+            var enrichedContent = string.IsNullOrEmpty(attachmentContext) ? content : content + "\n" + attachmentContext;
 
             context.Response.Headers.Append("Content-Type", "text/event-stream");
             context.Response.Headers.Append("Cache-Control", "no-cache");
@@ -485,6 +513,7 @@ public static class ChatEndpoints
             var aMsg = new Message { ChatSessionId = session.Id, Content = "", IsAi = true, AgentName = "Multi-Agent" };
             db.Messages.Add(aMsg);
             await db.SaveChangesAsync();
+            if (attachmentIds.Count > 0) await attachmentSvc.LinkToMessageAsync(attachmentIds, uMsg.Id, userId);
 
             var sessionWithProject = await db.ChatSessions
                 .Include(s => s.Project)
@@ -515,7 +544,7 @@ public static class ChatEndpoints
 
             string html;
             try {
-                (html, _) = await ai.CooperateAsync(content, userId, aMsg.Id, session.Id, provider,
+                (html, _) = await ai.CooperateAsync(enrichedContent, userId, aMsg.Id, session.Id, provider,
                     onStepComplete: async (role, stepHtml) =>
                     {
                         var payload = JsonSerializer.Serialize(new { role, html = stepHtml });
