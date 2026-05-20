@@ -131,9 +131,9 @@ rm AiChatApp/chat.db && dotnet run --project AiChatApp
 - **Markdown 渲染**: 使用 marked.js
 - **Drawer 布局**: 移动端友好
 
-## 8. 注意事项
+## 9. 最近改进 (Recent Improvements)
 
-1. 所有 AI 代理只返回最终结论，不包含推理过程（思考块）
-2. 数据库使用 EnsureCreated() 自动创建，无需迁移
-3. 记忆搜索优先级：标签完全 > 标签部分 > 内容部分
-4. 协作模式优先级：selectedAgents > 项目自定义代理 > 默认三阶段
+- **AI 动态简报**: 首页支持根据当前时间、待办进度和未读建议自动生成 AI 问候语。
+- **简报缓存机制**: 实现 30 分钟缓存逻辑，减少 AI 调用频率，支持手动强制刷新。
+- **CLI 输出格式支持**: `AiService` 支持 `--output-format` 参数（如 `plain`, `json`），提升解析效率。
+- **修复待办跳转**: 修复了首页简报中“查看待办”按钮跳转到错误页面的 Bug。

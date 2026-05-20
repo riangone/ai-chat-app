@@ -133,7 +133,7 @@ public static class BriefingEndpoints
                     </div>
                     <progress class=""progress progress-primary w-full mt-4"" value=""{progress}"" max=""100""></progress>
                     <div class=""card-actions justify-end mt-4"">
-                        <button class=""btn btn-ghost btn-sm text-primary"" onclick=""switchMainTab(1)"">查看待办</button>
+                        <button class=""btn btn-ghost btn-sm text-primary"" onclick=""openSlide('todo')"">查看待办</button>
                     </div>
                 </div>
             </div>
