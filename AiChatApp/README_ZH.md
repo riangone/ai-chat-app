@@ -243,6 +243,13 @@ SSE 事件类型（协作流）：`session` → `step-complete` → `final` → 
 | 认证 | Cookie 认证 + BCrypt 密码哈希 |
 | PWA | Web App Manifest + Service Worker |
 
+### 最近改进
+
+- **修复 opencode/copilot 调用**: 解决非流式调用时缺失提示词参数导致的失败问题。
+- **增强 Token 统计**: 支持 `opencode` 和 `gemini` 的嵌套 Token 结构解析，消耗统计更精准。
+- **UI/UX 优化**: 侧边栏“Workspace”更名为“TODO”并默认固定在标签栏，提升待办协作体验。
+- **简报缓存**: 实现 AI 动态简报 30 分钟缓存，显著提升首页加载速度并节省额度。
+
 ---
 
 ## 许可证

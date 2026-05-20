@@ -1285,7 +1285,7 @@ function handleSuggestionAction(command, payload) {
             'chat':     { label: 'Chat',      sidebarIdx: 1,  alwaysOpen: true },
             'history':  { label: 'History',   sidebarIdx: 2  },
             'projects': { label: 'Projects',  sidebarIdx: 3  },
-            'todo':     { label: 'Workspace', sidebarIdx: 4  },
+            'todo':     { label: 'TODO', sidebarIdx: 4  },
             'notes':    { label: 'Notes',     sidebarIdx: 5  },
             'files':    { label: 'Files',     sidebarIdx: 6  },
             'memory':   { label: 'Memory',    sidebarIdx: 7  },
@@ -1297,7 +1297,7 @@ function handleSuggestionAction(command, payload) {
             'stats':    { label: 'Stats',     sidebarIdx: 13 },
             'settings': { label: 'Settings',  sidebarIdx: 14 },
         };
-        let openSlideIds = ['home', 'chat', 'history'];
+        let openSlideIds = ['home', 'chat', 'history', 'todo'];
 
         function initSlidePool() {
             const slideIds = ['home','chat','todo','notes','files','memory','mindmap','projects','skills','history','cli','harness','pipeline','stats','settings'];
@@ -1344,7 +1344,7 @@ function handleSuggestionAction(command, payload) {
         }
 
         function closeSlide(slideId) {
-            if (slideId === 'home' || slideId === 'chat') return;
+            if (slideId === 'home' || slideId === 'chat' || slideId === 'todo') return;
             const wrapper = document.querySelector('.swiper-wrapper');
             if (!wrapper) return;
             const slideEl = wrapper.querySelector(`[data-slide-id="${slideId}"]`);
@@ -1373,7 +1373,7 @@ function handleSuggestionAction(command, payload) {
             bar.innerHTML = openSlideIds.map(id => {
                 const def = SLIDE_DEFS[id] || { label: id };
                 const isActive = id === activeId;
-                const closeBtn = (id !== 'chat' && id !== 'home') ? `<span onclick="event.stopPropagation();closeSlide('${id}')" class="ml-0.5 text-sm leading-none opacity-50 hover:opacity-100 hover:text-error cursor-pointer">&times;</span>` : '';
+                const closeBtn = (id !== 'chat' && id !== 'home' && id !== 'todo') ? `<span onclick="event.stopPropagation();closeSlide('${id}')" class="ml-0.5 text-sm leading-none opacity-50 hover:opacity-100 hover:text-error cursor-pointer">&times;</span>` : '';
                 return `<button onclick="openSlide('${id}')" class="flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap transition-all ${isActive ? 'bg-primary text-primary-content shadow-sm' : 'bg-base-200 hover:bg-base-300 text-base-content/60 hover:text-base-content'}">${def.label}${closeBtn}</button>`;
             }).join('');
         }

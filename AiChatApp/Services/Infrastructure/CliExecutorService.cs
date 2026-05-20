@@ -274,25 +274,33 @@ public class CliExecutorService : ICliExecutor, IDisposable
         process.OutputDataReceived += (s, e) => { if (e.Data != null) outputBuilder.AppendLine(e.Data); };
         process.ErrorDataReceived += (s, e) => { if (e.Data != null) errorBuilder.AppendLine(e.Data); };
 
+        if (provider == "opencode")
+        {
+            processInfo.ArgumentList.Add(inputToStdin);
+            inputToStdin = string.Empty;
+        }
+        else if (provider == "copilot")
+        {
+            processInfo.ArgumentList.Add("-p");
+            processInfo.ArgumentList.Add(inputToStdin);
+            inputToStdin = string.Empty;
+        }
+
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        if (provider == "opencode")
-        {
-            // opencode doesn't read from stdin easily in some versions, pass as arg
-            // but for consistency we use the same SetupProcessInfo logic as ExecuteStreamAsync
-        }
-        else if (provider == "copilot")
-        {
-            // similar for copilot
-        }
-        else
+        if (!string.IsNullOrEmpty(inputToStdin))
         {
             using (var sw = process.StandardInput) await sw.WriteAsync(inputToStdin);
         }
+        else
+        {
+            process.StandardInput.Close();
+        }
 
         if (!process.WaitForExit(TimeoutSeconds * 1000))
+
         {
             try { process.Kill(true); } catch { }
             throw new TimeoutException($"CLI process ({provider}) timed out.");
@@ -469,7 +477,11 @@ public class CliExecutorService : ICliExecutor, IDisposable
         JsonElement usageProp;
         bool hasUsage = root.TryGetProperty("usage", out usageProp) ||
                         root.TryGetProperty("usage_metadata", out usageProp) ||
-                        root.TryGetProperty("usageMetadata", out usageProp);
+                        root.TryGetProperty("usageMetadata", out usageProp) ||
+                        root.TryGetProperty("tokens", out usageProp);
+
+        if (!hasUsage && root.TryGetProperty("part", out var partEl) && partEl.TryGetProperty("tokens", out usageProp))
+            hasUsage = true;
         
         if (!hasUsage && root.TryGetProperty("message", out var msg) && msg.TryGetProperty("usage", out usageProp))
             hasUsage = true;
@@ -480,16 +492,31 @@ public class CliExecutorService : ICliExecutor, IDisposable
             foundSomething = true;
         }
 
+        // Handle gemini 'stats.models' structure
+        if (!hasUsage && root.TryGetProperty("stats", out var sEl) && sEl.TryGetProperty("models", out var modelsEl))
+        {
+            foreach (var m in modelsEl.EnumerateObject())
+            {
+                if (m.Value.TryGetProperty("tokens", out var modelTokens))
+                {
+                    foundSomething = true;
+                    if (modelTokens.TryGetProperty("prompt", out var p) || modelTokens.TryGetProperty("input", out p)) pt += p.GetInt32();
+                    if (modelTokens.TryGetProperty("candidates", out var c) || modelTokens.TryGetProperty("output", out c)) ct += c.GetInt32();
+                    if (modelTokens.TryGetProperty("total", out var t)) tt += t.GetInt32();
+                }
+            }
+        }
+
         if (hasUsage)
         {
             foundSomething = true;
-            if (usageProp.TryGetProperty("input_tokens", out var it) || usageProp.TryGetProperty("prompt_tokens", out it) || usageProp.TryGetProperty("prompt_token_count", out it) || usageProp.TryGetProperty("promptTokenCount", out it) || usageProp.TryGetProperty("inputTokenCount", out it)) 
+            if (usageProp.TryGetProperty("input_tokens", out var it) || usageProp.TryGetProperty("prompt_tokens", out it) || usageProp.TryGetProperty("prompt_token_count", out it) || usageProp.TryGetProperty("promptTokenCount", out it) || usageProp.TryGetProperty("inputTokenCount", out it) || usageProp.TryGetProperty("input", out it)) 
             { if (isIncremental) pt += it.GetInt32(); else pt = it.GetInt32(); }
             
-            if (usageProp.TryGetProperty("output_tokens", out var ot) || usageProp.TryGetProperty("completion_tokens", out ot) || usageProp.TryGetProperty("completion_token_count", out ot) || usageProp.TryGetProperty("candidate_token_count", out ot) || usageProp.TryGetProperty("candidatesTokenCount", out ot) || usageProp.TryGetProperty("candidateTokenCount", out ot) || usageProp.TryGetProperty("outputTokenCount", out ot)) 
+            if (usageProp.TryGetProperty("output_tokens", out var ot) || usageProp.TryGetProperty("completion_tokens", out ot) || usageProp.TryGetProperty("completion_token_count", out ot) || usageProp.TryGetProperty("candidate_token_count", out ot) || usageProp.TryGetProperty("candidatesTokenCount", out ot) || usageProp.TryGetProperty("candidateTokenCount", out ot) || usageProp.TryGetProperty("outputTokenCount", out ot) || usageProp.TryGetProperty("output", out ot)) 
             { if (isIncremental) ct += ot.GetInt32(); else ct = ot.GetInt32(); }
             
-            if (usageProp.TryGetProperty("total_tokens", out var tot) || usageProp.TryGetProperty("total_token_count", out tot) || usageProp.TryGetProperty("totalTokenCount", out tot))
+            if (usageProp.TryGetProperty("total_tokens", out var tot) || usageProp.TryGetProperty("total_token_count", out tot) || usageProp.TryGetProperty("totalTokenCount", out tot) || usageProp.TryGetProperty("total", out tot))
             { if (isIncremental) tt += tot.GetInt32(); else tt = tot.GetInt32(); }
 
             if (usageProp.TryGetProperty("cache_read_input_tokens", out var crit)) { pt += crit.GetInt32(); }

@@ -136,4 +136,6 @@ rm AiChatApp/chat.db && dotnet run --project AiChatApp
 - **AI 动态简报**: 首页支持根据当前时间、待办进度和未读建议自动生成 AI 问候语。
 - **简报缓存机制**: 实现 30 分钟缓存逻辑，减少 AI 调用频率，支持手动强制刷新。
 - **CLI 输出格式支持**: `AiService` 支持 `--output-format` 参数（如 `plain`, `json`），提升解析效率。
+- **修复 opencode/copilot 调用**: 修复了 `opencode` 和 `copilot` 在非流式模式下因提示词传参方式不正确导致的调用失败问题。
+- **增强 Token 解析**: 增强了对 `opencode` (part.tokens) 和 `gemini` (stats.models) 嵌套 Token 结构的解析支持，确保统计准确。
 - **修复待办跳转**: 修复了首页简报中“查看待办”按钮跳转到错误页面的 Bug。
