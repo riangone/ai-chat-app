@@ -50,6 +50,7 @@ Reviewer → per-subtask 结构化反馈（verdict / score / issues）
 
 - `FileWatcherService`：监控项目目录文件变更，实时通过 SignalR 推送到前端
 - `ProjectPulseService`：每 10 分钟增量扫描 Git 提交，触发 AI 主动分析
+- **AI 动态简报**：首页根据当前时间、待办进度和未读建议，通过 Gemini 动态生成个性化的温馨问候和今日摘要（支持 Markdown）。
 
 ### 技能文件系统（SKILL.md）
 

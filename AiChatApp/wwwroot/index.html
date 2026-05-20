@@ -120,12 +120,15 @@
             .sidebar { position: fixed; top: 0; bottom: 0; left: -260px; }
             .drawer-open .sidebar { left: 0; box-shadow: 10px 0 30px rgba(0,0,0,0.1); }
             .drawer-open .drawer-overlay { opacity: 1; pointer-events: auto; background: rgba(0,0,0,0.3); backdrop-filter: blur(4px); }
-            .main-content { padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px)); }
-            #global-footer { bottom: calc(4rem + env(safe-area-inset-bottom, 0px)) !important; }
-            #proactive-suggestions { bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px)); }
-            #chat-box { padding-bottom: calc(15rem + env(safe-area-inset-bottom, 0px)); }
-            .btm-nav { padding-bottom: env(safe-area-inset-bottom, 0px); }
+            #global-footer { bottom: 0 !important; }
+            #proactive-suggestions { bottom: 1.5rem; }
+            #chat-box { padding-bottom: 12rem; }
         }
+        #slide-tab-bar { display: none !important; }
+        #slide-tab-bar::-webkit-scrollbar { display: none; }
+        .sidebar-subitem { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 1rem; cursor: pointer; transition: all 0.15s ease; color: hsl(var(--bc) / 0.5); font-size: 0.8rem; font-weight: 600; border-radius: 0.75rem; }
+        .sidebar-subitem:hover { background: rgba(0,0,0,0.04); color: hsl(var(--bc)); }
+        .sidebar-subitem.active { color: hsl(var(--p)); font-weight: 700; }
         .notes-explorer-collapsed {
             margin-left: -20rem;
             opacity: 0;
@@ -250,7 +253,7 @@
         }
         async function loadIntoChatPanel(url) {
             const panel = document.getElementById('chat-panel'); if (!panel) return;
-            switchMainTab(0); panel.innerHTML = emptyPanelMarkup(i18n('loading'));
+            openSlide('chat'); panel.innerHTML = emptyPanelMarkup(i18n('loading'));
             try {
                 const response = await fetch(url, { headers: { 'HX-Request': 'true' } });
                 const html = await response.text(); panel.innerHTML = html;
@@ -280,118 +283,29 @@
             }
         }
         function updateTabBar(index) {
-            // sidebar order: Chat(0) Workspace(1) Notes(2) Memory(3) Projects(4) Settings(5)
-            const slideToSidebar = {
-                0: 0,   // Chat
-                1: 1,   // Todo → Workspace
-                2: 2,   // Notes → Notes
-                3: 1,   // Files → Workspace
-                4: 3,   // Memory → Memory
-                5: 3,   // Mindmap → Memory
-                6: 4,   // Projects → Projects
-                7: 4,   // Skills → Projects
-                8: 0,   // History → Chat
-                9: 4,   // CLI → Projects
-                10: 5,  // Settings → Settings
-                11: 4,  // Harness → Projects
-                12: 4,  // Pipeline → Projects
-                13: 4,  // Stats → Projects
-            };
-            const i = slideToSidebar[index] ?? -1;
-            document.querySelectorAll('.sidebar-item').forEach((item, idx) => {
-                item.classList.toggle('active', idx === i);
-            });
-            // btm-nav order: Chat(0) Workspace(1) Memory(2) Projects(3) Settings(4)
-            const slideToBtmNav = {
-                0: 0,   // Chat
-                1: 1,   // Todo → Workspace
-                2: 1,   // Notes → Workspace
-                3: 1,   // Files → Workspace
-                4: 2,   // Memory → Memory
-                5: 2,   // Mindmap → Memory
-                6: 3,   // Projects → Projects
-                7: 3,   // Skills → Projects
-                8: 0,   // History → Chat
-                9: 3,   // CLI → Projects
-                10: 4,  // Settings → Settings
-                11: 3,  // Harness → Projects
-                12: 3,  // Pipeline → Projects
-                13: 3,  // Stats → Projects
-            };
-            const bi = slideToBtmNav[index] ?? -1;
-            document.querySelectorAll('.btm-nav button').forEach((btn, idx) => {
-                btn.classList.toggle('active', idx === bi);
-            });
-            document.querySelectorAll('.swiper-slide .tabs a.tab').forEach(t => t.classList.remove('tab-active'));
-            document.querySelectorAll(`.swiper-slide a[onclick*="switchMainTab(${index})"]`).forEach(t => t.classList.add('tab-active'));
+            const ids = ['home','chat','todo','notes','files','memory','mindmap','projects','skills','history','cli','settings','harness','pipeline','stats'];
+            const slideId = ids[index] || 'home';
+            const def = SLIDE_DEFS[slideId];
+            const sidebarIdx = def?.sidebarIdx ?? -1;
+            document.querySelectorAll('.sidebar-item').forEach((item, i) => item.classList.toggle('active', i === sidebarIdx));
+            updateSlideTabBar();
         }
 
         function ensureTabDataLoaded(index) {
-            const containerMap = {
-                1: { id: 'todo-list', trigger: 'refreshTodoList' },
-                2: { id: 'notes-list', trigger: 'refreshNoteList' },
-                4: { id: 'memory-list-container', trigger: 'loadMemories' },
-                6: { id: 'projects-list-container', trigger: 'loadProjects' },
-                7: { id: 'skills-list-container', trigger: 'loadSkills' },
-                8: { id: 'history-list-container', trigger: 'loadHistory' },
-                9: { id: 'cli-list-container', trigger: 'loadCli' },
-            };
-            const config = containerMap[index];
-            if (config) {
-                const el = document.getElementById(config.id);
-                if (el && !el.dataset.loaded) {
-                    htmx.trigger(el, config.trigger);
-                    el.dataset.loaded = 'true';
-                }
-                return;
-            }
-
-            if (index === 3) {
-                const f = document.getElementById('files-content');
-                if (f && !f.dataset.loaded) {
-                    browsePath(currentFilesPath || '');
-                    f.dataset.loaded = 'true';
-                }
-            } else if (index === 5) {
-                loadMemoryGraph();
-            } else if (index === 11) {
-                const h = document.getElementById('harness-content-area');
-                if (h && !h.dataset.loaded) {
-                    switchHarnessTab('pipelines');
-                    h.dataset.loaded = 'true';
-                }
-            } else if (index === 12) {
-                const p = document.getElementById('pipeline-panel');
-                if (p && !p.dataset.loaded) {
-                    initPipelinePanel();
-                    p.dataset.loaded = 'true';
-                }
-            } else if (index === 13) {
-                const el = document.getElementById('agent-stats-container');
-                if (el && !el.dataset.loaded) {
-                    htmx.trigger(el, 'loadStats');
-                    el.dataset.loaded = 'true';
-                }
-            }
+            const ids = ['home','chat','todo','notes','files','memory','mindmap','projects','skills','history','cli','settings','harness','pipeline','stats'];
+            ensureSlideDataLoaded(ids[index] || 'home');
         }
 
         function switchMainTab(index) {
-            if (swiper) swiper.slideTo(index, 0);
-            updateTabBar(index);
-            const f = document.getElementById('global-footer');
-            if (f) f.style.display = (index === 0) ? 'block' : 'none';
-            ensureTabDataLoaded(index);
-            closeDrawer();
+            const ids = ['home','chat','todo','notes','files','memory','mindmap','projects','skills','history','cli','settings','harness','pipeline','stats'];
+            const slideId = ids[index];
+            if (slideId) openSlide(slideId);
         }
         function toggleDrawer() { document.querySelector('.app-container').classList.toggle('drawer-open'); }
         function closeDrawer() { document.querySelector('.app-container').classList.remove('drawer-open'); }
         function showBriefing() {
-            document.getElementById('session-id-input').value = '';
-            const chatBox = document.getElementById('chat-box');
-            chatBox.innerHTML = `<div id="welcome-message" hx-get="/api/assistant/briefing/html" hx-trigger="load" class="h-full"><div class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4"><span class="loading loading-spinner loading-lg opacity-20"></span></div></div>`;
-            htmx.process(chatBox);
-            document.getElementById('delete-current-chat-btn')?.classList.add('hidden');
-            switchMainTab(0);
+            htmx.trigger('#home-briefing-content', 'refreshBriefing');
+            openSlide('home');
         }
         async function editTitle(id, old) { const n = prompt(i18n('rename-chat-prompt') || 'New title:', old); if (!n || n === old) return; const fd = new FormData(); fd.append('id', id); fd.append('title', n); try { const r = await fetch('/api/chat/rename', { method: 'POST', body: fd }); if (r.ok) loadPanelData('history-panel'); } catch (e) { console.error(e); } }
         async function deleteChat(id) { 
@@ -408,13 +322,7 @@
                     const a = document.querySelector('#chat-box'); 
                     if (a && a.dataset.sessionId == id) { 
                         document.getElementById('session-id-input').value = ''; 
-                        a.innerHTML = `<div id="welcome-message" hx-get="/api/assistant/briefing/html" hx-trigger="load" class="h-full">
-                            <div class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4">
-                                <span class="loading loading-spinner loading-lg opacity-20"></span>
-                                <p class="text-xl font-medium text-center" data-i18n="loading-briefing">Loading your morning briefing...</p>
-                            </div>
-                        </div>`;
-                        htmx.process(a);
+                        a.innerHTML = '<div id="welcome-message" class="h-full flex flex-col items-center justify-center text-base-content/20 gap-3"><p class="text-sm font-semibold">Start a new conversation</p></div>';
                         a.dataset.sessionId = '';
                         syncActiveSessionFromDom();
                     } 
@@ -1061,7 +969,7 @@ function handleSuggestionAction(command, payload) {
     switch(command) {
         case 'open-session':
             loadChatSession(payload);
-            switchMainTab(0);
+            openSlide('chat');
             break;
         case 'copy-to-chat':
             const chatInput = document.getElementById('chat-input');
@@ -1107,12 +1015,7 @@ function handleSuggestionAction(command, payload) {
         }
 
         function viewFile(filePath) {
-            // Find Files slide index
-            const filesSlide = document.getElementById('files-slide');
-            if (filesSlide) {
-                const index = Array.from(filesSlide.parentElement.children).indexOf(filesSlide);
-                if (index >= 0) switchMainTab(index);
-            }
+            openSlide('files');
             browsePath(filePath);
         }
 
@@ -1376,8 +1279,127 @@ function handleSuggestionAction(command, payload) {
             } catch (e) { console.error(e); }
         }
 
+        // === Dynamic Slide Management ===
+        const SLIDE_DEFS = {
+            'home':     { label: 'Home',      sidebarIdx: 0,  alwaysOpen: true },
+            'chat':     { label: 'Chat',      sidebarIdx: 1,  alwaysOpen: true },
+            'history':  { label: 'History',   sidebarIdx: 2  },
+            'projects': { label: 'Projects',  sidebarIdx: 3  },
+            'todo':     { label: 'Workspace', sidebarIdx: 4  },
+            'notes':    { label: 'Notes',     sidebarIdx: 5  },
+            'files':    { label: 'Files',     sidebarIdx: 6  },
+            'memory':   { label: 'Memory',    sidebarIdx: 7  },
+            'mindmap':  { label: 'Mindmap',   sidebarIdx: 8  },
+            'skills':   { label: 'Skills',    sidebarIdx: 9  },
+            'cli':      { label: 'CLI',       sidebarIdx: 10 },
+            'harness':  { label: 'Harness',   sidebarIdx: 11 },
+            'pipeline': { label: 'Pipeline',  sidebarIdx: 12 },
+            'stats':    { label: 'Stats',     sidebarIdx: 13 },
+            'settings': { label: 'Settings',  sidebarIdx: 14 },
+        };
+        let openSlideIds = ['home', 'chat', 'history'];
+
+        function initSlidePool() {
+            const slideIds = ['home','chat','todo','notes','files','memory','mindmap','projects','skills','history','cli','harness','pipeline','stats','settings'];
+            const pool = document.createElement('div');
+            pool.id = 'slide-pool';
+            pool.style.cssText = 'display:none!important;position:absolute;visibility:hidden;pointer-events:none;';
+            document.body.appendChild(pool);
+            const wrapper = document.querySelector('.swiper-wrapper');
+            if (!wrapper) return;
+            const slides = Array.from(wrapper.querySelectorAll(':scope > .swiper-slide'));
+            slides.forEach((slide, i) => {
+                const id = slideIds[i] || ('slide-' + i);
+                slide.dataset.slideId = id;
+                if (!openSlideIds.includes(id)) {
+                    pool.appendChild(slide);
+                }
+            });
+        }
+
+        function openSlide(slideId) {
+            const def = SLIDE_DEFS[slideId];
+            if (!def) return;
+            const wrapper = document.querySelector('.swiper-wrapper');
+            if (!wrapper) return;
+            let slideEl = wrapper.querySelector(`[data-slide-id="${slideId}"]`);
+            if (!slideEl) {
+                const pool = document.getElementById('slide-pool');
+                if (!pool) return;
+                slideEl = pool.querySelector(`[data-slide-id="${slideId}"]`);
+                if (!slideEl) return;
+                wrapper.appendChild(slideEl);
+                if (!openSlideIds.includes(slideId)) openSlideIds.push(slideId);
+                if (swiper) swiper.update();
+                ensureSlideDataLoaded(slideId);
+            }
+            const slides = Array.from(wrapper.querySelectorAll(':scope > .swiper-slide'));
+            const idx = slides.findIndex(s => s.dataset.slideId === slideId);
+            if (idx >= 0 && swiper) swiper.slideTo(idx, 0);
+            const sidebarIdx = def.sidebarIdx ?? -1;
+            document.querySelectorAll('.sidebar-item').forEach((item, i) => item.classList.toggle('active', i === sidebarIdx));
+            const footer = document.getElementById('global-footer');
+            if (footer) footer.style.display = (slideId === 'chat') ? 'block' : 'none';
+            updateSlideTabBar();            closeDrawer();
+        }
+
+        function closeSlide(slideId) {
+            if (slideId === 'home' || slideId === 'chat') return;
+            const wrapper = document.querySelector('.swiper-wrapper');
+            if (!wrapper) return;
+            const slideEl = wrapper.querySelector(`[data-slide-id="${slideId}"]`);
+            if (!slideEl) return;
+            const pool = document.getElementById('slide-pool');
+            if (!pool) return;
+            const slides = Array.from(wrapper.querySelectorAll(':scope > .swiper-slide'));
+            const idx = slides.findIndex(s => s.dataset.slideId === slideId);
+            pool.appendChild(slideEl);
+            openSlideIds = openSlideIds.filter(id => id !== slideId);
+            if (swiper) {
+                swiper.update();
+                const newCount = wrapper.querySelectorAll(':scope > .swiper-slide').length;
+                swiper.slideTo(Math.min(Math.max(0, idx - 1), newCount - 1), 0);
+            }
+            updateSlideTabBar();
+        }
+
+        function updateSlideTabBar() {
+            const bar = document.getElementById('slide-tab-bar');
+            if (!bar) return;
+            const wrapper = document.querySelector('.swiper-wrapper');
+            const activeSlide = wrapper?.querySelector('.swiper-slide-active');
+            const activeId = activeSlide?.dataset.slideId || 'chat';
+            bar.style.display = openSlideIds.length > 1 ? 'flex' : 'none';
+            bar.innerHTML = openSlideIds.map(id => {
+                const def = SLIDE_DEFS[id] || { label: id };
+                const isActive = id === activeId;
+                const closeBtn = (id !== 'chat' && id !== 'home') ? `<span onclick="event.stopPropagation();closeSlide('${id}')" class="ml-0.5 text-sm leading-none opacity-50 hover:opacity-100 hover:text-error cursor-pointer">&times;</span>` : '';
+                return `<button onclick="openSlide('${id}')" class="flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap transition-all ${isActive ? 'bg-primary text-primary-content shadow-sm' : 'bg-base-200 hover:bg-base-300 text-base-content/60 hover:text-base-content'}">${def.label}${closeBtn}</button>`;
+            }).join('');
+        }
+
+        function ensureSlideDataLoaded(slideId) {
+            const loaders = {
+                'todo':     () => { const el=document.getElementById('todo-list');            if(el&&!el.dataset.loaded){htmx.trigger(el,'refreshTodoList');el.dataset.loaded='true';} },
+                'notes':    () => { const el=document.getElementById('notes-list');           if(el&&!el.dataset.loaded){htmx.trigger(document.body,'refreshNoteList');el.dataset.loaded='true';} },
+                'files':    () => { const f=document.getElementById('files-content');         if(f&&!f.dataset.loaded){browsePath(currentFilesPath||'');f.dataset.loaded='true';} },
+                'memory':   () => { const el=document.getElementById('memory-list-container');if(el&&!el.dataset.loaded){htmx.trigger(el,'loadMemories');el.dataset.loaded='true';} },
+                'mindmap':  () => loadMemoryGraph(),
+                'projects': () => { const el=document.getElementById('projects-list-container');if(el&&!el.dataset.loaded){htmx.trigger(el,'loadProjects');el.dataset.loaded='true';} },
+                'skills':   () => { const el=document.getElementById('skills-list-container');  if(el&&!el.dataset.loaded){htmx.trigger(el,'loadSkills');el.dataset.loaded='true';} },
+                'history':  () => { const el=document.getElementById('history-list-container'); if(el&&!el.dataset.loaded){htmx.trigger(el,'loadHistory');el.dataset.loaded='true';} },
+                'cli':      () => { const el=document.getElementById('cli-list-container');     if(el&&!el.dataset.loaded){htmx.trigger(el,'loadCli');el.dataset.loaded='true';} },
+                'harness':  () => { const h=document.getElementById('harness-content-area');   if(h&&!h.dataset.loaded){switchHarnessTab('pipelines');h.dataset.loaded='true';} },
+                'pipeline': () => { const p=document.getElementById('pipeline-panel');          if(p&&!p.dataset.loaded){initPipelinePanel();p.dataset.loaded='true';} },
+                'stats':    () => { const el=document.getElementById('agent-stats-container');  if(el&&!el.dataset.loaded){htmx.trigger(el,'loadStats');el.dataset.loaded='true';} },
+            };
+            const fn = loaders[slideId];
+            if (fn) fn();
+        }
+        // === End Slide Management ===
+
         window.addEventListener('DOMContentLoaded', () => {
-            initTheme(); updateUI(); renderUserProfile(); renderMarkdown(); syncActiveSessionFromDom(); syncProjectContext(); wirePanelNavigation(); loadCurrentUser(); loadPanelData('history-panel');
+            initTheme(); updateUI(); renderUserProfile(); renderMarkdown(); syncActiveSessionFromDom(); syncProjectContext(); wirePanelNavigation(); loadCurrentUser();
             refreshHarnessBadge();
             loadStreamPreference();
             
@@ -1385,6 +1407,13 @@ function handleSuggestionAction(command, payload) {
                 updateUI();
                 if (e.detail.pathInfo.requestPath.includes('footer.html')) {
                     loadStreamPreference();
+                    const footer = document.getElementById('global-footer');
+                    if (footer) {
+                        const wrapper = document.querySelector('.swiper-wrapper');
+                        const activeSlide = wrapper?.querySelector('.swiper-slide-active');
+                        const activeSlideId = activeSlide?.dataset.slideId || 'home';
+                        footer.style.display = activeSlideId === 'chat' ? 'block' : 'none';
+                    }
                 }
                 if (e.detail.pathInfo.requestPath.includes('modals.html')) {
                     updatePresetDropdown();
@@ -1393,7 +1422,10 @@ function handleSuggestionAction(command, payload) {
             });
 
             if (document.getElementById('global-footer')) document.getElementById('global-footer').style.display = 'block';
-             
+
+            // Move non-chat slides to pool BEFORE swiper init
+            initSlidePool();
+
              // Initialize main swiper
              if (!window.swiper) {
                  window.swiper = swiper = new Swiper('.content-swiper', {
@@ -1423,15 +1455,19 @@ function handleSuggestionAction(command, payload) {
                      observeParents: true,
                      on: {
                          slideChange: function() {
-                             const index = this.activeIndex;
-                             updateTabBar(index);
+                             const slides = Array.from(document.querySelectorAll('.swiper-wrapper > .swiper-slide'));
+                             const slideId = slides[this.activeIndex]?.dataset.slideId || 'home';
+                             const def = SLIDE_DEFS[slideId];
                              const footer = document.getElementById('global-footer');
-                             if (footer) footer.style.display = (index === 0) ? 'block' : 'none';
-                             ensureTabDataLoaded(index);
-                         }
+                             if (footer) footer.style.display = (slideId === 'chat') ? 'block' : 'none';
+                             const sidebarIdx = def?.sidebarIdx ?? -1;
+                             document.querySelectorAll('.sidebar-item').forEach((item, i) => item.classList.toggle('active', i === sidebarIdx));
+                             ensureSlideDataLoaded(slideId);
+                             updateSlideTabBar();                         }
                      }
                  });
              }
+             updateSlideTabBar();
             // Notes slide transition (CSS transform based, no Swiper dependency)
             window.goToNoteSlide = function(index) {
                 const list = document.getElementById('notes-slide-list');
@@ -1446,7 +1482,7 @@ function handleSuggestionAction(command, payload) {
                 }
             };
 
-            document.body.addEventListener('htmx:afterOnLoad', function(evt) { if (evt.detail.target.id === 'chat-panel' || evt.detail.target.id === 'chat-box') { renderMarkdown(); syncActiveSessionFromDom(); switchMainTab(0); } });
+            document.body.addEventListener('htmx:afterOnLoad', function(evt) { if (evt.detail.target.id === 'chat-panel' || evt.detail.target.id === 'chat-box') { renderMarkdown(); syncActiveSessionFromDom(); openSlide('chat'); } });
         });
         marked.setOptions({ gfm: true, breaks: true });
 
@@ -2101,11 +2137,35 @@ function handleSuggestionAction(command, payload) {
         <div hx-get="/components/sidebar.html" hx-trigger="load" hx-swap="outerHTML"></div>
 
         <main class="main-content">
+            <div id="slide-tab-bar" class="items-center gap-1 px-2 py-1.5 overflow-x-auto border-b border-base-content/8 bg-base-100 shrink-0 pl-16 md:pl-2" style="display:none;min-height:2.5rem;"></div>
             <div class="swiper content-swiper">
                 <!-- Swiper Navigation -->
                 <div class="swiper-button-next hidden md:flex !text-primary/30 hover:!text-primary transition-all" style="--swiper-navigation-size: 20px; width: 30px; height: 30px;"></div>
                 <div class="swiper-button-prev hidden md:flex !text-primary/30 hover:!text-primary transition-all" style="--swiper-navigation-size: 20px; width: 30px; height: 30px;"></div>
                 <div class="swiper-wrapper">
+                    <!-- Home slide (briefing) -->
+                    <div class="swiper-slide">
+                        <div class="shell-header">
+                            <div class="shell-badge">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg>
+                                <span>Home</span>
+                            </div>
+                            <div class="right-actions">
+                                <button onclick="htmx.trigger('#home-briefing-content', 'refreshBriefing')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Refresh Briefing">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="home-panel" class="flex flex-col flex-1">
+                            <div id="home-briefing-content" hx-get="/api/assistant/briefing/html" hx-trigger="load, refreshBriefing" class="flex-1 overflow-y-auto custom-scrollbar">
+                                <div class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4">
+                                    <span class="loading loading-spinner loading-lg opacity-20"></span>
+                                    <p class="text-xl font-medium text-center" data-i18n="loading-briefing">Loading your morning briefing...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Chat slide -->
                     <div class="swiper-slide">
                         <div class="shell-header">
                             <div class="flex items-center gap-2">
@@ -2123,7 +2183,7 @@ function handleSuggestionAction(command, payload) {
                                   </div>
                                   <span class="hidden sm:inline text-[11px] font-bold uppercase tracking-wider opacity-60">Inbox</span>
                                 </button>
-                                <button onclick="document.getElementById('session-id-input').value=''; htmx.ajax('POST', '/api/chat/new', {target:'#chat-panel', swap:'innerHTML', values:{projectId: selectedProjectId || ''}}); switchMainTab(0);"
+                                <button onclick="document.getElementById('session-id-input').value=''; htmx.ajax('POST', '/api/chat/new', {target:'#chat-panel', swap:'innerHTML', values:{projectId: selectedProjectId || ''}}); openSlide('chat');"
                                         class="btn btn-ghost btn-sm btn-circle text-primary"
                                         data-i18n-title="new-chat">
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
@@ -2149,27 +2209,23 @@ function handleSuggestionAction(command, payload) {
                                 </div>
                             </div>
                         </div>
-                        <div class="tabs tabs-boxed bg-base-300/50 p-1 mx-4 mt-2 rounded-2xl justify-center">
-                            <a onclick="switchMainTab(0)" class="tab tab-sm font-bold rounded-xl px-4 tab-active">Chat</a>
-                            <a onclick="switchMainTab(8)" class="tab tab-sm font-bold rounded-xl px-4">History</a>
-                        </div>
                         <div id="chat-panel" class="flex flex-col flex-1">
                             <div id="chat-box" class="flex-1 overflow-y-auto p-4 md:p-6 space-y-8 custom-scrollbar">
-                                <div id="welcome-message" hx-get="/api/assistant/briefing/html" hx-trigger="load" class="h-full">
-                                    <div class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4">
-                                        <span class="loading loading-spinner loading-lg opacity-20"></span>
-                                        <p class="text-xl font-medium text-center" data-i18n="loading-briefing">Loading your morning briefing...</p>
-                                    </div>
+                                <div id="welcome-message" class="h-full flex flex-col items-center justify-center text-base-content/20 gap-3">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1" stroke="currentColor" class="w-16 h-16 opacity-30"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.051-7.043.151-1.584.233-2.707 1.626-2.707 3.228V12.74Z" /></svg>
+                                    <p class="text-sm font-semibold">Start a new conversation</p>
                                 </div>
                             </div>
                         </div>
                     </div>
                     <div class="swiper-slide">
-                        <div class="shell-header"><div class="shell-badge"><span data-i18n="todo-title">Todo List</span></div></div>
-                        <div class="tabs tabs-boxed bg-base-300/50 p-1 mx-4 mt-2 rounded-2xl justify-center">
-                            <a onclick="switchMainTab(1)" class="tab tab-sm font-bold rounded-xl px-4 tab-active">Todo</a>
-                            <a onclick="switchMainTab(2)" class="tab tab-sm font-bold rounded-xl px-4">Notes</a>
-                            <a onclick="switchMainTab(3)" class="tab tab-sm font-bold rounded-xl px-4">Files</a>
+                        <div class="shell-header">
+                            <div class="shell-badge"><span data-i18n="todo-title">Todo List</span></div>
+                            <div class="right-actions">
+                                <button onclick="closeSlide('todo')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
                         </div>
                         <div id="todo-panel" class="flex flex-col flex-1">
                             <div class="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1">
@@ -2203,6 +2259,9 @@ function handleSuggestionAction(command, payload) {
                                         <div class="flex items-center gap-2">
                                             <div class="w-7 h-7 rounded-lg bg-primary/20 text-primary flex items-center justify-center font-black text-xs">N</div>
                                             <h3 class="text-xs font-black uppercase tracking-[0.2em] opacity-40">Library</h3>
+                                            <button onclick="closeSlide('notes')" class="btn btn-ghost btn-xs btn-circle opacity-40 hover:opacity-100 ml-1" title="Close">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                            </button>
                                         </div>
                                         <button hx-post="/api/notes" hx-vals='{"title": "New Note"}' hx-target="#note-content"
                                                 hx-on::after-request="onNoteCreated(event)"
@@ -2252,6 +2311,11 @@ function handleSuggestionAction(command, payload) {
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 9.75h16.5m-16.5 4.5h16.5m-16.5 4.5h16.5m-16.5 4.5h16.5" /></svg>
                                 <span data-i18n="files">File Manager</span>
                             </div>
+                            <div class="right-actions">
+                                <button onclick="closeSlide('files')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
                         </div>
                         <div id="files-panel" class="flex flex-col flex-1">
                             <div id="files-content" class="flex-1 overflow-y-auto custom-scrollbar">
@@ -2260,10 +2324,14 @@ function handleSuggestionAction(command, payload) {
                         </div>
                     </div>
                     <div class="swiper-slide">
-                        <div class="shell-header"><div class="shell-badge"><span data-i18n="memory-title">Memory</span></div><button onclick="htmx.trigger('#memory-list-container','loadMemories')" class="btn btn-ghost btn-xs opacity-60 hover:opacity-100" title="Refresh"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg></button></div>
-                        <div class="tabs tabs-boxed bg-base-300/50 p-1 mx-4 mt-2 rounded-2xl justify-center">
-                            <a onclick="switchMainTab(4)" class="tab tab-sm font-bold rounded-xl px-4 tab-active">Memory</a>
-                            <a onclick="switchMainTab(5)" class="tab tab-sm font-bold rounded-xl px-4">Mindmap</a>
+                        <div class="shell-header">
+                            <div class="shell-badge"><span data-i18n="memory-title">Memory</span></div>
+                            <div class="right-actions flex items-center gap-1">
+                                <button onclick="htmx.trigger('#memory-list-container','loadMemories')" class="btn btn-ghost btn-xs opacity-60 hover:opacity-100" title="Refresh"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg></button>
+                                <button onclick="closeSlide('memory')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
                         </div>
                         <div id="memory-panel" class="flex flex-col flex-1"><div id="memory-list-container" hx-get="/api/memories" hx-trigger="loadMemories" hx-target="#memory-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-4xl mx-auto space-y-4" id="memory-list"></div></div></div>
                     </div>
@@ -2297,6 +2365,9 @@ function handleSuggestionAction(command, payload) {
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
                                     <span class="text-[10px] uppercase font-bold tracking-widest">Reset</span>
                                 </button>
+                                <button onclick="closeSlide('mindmap')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
                             </div>
                         </div>
                         <nav id="mindmap-breadcrumb" class="px-6 pt-3 pb-0 flex items-center gap-1 text-xs text-base-content/70">
@@ -2317,35 +2388,158 @@ function handleSuggestionAction(command, payload) {
                         </div>
                     </div>
                     <div class="swiper-slide">
-                        <div class="shell-header"><div class="shell-badge"><span data-i18n="projects-title">Workspaces</span></div><div class="right-actions"><button onclick="project_modal.showModal()" class="btn btn-ghost btn-sm btn-circle text-primary" data-i18n-title="new-project"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button></div></div>
-                        <div class="tabs tabs-boxed bg-base-300/50 p-1 mx-4 mt-2 rounded-2xl justify-center">
-                            <a onclick="switchMainTab(6)" class="tab tab-sm font-bold rounded-xl px-4 tab-active">Projects</a>
-                            <a onclick="switchMainTab(7)" class="tab tab-sm font-bold rounded-xl px-4">Skills</a>
+                        <div class="shell-header">
+                            <div class="shell-badge"><span data-i18n="projects-title">Workspaces</span></div>
+                            <div class="right-actions">
+                                <button onclick="project_modal.showModal()" class="btn btn-ghost btn-sm btn-circle text-primary" data-i18n-title="new-project"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button>
+                                <button onclick="closeSlide('projects')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
                         </div>
                         <div id="projects-panel" class="flex flex-col flex-1"><div id="projects-list-container" hx-get="/api/projects/list-html" hx-trigger="loadProjects" hx-target="#projects-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto w-full"><div id="selected-project-info" class="hidden mb-8 p-6 bg-primary/10 border border-primary/20 rounded-2xl"><div class="flex justify-between items-start"><div><span class="text-xl font-bold text-primary" id="current-project-name">No Project</span><p class="text-sm opacity-60 mt-1" id="current-project-path"></p></div><button onclick="deselectProject()" class="btn btn-ghost btn-sm text-error">✕ Deselect</button></div><div class="mt-4 flex gap-2"><button onclick="showAgentModal()" class="btn btn-primary">Manage Roles</button></div><div class="divider text-xs opacity-30 mt-8">Project History</div><div id="project-chat-list" class="flex flex-col gap-2"></div></div><div id="projects-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div></div></div></div>
                     </div>
                     <div class="swiper-slide">
-                        <div class="shell-header"><div class="shell-badge"><span data-i18n="skills-title">Skills</span></div><div class="right-actions"><button onclick="createSkill()" class="btn btn-ghost btn-sm btn-circle text-primary" data-i18n-title="skills"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button></div></div>
-                        <div class="tabs tabs-boxed bg-base-300/50 p-1 mx-4 mt-2 rounded-2xl justify-center">
-                            <a onclick="switchMainTab(6)" class="tab tab-sm font-bold rounded-xl px-4">Projects</a>
-                            <a onclick="switchMainTab(7)" class="tab tab-sm font-bold rounded-xl px-4 tab-active">Skills</a>
+                        <div class="shell-header">
+                            <div class="shell-badge"><span data-i18n="skills-title">Skills</span></div>
+                            <div class="right-actions">
+                                <button onclick="createSkill()" class="btn btn-ghost btn-sm btn-circle text-primary" data-i18n-title="skills"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button>
+                                <button onclick="closeSlide('skills')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
                         </div>
                         <div id="skills-panel" class="flex flex-col flex-1"><div id="skills-list-container" hx-get="/api/skills" hx-trigger="loadSkills" hx-target="#skills-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6" id="skills-list"></div></div></div>
                     </div>
                     <div class="swiper-slide">
-                        <div class="shell-header"><div class="shell-badge"><span data-i18n="history-title">History</span></div></div>
-                        <div class="tabs tabs-boxed bg-base-300/50 p-1 mx-4 mt-2 rounded-2xl justify-center">
-                            <a onclick="switchMainTab(0)" class="tab tab-sm font-bold rounded-xl px-4">Chat</a>
-                            <a onclick="switchMainTab(8)" class="tab tab-sm font-bold rounded-xl px-4 tab-active">History</a>
+                        <div class="shell-header">
+                            <div class="shell-badge"><span data-i18n="history-title">History</span></div>
+                            <div class="right-actions">
+                                <button onclick="closeSlide('history')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
                         </div>
                         <div id="history-panel" class="flex flex-col flex-1"><div id="history-list-container" hx-get="/api/chat/list" hx-trigger="loadHistory" hx-target="#chat-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="chat-list"></div></div></div>
                     </div>
                     <div class="swiper-slide">
-                        <div class="shell-header"><div class="shell-badge"><span data-i18n="cli-title">CLI Sessions</span></div></div>
+                        <div class="shell-header">
+                            <div class="shell-badge"><span data-i18n="cli-title">CLI Sessions</span></div>
+                            <div class="right-actions">
+                                <button onclick="closeSlide('cli')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+                        </div>
                         <div id="cli-panel" class="flex flex-col flex-1"><div id="cli-list-container" hx-get="/api/cli/sessions" hx-trigger="loadCli" hx-target="#cli-list" class="flex-1 overflow-y-auto p-4 custom-scrollbar"><div class="max-w-4xl mx-auto flex flex-col gap-2" id="cli-list"></div></div></div>
                     </div>
                     <div class="swiper-slide">
-                        <div class="shell-header"><div class="shell-badge"><span data-i18n="settings-title">Settings</span></div></div>
+                        <div class="shell-header">
+                            <div class="shell-badge"><span data-i18n="harness-title">Harness Engineering</span></div>
+                            <div class="right-actions">
+                                <button onclick="closeSlide('harness')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="harness-panel" class="flex flex-col flex-1">
+                            <div class="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1">
+                                <div class="max-w-6xl mx-auto space-y-8">
+                                    <div class="overflow-x-auto max-w-full pb-2 -mx-2 px-2 custom-scrollbar">
+                                        <div class="tabs tabs-boxed bg-base-300 p-1 rounded-2xl w-fit mx-auto flex-nowrap">
+                                            <a onclick="switchHarnessTab('pipelines')" class="tab tab-harness active font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="pipelines">Pipelines</a>
+                                            <a onclick="switchHarnessTab('prompts')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="prompts">Prompts</a>
+                                            <a onclick="switchHarnessTab('schemas')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="schemas">Schemas</a>
+                                            <a onclick="switchHarnessTab('policies')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="policies">Policies</a>
+                                            <a onclick="switchHarnessTab('evals')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="evals">Evaluations</a>
+                                            <a onclick="switchHarnessTab('visualizer')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="visualizer">Visualizer</a>
+                                            <a onclick="switchHarnessTab('abtest')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="abtest">A/B Test</a>
+                                        </div>
+                                    </div>
+                                    <div class="flex justify-between items-center bg-base-100 p-4 rounded-2xl border border-base-content/10 shadow-sm">
+                                        <div class="flex items-center gap-4">
+                                            <div id="git-status-indicator" class="flex items-center gap-2">
+                                                <div class="w-2 h-2 rounded-full bg-success"></div>
+                                                <span class="text-[10px] font-black uppercase opacity-40">Git Sync: Clean</span>
+                                            </div>
+                                            <button onclick="checkGitStatus()" class="btn btn-ghost btn-xs">Refresh Status</button>
+                                        </div>
+                                        <button onclick="document.getElementById('git_commit_modal').showModal()" class="btn btn-primary btn-sm rounded-xl">Commit Changes</button>
+                                    </div>
+                                    <div id="harness-content-area" class="min-h-[400px]">
+                                        <div class="flex items-center justify-center h-64 opacity-30">
+                                            <span class="loading loading-spinner loading-lg"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="swiper-slide" id="pipeline-slide">
+                        <div class="shell-header">
+                            <div class="shell-badge">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" /></svg>
+                                <span>Pipeline Logs</span>
+                            </div>
+                            <div class="right-actions flex items-center gap-1">
+                                <select id="pipeline-project-select" onchange="loadPipelineSessions(this.value)" class="select select-bordered select-xs rounded-xl text-xs font-bold">
+                                    <option value="">Select project...</option>
+                                </select>
+                                <button onclick="closeSlide('pipeline')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="pipeline-panel" class="flex flex-col flex-1">
+                            <div class="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden">
+                                <!-- Session List -->
+                                <div id="pipeline-session-list" class="w-full lg:w-72 h-48 lg:h-auto border-b lg:border-b-0 lg:border-r border-base-content/8 flex flex-col overflow-hidden">
+                                    <div class="p-3 border-b border-base-content/8">
+                                        <p class="text-xs font-bold uppercase tracking-widest opacity-40">Sessions</p>
+                                    </div>
+                                    <div id="pipeline-sessions" class="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-1">
+                                        <div class="flex flex-col items-center justify-center h-full opacity-30 py-12">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-10 h-10 mb-2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5" /></svg>
+                                            <p class="text-xs font-semibold">Select a project</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- Step Detail -->
+                                <div id="pipeline-detail" class="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar bg-base-100/30">
+                                    <div class="flex flex-col items-center justify-center h-full opacity-20 text-center">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-16 h-16 mb-4"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" /></svg>
+                                        <p class="text-lg font-bold">Select a session to view pipeline</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="swiper-slide">
+                        <div class="shell-header">
+                            <div class="shell-badge"><span>Agent Model Stats</span></div>
+                            <div class="right-actions">
+                                <button onclick="closeSlide('stats')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="agent-stats-panel" class="flex flex-col flex-1">
+                            <div id="agent-stats-container" hx-get="/api/harness/visualizer/model-stats-html" hx-trigger="loadStats" hx-target="#agent-stats-content" class="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar">
+                                <div class="max-w-6xl mx-auto" id="agent-stats-content">
+                                    <div class="flex items-center justify-center h-64 opacity-30"><span class="loading loading-spinner loading-lg"></span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="swiper-slide">
+                        <div class="shell-header">
+                            <div class="shell-badge"><span data-i18n="settings-title">Settings</span></div>
+                            <div class="right-actions">
+                                <button onclick="closeSlide('settings')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+                        </div>
                         <div id="settings-panel" class="flex flex-col flex-1">
                             <div class="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar">
                                 <div class="max-w-5xl mx-auto space-y-6">
@@ -2418,105 +2612,24 @@ function handleSuggestionAction(command, payload) {
                                     <section class="settings-card space-y-4">
                                         <div class="settings-section-title" data-i18n="technical-tools">Technical Tools</div>
                                         <div class="flex flex-wrap gap-2">
-                                            <button onclick="switchMainTab(11)" class="btn btn-outline btn-sm rounded-xl gap-2">
+                                            <button onclick="openSlide('harness')" class="btn btn-outline btn-sm rounded-xl gap-2">
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" /></svg>
                                                 Harness
                                             </button>
-                                            <button onclick="switchMainTab(12)" class="btn btn-outline btn-sm rounded-xl gap-2">
+                                            <button onclick="openSlide('pipeline')" class="btn btn-outline btn-sm rounded-xl gap-2">
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5" /></svg>
                                                 Pipeline Logs
                                             </button>
-                                            <button onclick="switchMainTab(13)" class="btn btn-outline btn-sm rounded-xl gap-2">
+                                            <button onclick="openSlide('stats')" class="btn btn-outline btn-sm rounded-xl gap-2">
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" /></svg>
                                                 Agent Stats
                                             </button>
-                                            <button onclick="switchMainTab(9)" class="btn btn-outline btn-sm rounded-xl gap-2">
+                                            <button onclick="openSlide('cli')" class="btn btn-outline btn-sm rounded-xl gap-2">
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" /></svg>
                                                 CLI
                                             </button>
                                         </div>
                                     </section>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="swiper-slide">
-                        <div class="shell-header"><div class="shell-badge"><span data-i18n="harness-title">Harness Engineering</span></div></div>
-                        <div id="harness-panel" class="flex flex-col flex-1">
-                            <div class="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1">
-                                <div class="max-w-6xl mx-auto space-y-8">
-                                    <div class="overflow-x-auto max-w-full pb-2 -mx-2 px-2 custom-scrollbar">
-                                        <div class="tabs tabs-boxed bg-base-300 p-1 rounded-2xl w-fit mx-auto flex-nowrap">
-                                            <a onclick="switchHarnessTab('pipelines')" class="tab tab-harness active font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="pipelines">Pipelines</a>
-                                            <a onclick="switchHarnessTab('prompts')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="prompts">Prompts</a>
-                                            <a onclick="switchHarnessTab('schemas')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="schemas">Schemas</a>
-                                            <a onclick="switchHarnessTab('policies')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="policies">Policies</a>
-                                            <a onclick="switchHarnessTab('evals')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="evals">Evaluations</a>
-                                            <a onclick="switchHarnessTab('visualizer')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="visualizer">Visualizer</a>
-                                            <a onclick="switchHarnessTab('abtest')" class="tab tab-harness font-bold px-6 h-10 rounded-xl transition-all whitespace-nowrap" data-harness-tab="abtest">A/B Test</a>
-                                        </div>
-                                    </div>
-                                    <div class="flex justify-between items-center bg-base-100 p-4 rounded-2xl border border-base-content/10 shadow-sm">
-                                        <div class="flex items-center gap-4">
-                                            <div id="git-status-indicator" class="flex items-center gap-2">
-                                                <div class="w-2 h-2 rounded-full bg-success"></div>
-                                                <span class="text-[10px] font-black uppercase opacity-40">Git Sync: Clean</span>
-                                            </div>
-                                            <button onclick="checkGitStatus()" class="btn btn-ghost btn-xs">Refresh Status</button>
-                                        </div>
-                                        <button onclick="document.getElementById('git_commit_modal').showModal()" class="btn btn-primary btn-sm rounded-xl">Commit Changes</button>
-                                    </div>
-                                    <div id="harness-content-area" class="min-h-[400px]">
-                                        <div class="flex items-center justify-center h-64 opacity-30">
-                                            <span class="loading loading-spinner loading-lg"></span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="swiper-slide" id="pipeline-slide">
-                        <div class="shell-header">
-                            <div class="shell-badge">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" /></svg>
-                                <span>Pipeline Logs</span>
-                            </div>
-                            <div class="right-actions">
-                                <select id="pipeline-project-select" onchange="loadPipelineSessions(this.value)" class="select select-bordered select-xs rounded-xl text-xs font-bold">
-                                    <option value="">Select project...</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div id="pipeline-panel" class="flex flex-col flex-1">
-                            <div class="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden">
-                                <!-- Session List -->
-                                <div id="pipeline-session-list" class="w-full lg:w-72 h-48 lg:h-auto border-b lg:border-b-0 lg:border-r border-base-content/8 flex flex-col overflow-hidden">
-                                    <div class="p-3 border-b border-base-content/8">
-                                        <p class="text-xs font-bold uppercase tracking-widest opacity-40">Sessions</p>
-                                    </div>
-                                    <div id="pipeline-sessions" class="flex-1 overflow-y-auto p-2 custom-scrollbar space-y-1">
-                                        <div class="flex flex-col items-center justify-center h-full opacity-30 py-12">
-                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-10 h-10 mb-2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5" /></svg>
-                                            <p class="text-xs font-semibold">Select a project</p>
-                                        </div>
-                                    </div>
-                                </div>
-                                <!-- Step Detail -->
-                                <div id="pipeline-detail" class="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar bg-base-100/30">
-                                    <div class="flex flex-col items-center justify-center h-full opacity-20 text-center">
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-16 h-16 mb-4"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" /></svg>
-                                        <p class="text-lg font-bold">Select a session to view pipeline</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="swiper-slide">
-                        <div class="shell-header"><div class="shell-badge"><span>Agent Model Stats</span></div></div>
-                        <div id="agent-stats-panel" class="flex flex-col flex-1">
-                            <div id="agent-stats-container" hx-get="/api/harness/visualizer/model-stats-html" hx-trigger="loadStats" hx-target="#agent-stats-content" class="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar">
-                                <div class="max-w-6xl mx-auto" id="agent-stats-content">
-                                    <div class="flex items-center justify-center h-64 opacity-30"><span class="loading loading-spinner loading-lg"></span></div>
                                 </div>
                             </div>
                         </div>
@@ -2541,28 +2654,5 @@ function handleSuggestionAction(command, payload) {
       }
     </script>
 
-    <!-- Mobile Bottom Navigation -->
-    <div class="btm-nav md:hidden z-[150] border-t border-base-content/10 bg-base-100/80 backdrop-blur-xl">
-        <button onclick="switchMainTab(0)">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.76c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 0 1 1.037-.443 48.282 48.282 0 0 0 5.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" /></svg>
-            <span class="btm-nav-label text-[10px]" data-i18n="chat-title">Chat</span>
-        </button>
-        <button onclick="switchMainTab(1)">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h12M6 12h12m-6 6h6" /></svg>
-            <span class="btm-nav-label text-[10px]" data-i18n="workspace">Workspace</span>
-        </button>
-        <button onclick="switchMainTab(4)">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg>
-            <span class="btm-nav-label text-[10px]" data-i18n="memory-title">Memory</span>
-        </button>
-        <button onclick="switchMainTab(6)">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" /></svg>
-            <span class="btm-nav-label text-[10px]" data-i18n="projects-title">Project</span>
-        </button>
-        <button onclick="switchMainTab(10)">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.431.992a7.723 7.723 0 0 1 0 .255c-.007.378.138.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
-            <span class="btm-nav-label text-[10px]" data-i18n="settings-title">Settings</span>
-        </button>
-    </div>
 </body>
 </html>
