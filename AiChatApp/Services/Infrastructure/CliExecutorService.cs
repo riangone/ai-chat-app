@@ -102,11 +102,11 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
     public async IAsyncEnumerable<StreamChunk> ExecuteStreamAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null)
     {
-        var targetProvider = provider ?? DefaultProvider;
-        var useJsonStreaming = targetProvider == "gemini" || targetProvider == "claude" || targetProvider == "copilot" || targetProvider == "codex" || targetProvider == "opencode";
+        var targetProvider = (provider ?? DefaultProvider).ToLowerInvariant();
+        var useJsonStreaming = targetProvider == "gemini" || targetProvider == "claude" || targetProvider == "claudecode" || targetProvider == "copilot" || targetProvider == "codex" || targetProvider == "opencode";
         
         var format = outputFormat ?? (useJsonStreaming ? "stream-json" : null);
-        var processInfo = SetupProcessInfo(targetProvider, workingDirectory, format, agentMode: agentMode, persistent: false);
+        var processInfo = SetupProcessInfo(provider ?? DefaultProvider, workingDirectory, format, agentMode: agentMode, persistent: false);
 
         string inputToStdin = string.IsNullOrEmpty(systemPrompt)
             ? prompt
@@ -147,35 +147,75 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
         if (useJsonStreaming)
         {
+            // Track whether incremental delta events have already been streamed.
+            // When true, final full-content events (e.g. Claude "result", OpenCode "assistant.message")
+            // are suppressed to avoid sending duplicate text to the client.
+            bool hasDeltaContent = false;
+
             string? line;
             while ((line = await process.StandardOutput.ReadLineAsync()) != null)
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 string? chunk = null;
                 bool shouldYield = false;
+                bool isDeltaHandled = false;
+                bool skipLine = false;
+
                 try
                 {
                     using var doc = JsonDocument.Parse(line);
                     var root = doc.RootElement;
-                    if (TryParseJsonElement(root, ref chunk, ref extractedModel, ref pt, ref ct, ref tt, isIncremental: false))
+
+                    if (root.TryGetProperty("type", out var typePropCheck))
                     {
-                        // Text extraction — special handling for deltas in streaming
-                        if (root.TryGetProperty("type", out var typeProp))
+                        var eventType = typePropCheck.GetString();
+
+                        // Skip user-message echo events emitted by some CLIs (e.g. Claude)
+                        if (eventType == "user")
                         {
-                            var type = typeProp.GetString();
-                            if (type == "content_block_delta" || type == "text_delta")
-                            {
-                                if (root.TryGetProperty("delta", out var deltaProp) &&
-                                    deltaProp.TryGetProperty("text", out var textProp))
-                                    chunk = textProp.GetString() ?? "";
-                            }
+                            skipLine = true;
                         }
-                        
-                        shouldYield = true;
+                        // Handle Claude's incremental content_block_delta / text_delta events.
+                        // TryParseJsonElement returns false for these, so we must handle them first.
+                        else if (eventType == "content_block_delta" || eventType == "text_delta")
+                        {
+                            if (root.TryGetProperty("delta", out var deltaProp) &&
+                                deltaProp.TryGetProperty("text", out var deltaTextProp))
+                            {
+                                var deltaText = deltaTextProp.GetString();
+                                if (!string.IsNullOrEmpty(deltaText))
+                                {
+                                    chunk = deltaText;
+                                    shouldYield = true;
+                                    hasDeltaContent = true;
+                                }
+                            }
+                            isDeltaHandled = true;
+                        }
+                        // When deltas were already streamed, suppress the final full-content event
+                        // (Claude "result", OpenCode "assistant.message") to avoid duplication.
+                        else if (hasDeltaContent && (eventType == "result" || eventType == "assistant.message"))
+                        {
+                            string? ignored = null;
+                            if (TryParseJsonElement(root, ref ignored, ref extractedModel, ref pt, ref ct, ref tt, isIncremental: false))
+                                shouldYield = true; // still yield for token/model metadata
+                            // chunk stays null — no duplicate content
+                            isDeltaHandled = true;
+                        }
+                    }
+
+                    if (!skipLine && !isDeltaHandled)
+                    {
+                        if (TryParseJsonElement(root, ref chunk, ref extractedModel, ref pt, ref ct, ref tt, isIncremental: false))
+                        {
+                            // Only mark as having streamed content if non-empty text was extracted
+                            if (!string.IsNullOrEmpty(chunk)) hasDeltaContent = true;
+                            shouldYield = true;
+                        }
                     }
                 }
                 catch (JsonException) { }
-                
+
                 if (shouldYield)
                 {
                     yield return new StreamChunk(chunk, extractedModel, pt, ct, tt);
@@ -311,7 +351,8 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
     private ProcessStartInfo SetupProcessInfo(string provider, string? workingDirectory, string? outputFormat = null, bool agentMode = false, bool persistent = false)
     {
-        string fileName = provider.ToLower() switch
+        var targetProvider = provider.ToLowerInvariant();
+        string fileName = targetProvider switch
         {
             "copilot" => "copilot",
             "claudecode" => "claudecode",
@@ -319,7 +360,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
             "codex" => "codex",
             "opencode" => "opencode",
             "gemini" => "gemini",
-            _ => DefaultProvider
+            _ => DefaultProvider.ToLowerInvariant()
         };
 
         var processInfo = new ProcessStartInfo
@@ -336,7 +377,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
         processInfo.EnvironmentVariables["GEMINI_SANDBOX"] = "false";
         processInfo.EnvironmentVariables["GEMINI_CLI_TRUST_WORKSPACE"] = "true";
 
-        if (provider == "codex")
+        if (targetProvider == "codex")
         {
             processInfo.ArgumentList.Add("exec");
             processInfo.ArgumentList.Add("--dangerously-bypass-approvals-and-sandbox");
@@ -344,13 +385,13 @@ public class CliExecutorService : ICliExecutor, IDisposable
             processInfo.ArgumentList.Add("never");
             processInfo.ArgumentList.Add("--json");
         }
-        else if (provider == "opencode")
+        else if (targetProvider == "opencode")
         {
             processInfo.ArgumentList.Add("run");
             processInfo.ArgumentList.Add("--format");
             processInfo.ArgumentList.Add("json");
         }
-        else if (provider == "copilot")
+        else if (targetProvider == "copilot")
         {
             processInfo.ArgumentList.Add("--allow-all-tools");
             processInfo.ArgumentList.Add("--output-format");
@@ -363,7 +404,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
             processInfo.ArgumentList.Add("--output-format");
             processInfo.ArgumentList.Add(outputFormat ?? "json");
 
-            if (provider == "claude" || fileName == "claude" || provider == "claudecode" || fileName == "claudecode")
+            if (targetProvider == "claude" || fileName == "claude" || targetProvider == "claudecode" || fileName == "claudecode")
             {
                 processInfo.ArgumentList.Add("--dangerously-skip-permissions");
                 processInfo.ArgumentList.Add("--output-format");
@@ -374,9 +415,9 @@ public class CliExecutorService : ICliExecutor, IDisposable
             {
                 processInfo.ArgumentList.Add("--yolo");
 
-                if (provider == "gemini" || fileName == "gemini")
+                if (targetProvider == "gemini" || fileName == "gemini")
                 {
-                    if (provider.ToLower() != "gemini")
+                    if (targetProvider != "gemini")
                     {
                         processInfo.ArgumentList.Add("-m");
                         processInfo.ArgumentList.Add(provider);
@@ -547,6 +588,9 @@ public class CliExecutorService : ICliExecutor, IDisposable
                 { content = (content ?? "") + dc.GetString(); foundContent = true; }
             else if (t == "result" && root.TryGetProperty("result", out var rc))
                 { content = rc.GetString(); foundContent = true; }
+            else if (t == "item.completed" && root.TryGetProperty("item", out var itemProp) && 
+                     itemProp.TryGetProperty("text", out var itemText))
+                { content = (content ?? "") + itemText.GetString(); foundContent = true; }
         }
         
         if (!foundContent)

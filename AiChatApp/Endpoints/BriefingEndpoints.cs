@@ -102,7 +102,7 @@ public static class BriefingEndpoints
 4. 使用 Markdown 格式（如加粗、列表等）使其易于阅读。
 5. 保持简洁，总长度控制在 100 字左右。
 ";
-                var response = await ai.ExecuteCliDirectAsync(prompt, ai.DefaultProvider, "你是 AI 每日简报助手。", outputFormat: "plain");
+                var response = await ai.ExecuteCliDirectAsync(prompt, ai.DefaultProvider, "你是 AI 每日简报助手。", outputFormat: "text");
                 aiGreeting = response ?? "";
             }
             catch (Exception)
