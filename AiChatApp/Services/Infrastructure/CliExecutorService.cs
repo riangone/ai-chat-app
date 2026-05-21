@@ -21,34 +21,10 @@ public class CliExecutorService : ICliExecutor, IDisposable
 {
     private readonly ILogger<CliExecutorService> _logger;
     private readonly IConfiguration _config;
-    private readonly ConcurrentDictionary<string, ProcessHandle> _persistentProcesses = new();
-    private readonly SemaphoreSlim _poolLock = new(1, 1);
 
-    private class ProcessHandle : IDisposable
-    {
-        public Process Process { get; }
-        public StreamWriter Input { get; }
-        public SemaphoreSlim Lock { get; } = new(1, 1);
-        public DateTime LastUsed { get; set; } = DateTime.UtcNow;
-        public StringBuilder OutputBuilder { get; } = new();
-        public StringBuilder ErrorBuilder { get; } = new();
-        public bool IsPersistent { get; set; }
-
-        public ProcessHandle(Process process, bool persistent)
-        {
-            Process = process;
-            Input = process.StandardInput;
-            IsPersistent = persistent;
-            process.OutputDataReceived += (s, e) => { if (e.Data != null) lock(OutputBuilder) OutputBuilder.AppendLine(e.Data); };
-            process.ErrorDataReceived += (s, e) => { if (e.Data != null) lock(ErrorBuilder) ErrorBuilder.AppendLine(e.Data); };
-        }
-
-        public void Dispose()
-        {
-            try { Process.Kill(true); } catch { }
-            Process.Dispose();
-        }
-    }
+    // Pre-warmed processes: started but stdin not yet written, ready for the next request.
+    // Key = "{provider}_{workingDir}_{outputFormat}"
+    private readonly ConcurrentDictionary<string, Process> _warmPool = new();
 
     public CliExecutorService(ILogger<CliExecutorService> logger, IConfiguration config)
     {
@@ -60,25 +36,47 @@ public class CliExecutorService : ICliExecutor, IDisposable
     private string FallbackProvider => _config["AiSettings:FallbackProvider"] ?? "gemini";
     private int TimeoutSeconds => int.TryParse(_config["AiSettings:TimeoutSeconds"], out var s) ? s : 300;
 
+    // Only stdin-based providers can be pre-warmed; arg-based ones need the prompt at spawn time.
+    private static bool SupportsPreWarm(string normalizedProvider) =>
+        normalizedProvider != "opencode" && normalizedProvider != "copilot";
+
+    private Process? ClaimWarmProcess(string key)
+    {
+        if (!_warmPool.TryRemove(key, out var p)) return null;
+        if (!p.HasExited) return p;
+        p.Dispose();
+        return null;
+    }
+
+    private void SchedulePreWarm(string key, string provider, string? workingDirectory, string? outputFormat, bool agentMode)
+    {
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var psi = SetupProcessInfo(provider, workingDirectory, outputFormat: outputFormat, agentMode: agentMode, persistent: false);
+                var p = new Process { StartInfo = psi };
+                if (!p.Start()) { p.Dispose(); return; }
+                if (!_warmPool.TryAdd(key, p))
+                {
+                    // Slot already taken by a concurrent pre-warm — discard this one.
+                    try { p.Kill(true); } catch { }
+                    p.Dispose();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Pre-warm failed for {Provider}", provider);
+            }
+        });
+    }
+
     public async Task<CliResult> ExecuteAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null)
     {
-        bool usePersistence = _config.GetValue<bool>("AiSettings:CliPersistenceEnabled", false); // Disabled by default due to CLI constraints
-        
-        // Both gemini and claude buffer stdin until EOF or require complex TUI/JSON-RPC protocols in persistent mode.
-        // Single-shot is the only reliable way to interact with them via standard pipes.
-        bool supportsPersistence = false; 
-
         CliResult result;
         try
         {
-            if (usePersistence && supportsPersistence)
-            {
-                result = await ExecutePersistentAsync(prompt, provider, systemPrompt, userPrompt, workingDirectory, agentMode);
-            }
-            else
-            {
-                result = await ExecuteSingleShotAsync(prompt, provider, systemPrompt, userPrompt, workingDirectory, agentMode, outputFormat);
-            }
+            result = await ExecuteSingleShotAsync(prompt, provider, systemPrompt, userPrompt, workingDirectory, agentMode, outputFormat);
         }
         catch (Exception ex)
         {
@@ -103,8 +101,8 @@ public class CliExecutorService : ICliExecutor, IDisposable
     public async IAsyncEnumerable<StreamChunk> ExecuteStreamAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null)
     {
         var targetProvider = (provider ?? DefaultProvider).ToLowerInvariant();
-        var useJsonStreaming = targetProvider == "gemini" || targetProvider == "claude" || targetProvider == "claudecode" || targetProvider == "copilot" || targetProvider == "codex" || targetProvider == "opencode";
-        
+        var useJsonStreaming = targetProvider is "gemini" or "claude" or "claudecode" or "copilot" or "codex" or "opencode";
+
         var format = outputFormat ?? (useJsonStreaming ? "stream-json" : null);
         var processInfo = SetupProcessInfo(provider ?? DefaultProvider, workingDirectory, format, agentMode: agentMode, persistent: false);
 
@@ -124,8 +122,28 @@ public class CliExecutorService : ICliExecutor, IDisposable
             inputToStdin = string.Empty;
         }
 
-        using var process = new Process { StartInfo = processInfo };
-        if (!process.Start()) yield break;
+        var warmKey = $"{targetProvider}_{workingDirectory ?? "default"}_{format ?? "raw"}";
+        var warm = SupportsPreWarm(targetProvider) ? ClaimWarmProcess(warmKey) : null;
+
+        Process process;
+        if (warm != null)
+        {
+            _logger.LogDebug("Stream: using pre-warmed process for {Provider}", targetProvider);
+            process = warm;
+        }
+        else
+        {
+            process = new Process { StartInfo = processInfo };
+            if (!process.Start())
+            {
+                process.Dispose();
+                yield break;
+            }
+        }
+
+        // Kick off the next pre-warm immediately so it's ready for the following request.
+        if (SupportsPreWarm(targetProvider))
+            SchedulePreWarm(warmKey, provider ?? DefaultProvider, workingDirectory, format, agentMode);
 
         if (!string.IsNullOrEmpty(inputToStdin))
         {
@@ -137,9 +155,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
         _ = Task.Delay(TimeSpan.FromSeconds(TimeoutSeconds), cts.Token).ContinueWith(t =>
         {
             if (t.IsCompletedSuccessfully)
-            {
                 try { if (!process.HasExited) process.Kill(true); } catch { }
-            }
         }, TaskScheduler.Default);
 
         string? extractedModel = null;
@@ -147,9 +163,6 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
         if (useJsonStreaming)
         {
-            // Track whether incremental delta events have already been streamed.
-            // When true, final full-content events (e.g. Claude "result", OpenCode "assistant.message")
-            // are suppressed to avoid sending duplicate text to the client.
             bool hasDeltaContent = false;
 
             string? line;
@@ -170,13 +183,10 @@ public class CliExecutorService : ICliExecutor, IDisposable
                     {
                         var eventType = typePropCheck.GetString();
 
-                        // Skip user-message echo events emitted by some CLIs (e.g. Claude)
                         if (eventType == "user")
                         {
                             skipLine = true;
                         }
-                        // Handle Claude's incremental content_block_delta / text_delta events.
-                        // TryParseJsonElement returns false for these, so we must handle them first.
                         else if (eventType == "content_block_delta" || eventType == "text_delta")
                         {
                             if (root.TryGetProperty("delta", out var deltaProp) &&
@@ -192,14 +202,11 @@ public class CliExecutorService : ICliExecutor, IDisposable
                             }
                             isDeltaHandled = true;
                         }
-                        // When deltas were already streamed, suppress the final full-content event
-                        // (Claude "result", OpenCode "assistant.message") to avoid duplication.
                         else if (hasDeltaContent && (eventType == "result" || eventType == "assistant.message"))
                         {
                             string? ignored = null;
                             if (TryParseJsonElement(root, ref ignored, ref extractedModel, ref pt, ref ct, ref tt, isIncremental: false))
-                                shouldYield = true; // still yield for token/model metadata
-                            // chunk stays null — no duplicate content
+                                shouldYield = true;
                             isDeltaHandled = true;
                         }
                     }
@@ -208,7 +215,6 @@ public class CliExecutorService : ICliExecutor, IDisposable
                     {
                         if (TryParseJsonElement(root, ref chunk, ref extractedModel, ref pt, ref ct, ref tt, isIncremental: false))
                         {
-                            // Only mark as having streamed content if non-empty text was extracted
                             if (!string.IsNullOrEmpty(chunk)) hasDeltaContent = true;
                             shouldYield = true;
                         }
@@ -217,9 +223,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
                 catch (JsonException) { }
 
                 if (shouldYield)
-                {
                     yield return new StreamChunk(chunk, extractedModel, pt, ct, tt);
-                }
             }
         }
         else
@@ -227,92 +231,22 @@ public class CliExecutorService : ICliExecutor, IDisposable
             var buffer = new char[64];
             int read;
             while ((read = await process.StandardOutput.ReadAsync(buffer, 0, buffer.Length)) > 0)
-            {
                 yield return new StreamChunk(new string(buffer, 0, read), null, 0, 0, 0);
-            }
         }
 
         try { await process.WaitForExitAsync(); } catch { }
         cts.Cancel();
-    }
-
-    private async Task<CliResult> ExecutePersistentAsync(string prompt, string provider, string? systemPrompt, string? userPrompt, string? workingDirectory, bool agentMode)
-    {
-        var key = $"{provider}_{workingDirectory ?? "default"}";
-        ProcessHandle? handle;
-        if (!_persistentProcesses.TryGetValue(key, out handle) || handle.Process.HasExited)
-        {
-            await _poolLock.WaitAsync();
-            try
-            {
-                if (!_persistentProcesses.TryGetValue(key, out handle) || handle.Process.HasExited)
-                {
-                    var psi = SetupProcessInfo(provider, workingDirectory, agentMode: agentMode, persistent: true);
-                    var process = new Process { StartInfo = psi };
-                    process.Start();
-                    process.BeginOutputReadLine();
-                    process.BeginErrorReadLine();
-                    handle = new ProcessHandle(process, true);
-                    _persistentProcesses[key] = handle;
-                }
-            }
-            finally { _poolLock.Release(); }
-        }
-
-        await handle.Lock.WaitAsync();
-        try
-        {
-            handle.LastUsed = DateTime.UtcNow;
-            lock (handle.OutputBuilder) handle.OutputBuilder.Clear();
-            lock (handle.ErrorBuilder) handle.ErrorBuilder.Clear();
-
-            string input = string.IsNullOrEmpty(systemPrompt) ? prompt : $"System: {systemPrompt}\n\nUser: {prompt}";
-            await handle.Input.WriteLineAsync(input);
-            await handle.Input.FlushAsync();
-
-            return await PollForResponseAsync(handle, provider, systemPrompt, userPrompt);
-        }
-        finally { handle.Lock.Release(); }
-    }
-
-    private async Task<CliResult> PollForResponseAsync(ProcessHandle handle, string provider, string? systemPrompt, string? userPrompt)
-    {
-        var start = DateTime.UtcNow;
-        while ((DateTime.UtcNow - start).TotalSeconds < TimeoutSeconds)
-        {
-            string currentOutput;
-            lock (handle.OutputBuilder) currentOutput = handle.OutputBuilder.ToString();
-
-            if (!string.IsNullOrEmpty(currentOutput))
-            {
-                var json = JsonUtils.ExtractJson(currentOutput);
-                if (json != "{}" && json.EndsWith("}"))
-                {
-                    try
-                    {
-                        using var doc = JsonDocument.Parse(json);
-                        string stderr;
-                        lock (handle.ErrorBuilder) stderr = handle.ErrorBuilder.ToString();
-                        return ParseCliOutput(currentOutput, stderr, provider, systemPrompt, userPrompt);
-                    }
-                    catch { }
-                }
-            }
-            await Task.Delay(100);
-        }
-        throw new TimeoutException($"Persistent CLI ({provider}) response timeout.");
+        process.Dispose();
     }
 
     private async Task<CliResult> ExecuteSingleShotAsync(string prompt, string provider, string? systemPrompt, string? userPrompt, string? workingDirectory, bool agentMode, string? outputFormat = null)
     {
+        var targetProvider = provider.ToLowerInvariant();
+        var effectiveFormat = outputFormat ?? "json";
+        var warmKey = $"{targetProvider}_{workingDirectory ?? "default"}_{effectiveFormat}";
+
         var processInfo = SetupProcessInfo(provider, workingDirectory, outputFormat: outputFormat, agentMode: agentMode, persistent: false);
         string inputToStdin = string.IsNullOrEmpty(systemPrompt) ? prompt : $"System: {systemPrompt}\n\nUser: {prompt}";
-
-        using var process = new Process { StartInfo = processInfo };
-        var outputBuilder = new StringBuilder();
-        var errorBuilder = new StringBuilder();
-        process.OutputDataReceived += (s, e) => { if (e.Data != null) outputBuilder.AppendLine(e.Data); };
-        process.ErrorDataReceived += (s, e) => { if (e.Data != null) errorBuilder.AppendLine(e.Data); };
 
         if (provider == "opencode")
         {
@@ -326,13 +260,35 @@ public class CliExecutorService : ICliExecutor, IDisposable
             inputToStdin = string.Empty;
         }
 
-        process.Start();
+        var warm = SupportsPreWarm(targetProvider) ? ClaimWarmProcess(warmKey) : null;
+        Process process;
+
+        if (warm != null)
+        {
+            _logger.LogDebug("Using pre-warmed process for {Provider}", provider);
+            process = warm;
+        }
+        else
+        {
+            process = new Process { StartInfo = processInfo };
+            process.Start();
+        }
+
+        // Kick off the next pre-warm immediately — overlaps with the current AI response time.
+        if (SupportsPreWarm(targetProvider))
+            SchedulePreWarm(warmKey, provider, workingDirectory, effectiveFormat, agentMode);
+
+        var outputBuilder = new StringBuilder();
+        var errorBuilder = new StringBuilder();
+        process.OutputDataReceived += (s, e) => { if (e.Data != null) outputBuilder.AppendLine(e.Data); };
+        process.ErrorDataReceived += (s, e) => { if (e.Data != null) errorBuilder.AppendLine(e.Data); };
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
         if (!string.IsNullOrEmpty(inputToStdin))
         {
-            using (var sw = process.StandardInput) await sw.WriteAsync(inputToStdin);
+            using var sw = process.StandardInput;
+            await sw.WriteAsync(inputToStdin);
         }
         else
         {
@@ -340,13 +296,15 @@ public class CliExecutorService : ICliExecutor, IDisposable
         }
 
         if (!process.WaitForExit(TimeoutSeconds * 1000))
-
         {
             try { process.Kill(true); } catch { }
+            process.Dispose();
             throw new TimeoutException($"CLI process ({provider}) timed out.");
         }
 
-        return ParseCliOutput(outputBuilder.ToString(), errorBuilder.ToString(), provider, systemPrompt, userPrompt);
+        var result = ParseCliOutput(outputBuilder.ToString(), errorBuilder.ToString(), provider, systemPrompt, userPrompt);
+        process.Dispose();
+        return result;
     }
 
     private ProcessStartInfo SetupProcessInfo(string provider, string? workingDirectory, string? outputFormat = null, bool agentMode = false, bool persistent = false)
@@ -400,7 +358,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
         else
         {
             processInfo.ArgumentList.Add("-p");
-            processInfo.ArgumentList.Add(""); 
+            processInfo.ArgumentList.Add("");
             processInfo.ArgumentList.Add("--output-format");
             processInfo.ArgumentList.Add(outputFormat ?? "json");
 
@@ -415,13 +373,10 @@ public class CliExecutorService : ICliExecutor, IDisposable
             {
                 processInfo.ArgumentList.Add("--yolo");
 
-                if (targetProvider == "gemini" || fileName == "gemini")
+                if (targetProvider != "gemini" && fileName == "gemini")
                 {
-                    if (targetProvider != "gemini")
-                    {
-                        processInfo.ArgumentList.Add("-m");
-                        processInfo.ArgumentList.Add(provider);
-                    }
+                    processInfo.ArgumentList.Add("-m");
+                    processInfo.ArgumentList.Add(provider);
                 }
             }
         }
@@ -469,14 +424,12 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
         if (totalTt == 0 && (totalPt > 0 || totalCt > 0)) totalTt = totalPt + totalCt;
 
-        // If JSON was found but content wasn't extracted, don't fall back to raw JSON output
         string? displayContent = finalContent;
         if (displayContent == null)
         {
-            if (foundAnyJson)
-                displayContent = "[Error: Could not extract content from AI response]";
-            else
-                displayContent = output.Trim(); // plain text fallback (non-JSON providers)
+            displayContent = foundAnyJson
+                ? "[Error: Could not extract content from AI response]"
+                : output.Trim();
         }
 
         var cleanedOutput = CleanResponse(displayContent ?? string.Empty, systemPrompt, userPrompt);
@@ -492,7 +445,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
             var mv = mProp.GetString();
             if (!string.IsNullOrEmpty(mv)) { model = mv; foundSomething = true; }
         }
-        
+
         if (root.TryGetProperty("type", out var tProp) && tProp.GetString() == "session.tools_updated")
         {
             if (root.TryGetProperty("data", out var d) && d.TryGetProperty("model", out var m))
@@ -523,17 +476,16 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
         if (!hasUsage && root.TryGetProperty("part", out var partEl) && partEl.TryGetProperty("tokens", out usageProp))
             hasUsage = true;
-        
+
         if (!hasUsage && root.TryGetProperty("message", out var msg) && msg.TryGetProperty("usage", out usageProp))
             hasUsage = true;
-        
+
         if (!hasUsage && root.TryGetProperty("data", out var dataEl) && dataEl.TryGetProperty("outputTokens", out var otProp))
         {
             if (isIncremental) ct += otProp.GetInt32(); else ct = otProp.GetInt32();
             foundSomething = true;
         }
 
-        // Handle gemini 'stats.models' structure
         if (!hasUsage && root.TryGetProperty("stats", out var sEl) && sEl.TryGetProperty("models", out var modelsEl))
         {
             foreach (var m in modelsEl.EnumerateObject())
@@ -551,17 +503,17 @@ public class CliExecutorService : ICliExecutor, IDisposable
         if (hasUsage)
         {
             foundSomething = true;
-            if (usageProp.TryGetProperty("input_tokens", out var it) || usageProp.TryGetProperty("prompt_tokens", out it) || usageProp.TryGetProperty("prompt_token_count", out it) || usageProp.TryGetProperty("promptTokenCount", out it) || usageProp.TryGetProperty("inputTokenCount", out it) || usageProp.TryGetProperty("input", out it)) 
+            if (usageProp.TryGetProperty("input_tokens", out var it) || usageProp.TryGetProperty("prompt_tokens", out it) || usageProp.TryGetProperty("prompt_token_count", out it) || usageProp.TryGetProperty("promptTokenCount", out it) || usageProp.TryGetProperty("inputTokenCount", out it) || usageProp.TryGetProperty("input", out it))
             { if (isIncremental) pt += it.GetInt32(); else pt = it.GetInt32(); }
-            
-            if (usageProp.TryGetProperty("output_tokens", out var ot) || usageProp.TryGetProperty("completion_tokens", out ot) || usageProp.TryGetProperty("completion_token_count", out ot) || usageProp.TryGetProperty("candidate_token_count", out ot) || usageProp.TryGetProperty("candidatesTokenCount", out ot) || usageProp.TryGetProperty("candidateTokenCount", out ot) || usageProp.TryGetProperty("outputTokenCount", out ot) || usageProp.TryGetProperty("output", out ot)) 
+
+            if (usageProp.TryGetProperty("output_tokens", out var ot) || usageProp.TryGetProperty("completion_tokens", out ot) || usageProp.TryGetProperty("completion_token_count", out ot) || usageProp.TryGetProperty("candidate_token_count", out ot) || usageProp.TryGetProperty("candidatesTokenCount", out ot) || usageProp.TryGetProperty("candidateTokenCount", out ot) || usageProp.TryGetProperty("outputTokenCount", out ot) || usageProp.TryGetProperty("output", out ot))
             { if (isIncremental) ct += ot.GetInt32(); else ct = ot.GetInt32(); }
-            
+
             if (usageProp.TryGetProperty("total_tokens", out var tot) || usageProp.TryGetProperty("total_token_count", out tot) || usageProp.TryGetProperty("totalTokenCount", out tot) || usageProp.TryGetProperty("total", out tot))
             { if (isIncremental) tt += tot.GetInt32(); else tt = tot.GetInt32(); }
 
-            if (usageProp.TryGetProperty("cache_read_input_tokens", out var crit)) { pt += crit.GetInt32(); }
-            if (usageProp.TryGetProperty("cache_creation_input_tokens", out var ccit)) { pt += ccit.GetInt32(); }
+            if (usageProp.TryGetProperty("cache_read_input_tokens", out var crit2)) { pt += crit2.GetInt32(); }
+            if (usageProp.TryGetProperty("cache_creation_input_tokens", out var ccit2)) { pt += ccit2.GetInt32(); }
         }
 
         if (root.TryGetProperty("stats", out var statsEl))
@@ -572,7 +524,6 @@ public class CliExecutorService : ICliExecutor, IDisposable
             if (statsEl.TryGetProperty("total_tokens", out var stt)) { if (isIncremental) tt += stt.GetInt32(); else tt = stt.GetInt32(); }
         }
 
-        // Content extraction - try multiple common keys
         bool foundContent = false;
         if (root.TryGetProperty("type", out var typeProp))
         {
@@ -588,11 +539,11 @@ public class CliExecutorService : ICliExecutor, IDisposable
                 { content = (content ?? "") + dc.GetString(); foundContent = true; }
             else if (t == "result" && root.TryGetProperty("result", out var rc))
                 { content = rc.GetString(); foundContent = true; }
-            else if (t == "item.completed" && root.TryGetProperty("item", out var itemProp) && 
+            else if (t == "item.completed" && root.TryGetProperty("item", out var itemProp) &&
                      itemProp.TryGetProperty("text", out var itemText))
                 { content = (content ?? "") + itemText.GetString(); foundContent = true; }
         }
-        
+
         if (!foundContent)
         {
             if (root.TryGetProperty("response", out var res)) { content = (content ?? "") + res.GetString(); foundContent = true; }
@@ -626,8 +577,11 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
     public void Dispose()
     {
-        foreach (var handle in _persistentProcesses.Values) handle.Dispose();
-        _persistentProcesses.Clear();
-        _poolLock.Dispose();
+        foreach (var p in _warmPool.Values)
+        {
+            try { p.Kill(true); } catch { }
+            p.Dispose();
+        }
+        _warmPool.Clear();
     }
 }

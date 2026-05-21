@@ -90,3 +90,17 @@ DBの `AgentProfile` と名前が重複する場合はファイルシステム�
 ## AI Provider
 
 実行環境に `gemini`、`copilot`（`gh extension`）、`claude`、`codex` のCLIが PATH 上に存在している必要がある。デフォルトプロバイダーは `appsettings.json` の `AiSettings:DefaultProvider` で設定（デフォルト `gemini`）。`AgentProfile.PreferredProvider` でエージェントごとに異なるプロバイダーを指定可能。
+
+## CLI プロセス管理（CliExecutorService）
+
+**アーキテクチャ**: 全プロバイダーはシングルショット方式（リクエストごとに新プロセス）。`gemini -p "" --yolo` / `claude -p "" --dangerously-skip-permissions` のように空の `-p ""` で起動し、実際のプロンプトは stdin に書き込んで EOF を送ることで処理が始まる。
+
+**プロセス永続化が不可能な理由**: これらのCLIは stdin が閉じられる（EOF）まで処理を開始しない設計のため、1プロセスで複数リクエストを処理できない。PTY経由のインタラクティブモードは可能だが、応答境界の検出が困難でリスクが高い。
+
+**プロセス予熱（Pre-warm Pool）**: `_warmPool` により起動レイテンシを削減している。
+- 現在のリクエスト処理開始直後に、次のリクエスト用プロセスを非同期で `SchedulePreWarm()` する
+- 次のリクエストが来たとき `ClaimWarmProcess()` で既起動プロセスを取得し、stdin にプロンプトを書くだけで済む
+- **実測効果**: 冷起動 ~12-15s → 予熱済み ~11s（Node.js + CLI初期化の ~1~3s を節約）
+- キー形式: `{provider}_{workingDir}_{outputFormat}`（フォーマットが異なるプールは別管理）
+- **非対応プロバイダー**: `opencode` / `copilot` はプロンプトをCLI引数で渡すため予熱不可。これらは常に冷起動
+- 予熱プロセスが死んでいた場合は自動的に冷起動にフォールバックするため安全
