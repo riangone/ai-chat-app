@@ -1,13 +1,14 @@
 ---
 name: feature_status,event_driven
-description: Todo 端点已集成事件驱动逻辑，创建或完成任务会触发 AI 分析；但 ProactiveAgentHub 中的连接挂钩（Welcome Insight）目前处...
+description: Proactive Insight 功能已集成开关逻辑；当前已在 appsettings.json 中将 ProactiveSettings:Enabled 设置为 false 以暂停该功能。
 type: user
 userId: 1
-tags: feature_status,event_driven
+tags: feature_status,event_driven,paused
 relevanceScore: 80
-accessCount: 0
+accessCount: 1
 createdAt: 2026-04-29T08:07:03.8728494Z
-lastAccessedAt: 2026-04-29T08:07:03.8728496Z
+lastAccessedAt: 2026-05-22T10:00:00.0000000Z
 ---
 
-Todo 端点已集成事件驱动逻辑，创建或完成任务会触发 AI 分析；但 ProactiveAgentHub 中的连接挂钩（Welcome Insight）目前处于禁用状态。
+Proactive Insight 功能已集成开关逻辑；当前已在 appsettings.json 中将 ProactiveSettings:Enabled 设置为 false 以暂停该功能。
+所有主动分析服务（包括欢迎洞察、项目脉搏扫描、任务/笔记变更分析）在执行前均会检查此配置。

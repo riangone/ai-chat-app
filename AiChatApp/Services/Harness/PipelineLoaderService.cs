@@ -17,8 +17,22 @@ public class PipelineLoaderService
     public PipelineLoaderService(ILogger<PipelineLoaderService> logger)
     {
         _logger = logger;
-        _pipelinesDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "pipelines");
+        
+        // Try to find pipelines directory in several potential locations
+        var baseDir = AppContext.BaseDirectory;
+        var searchPaths = new[]
+        {
+            Path.Combine(baseDir, "..", "..", "pipelines"),     // bin/Debug/net10.0/../../pipelines -> bin/pipelines
+            Path.Combine(baseDir, "..", "..", "..", "pipelines"), // bin/Debug/net10.0/../../../pipelines -> project root/pipelines
+            Path.Combine(baseDir, "pipelines"),                 // same dir (published)
+            Path.Combine(Directory.GetCurrentDirectory(), "AiChatApp", "pipelines"), // relative to workspace root
+            Path.Combine(Directory.GetCurrentDirectory(), "pipelines")              // relative to project root
+        };
+
+        _pipelinesDir = searchPaths.FirstOrDefault(Directory.Exists) ?? searchPaths[1];
         _promptsDir = Path.Combine(_pipelinesDir, "prompts");
+        
+        _logger.LogInformation($"Using pipelines directory: {_pipelinesDir}");
     }
 
     public async Task LoadAllAsync()

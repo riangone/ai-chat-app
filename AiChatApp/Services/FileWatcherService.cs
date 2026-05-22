@@ -26,6 +26,12 @@ public class FileWatcherService : BackgroundService
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!_configuration.GetValue<bool>("FileWatcher:Enabled", true))
+        {
+            _logger.LogInformation("FileWatcher is disabled.");
+            return Task.CompletedTask;
+        }
+
         var watchPath = _configuration.GetValue<string>("FileWatcher:Path") ?? "/home/ubuntu/ws/ai-chat-app";
         
         if (!Directory.Exists(watchPath))

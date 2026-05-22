@@ -59,10 +59,14 @@ public static class ServiceExtensions
 
         services.AddSignalR();
         
-        // ENABLED: Proactive Scanning (Sentinel Phase)
-        services.AddHostedService<FileWatcherService>();
-        services.AddHostedService<ProjectPulseService>();
-        services.AddHostedService<ReminderService>();
+        var proactiveEnabled = configuration.GetValue<bool>("ProactiveSettings:Enabled");
+        if (proactiveEnabled)
+        {
+            // ENABLED: Proactive Scanning (Sentinel Phase)
+            services.AddHostedService<FileWatcherService>();
+            services.AddHostedService<ProjectPulseService>();
+            services.AddHostedService<ReminderService>();
+        }
 
         return services;
     }

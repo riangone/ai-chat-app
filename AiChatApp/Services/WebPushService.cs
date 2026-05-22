@@ -54,8 +54,10 @@ public class WebPushService
             title,
             body = message,
             url = url ?? "/",
-            icon = "/data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%236366f1'/><text y='.9em' font-size='80' x='10'>💬</text></svg>"
+            icon = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%236366f1'/><text y='.9em' font-size='80' x='10'>💬</text></svg>"
         });
+
+        _logger.LogInformation("Sending web push notification to user {UserId} with {SubscriptionCount} subscriptions", userId, subscriptions.Count);
 
         var webPushClient = new WebPushClient();
         foreach (var sub in subscriptions)
@@ -64,6 +66,7 @@ public class WebPushService
             {
                 var pushSubscription = new WebPush.PushSubscription(sub.Endpoint, sub.P256dh, sub.Auth);
                 await webPushClient.SendNotificationAsync(pushSubscription, payload, _vapidDetails);
+                _logger.LogInformation("Successfully sent notification to {Endpoint}", sub.Endpoint);
             }
             catch (WebPushException ex)
             {
@@ -74,12 +77,12 @@ public class WebPushService
                 }
                 else
                 {
-                    _logger.LogError(ex, "Error sending web push notification to {Endpoint}", sub.Endpoint);
+                    _logger.LogError(ex, "Error sending web push notification (Status: {StatusCode}) to {Endpoint}", ex.StatusCode, sub.Endpoint);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unexpected error sending web push notification");
+                _logger.LogError(ex, "Unexpected error sending web push notification to {Endpoint}", sub.Endpoint);
             }
         }
         

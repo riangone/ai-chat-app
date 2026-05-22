@@ -169,61 +169,71 @@ public class CliExecutorService : ICliExecutor, IDisposable
             while ((line = await process.StandardOutput.ReadLineAsync()) != null)
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
-                string? chunk = null;
-                bool shouldYield = false;
                 bool isDeltaHandled = false;
                 bool skipLine = false;
 
+                var chunksToYield = new List<StreamChunk>();
                 try
                 {
-                    using var doc = JsonDocument.Parse(line);
-                    var root = doc.RootElement;
-
-                    if (root.TryGetProperty("type", out var typePropCheck))
+                    var jsonObjects = JsonUtils.ExtractAllJsonObjects(line);
+                    foreach (var jsonText in jsonObjects)
                     {
-                        var eventType = typePropCheck.GetString();
+                        using var doc = JsonDocument.Parse(jsonText);
+                        var root = doc.RootElement;
 
-                        if (eventType == "user")
+                        string? currentChunk = null;
+                        bool shouldYieldCurrent = false;
+
+                        if (root.TryGetProperty("type", out var typePropCheck))
                         {
-                            skipLine = true;
-                        }
-                        else if (eventType == "content_block_delta" || eventType == "text_delta")
-                        {
-                            if (root.TryGetProperty("delta", out var deltaProp) &&
-                                deltaProp.TryGetProperty("text", out var deltaTextProp))
+                            var eventType = typePropCheck.GetString();
+
+                            if (eventType == "user")
                             {
-                                var deltaText = deltaTextProp.GetString();
-                                if (!string.IsNullOrEmpty(deltaText))
-                                {
-                                    chunk = deltaText;
-                                    shouldYield = true;
-                                    hasDeltaContent = true;
-                                }
+                                skipLine = true;
                             }
-                            isDeltaHandled = true;
+                            else if (eventType == "content_block_delta" || eventType == "text_delta")
+                            {
+                                if (root.TryGetProperty("delta", out var deltaProp) &&
+                                    deltaProp.TryGetProperty("text", out var deltaTextProp))
+                                {
+                                    var deltaText = deltaTextProp.GetString();
+                                    if (!string.IsNullOrEmpty(deltaText))
+                                    {
+                                        currentChunk = deltaText;
+                                        shouldYieldCurrent = true;
+                                        hasDeltaContent = true;
+                                    }
+                                }
+                                isDeltaHandled = true;
+                            }
+                            else if (hasDeltaContent && (eventType == "result" || eventType == "assistant.message"))
+                            {
+                                string? ignored = null;
+                                if (TryParseJsonElement(root, ref ignored, ref extractedModel, ref pt, ref ct, ref tt, isIncremental: false))
+                                    shouldYieldCurrent = true;
+                                isDeltaHandled = true;
+                            }
                         }
-                        else if (hasDeltaContent && (eventType == "result" || eventType == "assistant.message"))
-                        {
-                            string? ignored = null;
-                            if (TryParseJsonElement(root, ref ignored, ref extractedModel, ref pt, ref ct, ref tt, isIncremental: false))
-                                shouldYield = true;
-                            isDeltaHandled = true;
-                        }
-                    }
 
-                    if (!skipLine && !isDeltaHandled)
-                    {
-                        if (TryParseJsonElement(root, ref chunk, ref extractedModel, ref pt, ref ct, ref tt, isIncremental: false))
+                        if (!skipLine && !isDeltaHandled)
                         {
-                            if (!string.IsNullOrEmpty(chunk)) hasDeltaContent = true;
-                            shouldYield = true;
+                            if (TryParseJsonElement(root, ref currentChunk, ref extractedModel, ref pt, ref ct, ref tt, isIncremental: false))
+                            {
+                                if (!string.IsNullOrEmpty(currentChunk)) hasDeltaContent = true;
+                                shouldYieldCurrent = true;
+                            }
+                        }
+                        
+                        if (shouldYieldCurrent)
+                        {
+                            chunksToYield.Add(new StreamChunk(currentChunk, extractedModel, pt, ct, tt));
                         }
                     }
                 }
                 catch (JsonException) { }
 
-                if (shouldYield)
-                    yield return new StreamChunk(chunk, extractedModel, pt, ct, tt);
+                foreach (var c in chunksToYield) yield return c;
             }
         }
         else
@@ -393,20 +403,23 @@ public class CliExecutorService : ICliExecutor, IDisposable
         int totalPt = 0, totalCt = 0, totalTt = 0;
         bool foundAnyJson = false;
 
-        var fullJsonText = JsonUtils.ExtractJson(output);
-        if (!string.IsNullOrEmpty(fullJsonText) && fullJsonText != "{}")
+        var allJsonObjects = JsonUtils.ExtractAllJsonObjects(output);
+        foreach (var jsonText in allJsonObjects)
         {
             try
             {
-                using var doc = JsonDocument.Parse(fullJsonText);
-                if (TryParseJsonElement(doc.RootElement, ref finalContent, ref finalModel, ref totalPt, ref totalCt, ref totalTt))
+                using var doc = JsonDocument.Parse(jsonText);
+                if (TryParseJsonElement(doc.RootElement, ref finalContent, ref finalModel, ref totalPt, ref totalCt, ref totalTt, isIncremental: true))
+                {
                     foundAnyJson = true;
+                }
             }
             catch (JsonException) { }
         }
 
-        if (!foundAnyJson || (totalTt == 0 && string.IsNullOrEmpty(finalContent)))
+        if (!foundAnyJson)
         {
+            // Fallback for non-standard formats or cases where ExtractAllJsonObjects might have missed something
             var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             foreach (var line in lines)
             {

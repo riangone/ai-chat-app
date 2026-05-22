@@ -58,6 +58,12 @@ namespace AiChatApp.Services
 
         private async Task PerformPulseCheckAsync(CancellationToken stoppingToken)
         {
+            if (!_configuration.GetValue<bool>("ProactiveSettings:Enabled"))
+            {
+                _logger.LogDebug("Sentinel (ProjectPulse) is disabled via configuration.");
+                return;
+            }
+
             var watchPath = _configuration.GetValue<string>("FileWatcher:Path") ?? Directory.GetCurrentDirectory();
             
             // 1. 获取当前 Git Hash

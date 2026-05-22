@@ -14,6 +14,7 @@ public class ProactiveBrainService
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<ProactiveBrainService> _logger;
     private readonly WebPushService _webPushService;
+    private readonly IConfiguration _configuration;
 
     // Per-user cooldown to prevent repeated AI calls on reconnect
     private static readonly ConcurrentDictionary<int, DateTime> _lastWelcomeTime = new();
@@ -23,19 +24,24 @@ public class ProactiveBrainService
         IHubContext<ProactiveAgentHub> hubContext,
         IServiceProvider serviceProvider,
         ILogger<ProactiveBrainService> logger,
-        WebPushService webPushService)
+        WebPushService webPushService,
+        IConfiguration configuration)
     {
         _hubContext = hubContext;
         _serviceProvider = serviceProvider;
         _logger = logger;
         _webPushService = webPushService;
+        _configuration = configuration;
     }
+
+    private bool IsEnabled() => _configuration.GetValue<bool>("ProactiveSettings:Enabled");
 
     /// <summary>
     /// 直接发送一个预定义的建议
     /// </summary>
     public async Task SendSuggestionAsync(ProactiveSuggestion suggestion)
     {
+        if (!IsEnabled()) return;
         try
         {
             using (var scope = _serviceProvider.CreateScope())
@@ -70,6 +76,7 @@ public class ProactiveBrainService
     /// </summary>
     public async Task ProcessWelcomeInsightAsync(int userId)
     {
+        if (!IsEnabled()) return;
         var now = DateTime.UtcNow;
         if (_lastWelcomeTime.TryGetValue(userId, out var last) && now - last < WelcomeCooldown)
             return;
@@ -112,6 +119,7 @@ public class ProactiveBrainService
     /// </summary>
     public async Task AnalyzeProjectPulseAsync(string diffSummary, int? userId = null)
     {
+        if (!IsEnabled()) return;
         if (string.IsNullOrWhiteSpace(diffSummary)) return;
 
         _ = Task.Run(async () =>
@@ -177,6 +185,7 @@ public class ProactiveBrainService
     /// </summary>
     public void ProcessTodoChange(TodoItem item, string action)
     {
+        if (!IsEnabled()) return;
         _ = Task.Run(async () =>
         {
             try
@@ -254,6 +263,7 @@ public class ProactiveBrainService
 
     private async Task HandleCompletedTodoAnalysis(TodoItem item, AiService aiService, AppDbContext db)
     {
+        if (!IsEnabled()) return;
         var title = "目标达成！";
         var content = $"太棒了！你完成了任务: **{item.Title}**。基于目前的进度，建议下一步关注 **代码审查** 或 **更新文档**。";
         
@@ -302,6 +312,7 @@ public class ProactiveBrainService
     /// </summary>
     public void ProcessNoteChange(Note note)
     {
+        if (!IsEnabled()) return;
         _ = Task.Run(async () =>
         {
             // 如果笔记内容包含特定关键词，主动提供帮助
