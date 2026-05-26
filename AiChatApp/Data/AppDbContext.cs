@@ -24,6 +24,7 @@ public class AppDbContext : DbContext
     public DbSet<ProactiveSuggestion> ProactiveSuggestions => Set<ProactiveSuggestion>();
     public DbSet<PushSubscription> PushSubscriptions => Set<PushSubscription>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
+    public DbSet<FinancialAsset> FinancialAssets => Set<FinancialAsset>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

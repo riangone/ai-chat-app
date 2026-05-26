@@ -190,8 +190,21 @@ public class AiService
     {
         var targetProvider = provider ?? DefaultProvider;
         string prompt = $"以下のやり取りに基づいて、チャットセッションの短いタイトルを生成してください。タイトルは5語以内、または15文字程度で、装飾なしのプレーンテキストのみを返してください。\n\nユーザー: {userPrompt}\nAI: {(aiResponse.Length > 200 ? aiResponse[..200] + "..." : aiResponse)}";
-        var result = await _cliExecutor.ExecuteAsync(prompt, targetProvider, systemPrompt: _promptService.GetSystemPromptTemplate("TitleGenerator", "あなたはチャットタイトルの命名者です。簡潔で適切なタイトルのみを返します。"), userPrompt: prompt);
-        return result.Output.Trim().Trim('"', '\'').Replace("\n", " ");
+        var result = await _cliExecutor.ExecuteAsync(prompt, targetProvider, systemPrompt: _promptService.GetSystemPromptTemplate("TitleGenerator", "あなたはチャットタイトルの命名者です。簡潔で適切なタイトルのみを返します。"), userPrompt: prompt, outputFormat: "text");
+        var title = result.Output.Trim().Trim('"', '\'').Replace("\n", " ");
+        // Strip any JSON wrapping the AI might have returned despite instructions
+        if (title.StartsWith("{") && title.EndsWith("}"))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(title);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("title", out var t) || root.TryGetProperty("content", out t) || root.TryGetProperty("text", out t))
+                    title = t.GetString()?.Trim().Trim('"', '\'') ?? title;
+            }
+            catch { }
+        }
+        return title;
     }
 
     private async Task<string?> GetProjectRootAsync(int? chatSessionId)

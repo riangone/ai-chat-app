@@ -72,6 +72,17 @@ public static class BriefingEndpoints
             var unreadInsights = await db.ProactiveSuggestions
                 .CountAsync(s => s.UserId == userId && !s.IsRead);
 
+            var financeAssets = await db.FinancialAssets
+                .Where(a => a.UserId == userId)
+                .ToListAsync();
+
+            var financeCount = financeAssets.Count;
+            var totalMarketValue = financeAssets.Sum(a => a.Quantity * a.CurrentPrice);
+            var totalCost = financeAssets.Sum(a => a.Quantity * a.AverageCost);
+            var totalProfitLoss = totalMarketValue - totalCost;
+            var profitColor = totalProfitLoss >= 0 ? "text-success" : "text-error";
+            var profitPrefix = totalProfitLoss >= 0 ? "+" : "";
+
             var total = todayTodos?.total ?? 0;
             var completed = todayTodos?.completed ?? 0;
             var progress = total > 0 ? (int)((double)completed / total * 100) : 0;
@@ -94,13 +105,14 @@ public static class BriefingEndpoints
 当前时间: {localTime:yyyy-MM-dd HH:mm} ({timeOfDay})
 今日待办: 总计 {total} 个，已完成 {completed} 个。
 未读洞察/建议: {unreadInsights} 条。
+资产概况: 持仓 {financeCount} 个资产，当前总市值 {totalMarketValue:N2}，总盈亏 {totalProfitLoss:N2}。
 
 要求:
 1. 包含一个亲切的问候语。
-2. 简要总结今日任务进度或提供一条积极的建议。
+2. 简要总结今日任务进度，并对投资组合表现做一个简短点评（如表现不错或需要关注风险）。
 3. 语言使用中文，语气自然友好。
 4. 使用 Markdown 格式（如加粗、列表等）使其易于阅读。
-5. 保持简洁，总长度控制在 100 字左右。
+5. 保持简洁，总长度控制在 120 字左右。
 ";
                 var response = await ai.ExecuteCliDirectAsync(prompt, ai.DefaultProvider, "你是 AI 每日简报助手。", outputFormat: "text");
                 aiGreeting = response ?? "";
@@ -156,7 +168,28 @@ public static class BriefingEndpoints
                     </div>
                 </div>
             </div>
+
+            <!-- Finance Card -->
+            <div class=""card bg-base-100 shadow-xl border border-base-content/5"">
+                <div class=""card-body"">
+                    <h2 class=""card-title text-sm uppercase tracking-widest opacity-60"">财经管理</h2>
+                    <div class=""flex items-start justify-between mt-2"">
+                        <div class=""flex flex-col"">
+                            <span class=""text-3xl font-black"">{totalMarketValue:N0}</span>
+                            <span class=""text-[10px] font-bold uppercase opacity-40"">当前总市值</span>
+                        </div>
+                        <div class=""text-right flex flex-col"">
+                            <span class=""text-lg font-black {profitColor}"">{profitPrefix}{totalProfitLoss:N2}</span>
+                            <span class=""text-[10px] font-bold uppercase opacity-40"">累计盈亏</span>
+                        </div>
+                    </div>
+                    <div class=""card-actions justify-end mt-4"">
+                        <button class=""btn btn-ghost btn-sm text-emerald-500"" onclick=""openSlide('finance')"">管理 {financeCount} 个资产</button>
+                    </div>
+                </div>
+            </div>
         </div>
+
         
         <div class=""flex justify-center"">
             <div class=""badge badge-ghost opacity-30 text-[10px] font-bold uppercase tracking-[0.2em]"">Powered by Hyperion Intelligence</div>

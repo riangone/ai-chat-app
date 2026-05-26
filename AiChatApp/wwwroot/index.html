@@ -25,6 +25,7 @@
     <style>
         .htmx-indicator { display: none; }
         .htmx-request .htmx-indicator { display: inline-block; }
+        .htmx-request.htmx-indicator { display: inline-block; }
         
         /* Proactive Agent Suggestion UI */
         #proactive-suggestions {
@@ -102,6 +103,7 @@
         .swiper-slide { flex-shrink: 0; width: 100%; height: 100%; position: relative; display: flex; flex-direction: column; overflow: hidden; touch-action: pan-y; }
         .swiper-slide > div:not(.shell-header):not(.tabs) { flex: 1; display: flex; flex-direction: column; min-height: 0; }
         .textarea, .input { touch-action: pan-y; }
+        .overflow-x-auto.no-swiping { touch-action: auto; }
         .typing-dots { display: flex; gap: 4px; align-items: center; padding: 4px 0; }
         .typing-dot { width: 4px; height: 4px; background: currentColor; border-radius: 50%; display: inline-block; animation: bounce 1.4s infinite ease-in-out both; }
         .typing-dot:nth-child(2) { animation-delay: 0.2s; }
@@ -622,7 +624,33 @@
             loadAgents(id); 
             htmx.ajax('GET',`/api/chat/list?projectId=${id}`,'#project-chat-list'); 
         }
-        function deselectProject() { 
+        function openProjectEditModal(id, name, path) {
+            document.getElementById('edit-project-id').value = id;
+            document.getElementById('edit-project-name').value = name;
+            document.getElementById('edit-project-path').value = path;
+            project_edit_modal.showModal();
+        }
+        async function saveProjectEdit() {
+            const id = document.getElementById('edit-project-id').value;
+            const name = document.getElementById('edit-project-name').value.trim();
+            const path = document.getElementById('edit-project-path').value.trim();
+            if (!name || !path) return;
+            const form = new FormData();
+            form.append('name', name);
+            form.append('rootPath', path);
+            const res = await fetch(`/api/projects/${id}`, { method: 'PUT', body: form });
+            if (res.ok) {
+                project_edit_modal.close();
+                const container = document.getElementById('projects-list');
+                if (container) htmx.ajax('GET', '/api/projects/list-html', '#projects-list');
+                if (selectedProjectId == id) {
+                    document.getElementById('current-project-name').textContent = name;
+                    document.getElementById('current-project-path').textContent = path;
+                    document.getElementById('project-banner-name').textContent = name;
+                }
+            }
+        }
+        function deselectProject() {
             selectedProjectId = null;
             selectedAgentId = null;
             editingAgentId = null;
@@ -750,6 +778,7 @@
         let isShowingSuggestion = false;
 
         async function initProactiveAgent() {
+            return; // Insight function disabled
             if (proactiveConnection) return;
             
             proactiveConnection = new signalR.HubConnectionBuilder()
@@ -1289,20 +1318,23 @@ function handleSuggestionAction(command, payload) {
             'projects': { label: 'Projects',  sidebarIdx: 3  },
             'todo':     { label: 'TODO', sidebarIdx: 4  },
             'notes':    { label: 'Notes',     sidebarIdx: 5  },
-            'files':    { label: 'Files',     sidebarIdx: 6  },
-            'memory':   { label: 'Memory',    sidebarIdx: 7  },
-            'mindmap':  { label: 'Mindmap',   sidebarIdx: 8  },
-            'skills':   { label: 'Skills',    sidebarIdx: 9  },
-            'cli':      { label: 'CLI',       sidebarIdx: 10 },
-            'harness':  { label: 'Harness',   sidebarIdx: 11 },
-            'pipeline': { label: 'Pipeline',  sidebarIdx: 12 },
-            'stats':    { label: 'Stats',     sidebarIdx: 13 },
-            'settings': { label: 'Settings',  sidebarIdx: 14 },
+            'finance':  { label: 'Finance',   sidebarIdx: 6  },
+            'files':    { label: 'Files',     sidebarIdx: 7  },
+            'memory':   { label: 'Memory',    sidebarIdx: 8  },
+            'mindmap':  { label: 'Mindmap',   sidebarIdx: 9  },
+            'projects': { label: 'Projects',  sidebarIdx: 10  },
+            'skills':   { label: 'Skills',    sidebarIdx: 11  },
+            'history':  { label: 'History',   sidebarIdx: 12  },
+            'cli':      { label: 'CLI',       sidebarIdx: 13 },
+            'harness':  { label: 'Harness',   sidebarIdx: 14 },
+            'pipeline': { label: 'Pipeline',  sidebarIdx: 15 },
+            'stats':    { label: 'Stats',     sidebarIdx: 16 },
+            'settings': { label: 'Settings',  sidebarIdx: 17 },
         };
         let openSlideIds = ['home', 'chat', 'history', 'todo'];
 
         function initSlidePool() {
-            const slideIds = ['home','chat','todo','notes','files','memory','mindmap','projects','skills','history','cli','harness','pipeline','stats','settings'];
+            const slideIds = ['home','chat','todo','notes','finance','files','memory','mindmap','projects','skills','history','cli','harness','pipeline','stats','settings'];
             const pool = document.createElement('div');
             pool.id = 'slide-pool';
             pool.style.cssText = 'display:none!important;position:absolute;visibility:hidden;pointer-events:none;';
@@ -1447,7 +1479,7 @@ function handleSuggestionAction(command, payload) {
                      touchReleaseOnEdges: true,
                      watchSlidesProgress: true,
                      noSwiping: true,
-                     noSwipingSelector: 'input, textarea, .no-swiping, [contenteditable], .markdown pre, .markdown table, #mermaid-graph',
+                     noSwipingSelector: 'input, textarea, .no-swiping, [contenteditable], .markdown pre, .markdown table, #mermaid-graph, .overflow-x-auto',
                      navigation: {
                          nextEl: '.swiper-button-next',
                          prevEl: '.swiper-button-prev',
@@ -2072,6 +2104,36 @@ function handleSuggestionAction(command, payload) {
                 updateProactiveHistoryUI();
             }
         });
+
+        htmx.config.timeout = 120000; // 120 seconds global timeout
+
+        // Global HTMX Error Handling
+        document.addEventListener('htmx:responseError', (event) => {
+            console.error('HTMX Response Error:', event.detail);
+            const status = event.detail.xhr.status;
+            const toastArea = document.getElementById('notes-toast-area');
+            if (toastArea) {
+                toastArea.innerHTML = `<div class='alert alert-error py-2 shadow-lg'><svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-4 w-4" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><span class='text-xs font-bold'>Error ${status}: 请求失败</span></div>`;
+                setTimeout(() => { if(toastArea.innerHTML.includes('Error '+status)) toastArea.innerHTML = ''; }, 5000);
+            }
+        });
+        document.addEventListener('htmx:sendError', (event) => {
+            console.error('HTMX Send Error:', event.detail);
+            const toastArea = document.getElementById('notes-toast-area');
+            if (toastArea) {
+                toastArea.innerHTML = `<div class='alert alert-error py-2 shadow-lg'><svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-4 w-4" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg><span class='text-xs font-bold'>网络错误: 请检查连接</span></div>`;
+                setTimeout(() => { if(toastArea.innerHTML.includes('网络错误')) toastArea.innerHTML = ''; }, 5000);
+            }
+        });
+
+        document.addEventListener('htmx:timeout', (event) => {
+            console.error('HTMX Timeout:', event.detail);
+            const toastArea = document.getElementById('notes-toast-area');
+            if (toastArea) {
+                toastArea.innerHTML = `<div class='alert alert-warning py-2 shadow-lg'><svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-4 w-4" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg><span class='text-xs font-bold'>请求超时: 服务器响应缓慢</span></div>`;
+                setTimeout(() => { if(toastArea.innerHTML.includes('请求超时')) toastArea.innerHTML = ''; }, 5000);
+            }
+        });
     </script>
     <style>
         #notes-slide-list, #notes-slide-editor { transition: transform 0.4s cubic-bezier(0.25, 0.1, 0.25, 1); will-change: transform; }
@@ -2108,7 +2170,7 @@ function handleSuggestionAction(command, payload) {
 </head>
 <body class="bg-base-200">
     <!-- Proactive Agent Suggestions Container -->
-    <div id="proactive-suggestions" class="fixed bottom-6 right-6 z-[9999] max-w-[400px] min-w-[320px]"></div>
+    <div id="proactive-suggestions" class="fixed bottom-6 right-6 z-[9999] max-w-[400px] min-w-[320px] hidden"></div>
 
 <!-- Inbox Drawer -->
 <div class="drawer drawer-end fixed inset-0 z-[200] pointer-events-none">
@@ -2178,7 +2240,7 @@ function handleSuggestionAction(command, payload) {
                                 </div>
                             </div>
                             <div class="right-actions flex items-center gap-1">
-                                <button onclick="openInbox()" class="btn btn-ghost btn-sm relative flex items-center gap-1.5 px-3 rounded-xl" title="Hyperion Inbox">
+                                <button onclick="openInbox()" class="btn btn-ghost btn-sm relative flex items-center gap-1.5 px-3 rounded-xl hidden" title="Hyperion Inbox">
                                   <div class="indicator">
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>
                                     <span id="inbox-unread-badge" class="badge badge-xs badge-primary indicator-item hidden">0</span>
@@ -2302,6 +2364,148 @@ function handleSuggestionAction(command, payload) {
                                         </div>
                                         <h2 class="text-3xl font-black tracking-tight mb-2">Think Pad</h2>
                                         <p class="text-sm font-medium tracking-widest uppercase opacity-60">Select a thought to refine it</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="swiper-slide">
+                        <div class="shell-header">
+                            <div class="shell-badge">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z" /></svg>
+                                <span>Financial Management</span>
+                            </div>
+                            <div class="right-actions">
+                                <button onclick="closeSlide('finance')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="finance-panel" class="flex flex-col flex-1">
+                            <div class="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1">
+                                <div class="max-w-5xl mx-auto space-y-8">
+                                    <!-- Asset Analysis Card -->
+                                    <div class="card bg-base-100 border border-base-content/10 shadow-xl overflow-hidden">
+                                        <div class="card-body p-0">
+                                            <div class="bg-primary/5 p-4 border-b border-base-content/5 flex justify-between items-center">
+                                                <h3 class="text-xs font-black uppercase tracking-widest opacity-60">AI 投资组合分析</h3>
+                                                <button hx-get="/api/finance/analysis" hx-target="#finance-analysis-content" class="btn btn-primary btn-xs rounded-lg">重新分析</button>
+                                            </div>
+                                            <div id="finance-analysis-content" class="min-h-[100px]">
+                                                <div class="flex flex-col items-center justify-center py-12 opacity-30 gap-3">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-12 h-12"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" /></svg>
+                                                    <p class="text-xs font-bold uppercase tracking-widest">点击“重新分析”获取 AI 见解</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Asset Management -->
+                                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                        <!-- Add Asset Form -->
+                                        <div class="lg:col-span-1 space-y-8">
+                                            <div class="bg-base-100 p-6 rounded-3xl border border-base-content/10 shadow-sm">
+                                                <div class="flex items-center justify-between mb-4">
+                                                    <h3 class="text-lg font-bold">添加资产</h3>
+                                                    <div class="badge badge-primary badge-outline text-[10px] font-black uppercase">AI 驱动</div>
+                                                </div>
+                                                <form hx-post="/api/finance"
+                                                      hx-target="#asset-table-body"
+                                                      hx-swap="beforeend"
+                                                      hx-indicator="#add-asset-indicator"
+                                                      hx-disabled-elt="#add-asset-btn"
+                                                      hx-on::after-request="if(event.detail.successful) this.reset();"
+                                                      class="space-y-4">
+                                                    <div class="form-control">
+                                                        <label class="label">
+                                                            <span class="label-text font-bold text-xs uppercase opacity-60">资产详情 (自然语言)</span>
+                                                        </label>
+                                                        <textarea name="input"
+                                                                  placeholder="例如:&#10;100股苹果公司&#10;贵州茅台 50股 均价1800&#10;BTC 1.5个"
+                                                                  class="textarea textarea-bordered w-full rounded-2xl h-32 focus:ring-2 focus:ring-primary/20 transition-all"
+                                                                  required></textarea>
+                                                        <label class="label">
+                                                            <span class="label-text-alt opacity-40 leading-relaxed text-[10px]">AI 会自动解析名称、代码、数量和价格。</span>
+                                                        </label>
+                                                    </div>
+                                                    <button id="add-asset-btn" type="submit" class="btn btn-primary w-full rounded-2xl gap-2">
+                                                        <span id="add-asset-indicator" class="htmx-indicator loading loading-spinner loading-xs"></span>
+                                                        确认添加
+                                                    </button>
+                                                </form>
+                                            </div>
+
+                                            <!-- Budget Recommendation -->
+                                            <div class="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 p-6 rounded-3xl border border-indigo-500/20 shadow-sm">
+                                                <div class="flex items-center gap-2 mb-4">
+                                                    <div class="p-2 bg-indigo-500 text-white rounded-xl">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                                                    </div>
+                                                    <div class="flex flex-col">
+                                                        <h3 class="text-sm font-black uppercase tracking-widest text-indigo-600">日美组合推荐</h3>
+                                                        <span class="text-[10px] opacity-50 font-bold uppercase">USD 计价</span>
+                                                    </div>
+                                                </div>
+                                                <div class="space-y-4">
+                                                    <div class="form-control">
+                                                        <input type="text" id="recommend-query-input" placeholder="预算、关键字或投资目标..." class="input input-bordered w-full rounded-2xl focus:ring-2 focus:ring-indigo-500/20 transition-all" />
+                                                    </div>
+                                                    <button hx-get="/api/finance/recommend" 
+                                                            hx-vals='js:{query: document.getElementById("recommend-query-input").value}'
+                                                            hx-target="#finance-recommend-content"
+                                                            hx-indicator="#recommend-indicator"
+                                                            hx-disabled-elt="this"
+                                                            class="btn bg-indigo-600 hover:bg-indigo-700 border-none text-white w-full rounded-2xl gap-2">
+                                                        <span id="recommend-indicator" class="htmx-indicator loading loading-spinner loading-xs"></span>
+                                                        获取推荐组合
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <!-- Asset List & Recommendations -->
+                                        <div class="lg:col-span-2 space-y-8">
+                                            <!-- Asset List -->
+                                            <div class="bg-base-100 rounded-3xl border border-base-content/10 shadow-sm overflow-hidden">
+                                                <div class="p-4 border-b border-base-content/5 flex justify-between items-center bg-base-200/50">
+                                                    <h3 class="text-sm font-bold">我的持仓</h3>
+                                                    <div class="flex items-center gap-2">
+                                                        <div id="sync-status"></div>
+                                                        <button hx-post="/api/finance/sync" 
+                                                                hx-target="#sync-status" 
+                                                                hx-indicator="#sync-indicator"
+                                                                class="btn btn-primary btn-xs gap-1">
+                                                            <span id="sync-indicator" class="htmx-indicator loading loading-spinner loading-[10px]"></span>
+                                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                                            同步价格
+                                                        </button>
+                                                        <button hx-get="/api/finance/list-html" hx-target="#asset-table-body" class="btn btn-ghost btn-xs">刷新</button>
+                                                    </div>
+                                                </div>
+
+                                                <div class="overflow-x-auto no-swiping">
+                                                    <table class="table w-full">
+                                                        <thead>
+                                                            <tr class="opacity-40 text-[10px] uppercase tracking-widest border-b border-base-content/5">
+                                                                <th>资产</th>
+                                                                <th>类型</th>
+                                                                <th class="text-right">数量</th>
+                                                                <th class="text-right">成本</th>
+                                                                <th class="text-right">最新价格</th>
+                                                                <th class="text-right">市值/盈亏</th>
+                                                                <th></th>
+                                                            </tr>
+                                                        </thead>                                                        <tbody id="asset-table-body" hx-get="/api/finance/list-html" hx-trigger="load">
+                                                            <!-- Assets will be loaded here -->
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+
+                                            <!-- Recommendation Results -->
+                                            <div id="finance-recommend-content" class="min-h-0">
+                                                <!-- AI Recommendations will appear here -->
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -2596,10 +2800,10 @@ function handleSuggestionAction(command, payload) {
                                     <section class="settings-card space-y-4">
                                         <div class="flex items-center justify-between">
                                             <div>
-                                                <h3 class="font-bold">Notifications</h3>
-                                                <p class="text-xs opacity-50">Enable system-level push notifications for task reminders.</p>
+                                                <h3 class="font-bold" data-i18n="push-notifications">Push Notifications</h3>
+                                                <p class="text-xs opacity-50" data-i18n="push-desc">System reminders for tasks and insights. (iOS requires "Add to Home Screen")</p>
                                             </div>
-                                            <button onclick="PushNotifications.requestPermission()" class="btn btn-primary btn-sm rounded-xl">Enable</button>
+                                            <button id="push-toggle-btn" onclick="PushNotifications.requestPermission()" class="btn btn-primary btn-sm rounded-xl" data-i18n="enable">Enable</button>
                                         </div>
                                     </section>
 

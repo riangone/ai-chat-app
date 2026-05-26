@@ -275,6 +275,22 @@ public static class ApplicationExtensions
         command.CommandText = "CREATE INDEX IF NOT EXISTS IX_Attachments_MessageId ON Attachments (MessageId);";
         command.ExecuteNonQuery();
 
+        // FinancialAssets table
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS FinancialAssets (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                UserId INTEGER NOT NULL,
+                Name TEXT NOT NULL,
+                Symbol TEXT NOT NULL,
+                Type TEXT NOT NULL DEFAULT 'Stock',
+                Quantity REAL NOT NULL DEFAULT 0,
+                AverageCost REAL NOT NULL DEFAULT 0,
+                CurrentPrice REAL NOT NULL DEFAULT 0,
+                ChangePercent REAL,
+                LastUpdatedAt DATETIME NOT NULL
+            );";
+        command.ExecuteNonQuery();
+
         // Invalidate policy cache when policy files change
         var policiesPath = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies");
         if (Directory.Exists(policiesPath))

@@ -38,6 +38,7 @@ public static class ServiceExtensions
         services.AddScoped<AiResponseProcessor>();
         services.AddScoped<AiCollaborationService>();
         services.AddScoped<AiService>();
+        services.AddScoped<FinanceDataService>();
         services.AddScoped<AssistantToolService>();
         services.AddScoped<AttachmentService>();
         services.AddSingleton<ProactiveBrainService>();

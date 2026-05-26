@@ -73,6 +73,16 @@ public class ProjectService
         return agent;
     }
 
+    public async Task<Project?> UpdateProjectAsync(int projectId, string name, string rootPath, int userId)
+    {
+        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == projectId && p.UserId == userId);
+        if (project == null) return null;
+        project.Name = name;
+        project.RootPath = rootPath;
+        await _db.SaveChangesAsync();
+        return project;
+    }
+
     public async Task DeleteProjectAsync(int projectId, int userId)
     {
         var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == projectId && p.UserId == userId);

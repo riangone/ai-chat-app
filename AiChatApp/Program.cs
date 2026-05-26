@@ -57,6 +57,7 @@ app.MapInboxEndpoints();
 app.MapBriefingEndpoints();
 app.MapNotificationEndpoints();
 app.MapAttachmentEndpoints();
+app.MapFinanceEndpoints();
 
 app.MapHub<ProactiveAgentHub>("/hub/proactive-agent");
 

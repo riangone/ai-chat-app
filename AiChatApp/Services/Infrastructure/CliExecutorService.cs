@@ -288,22 +288,19 @@ public class CliExecutorService : ICliExecutor, IDisposable
         if (SupportsPreWarm(targetProvider))
             SchedulePreWarm(warmKey, provider, workingDirectory, effectiveFormat, agentMode);
 
-        var outputBuilder = new StringBuilder();
-        var errorBuilder = new StringBuilder();
-        process.OutputDataReceived += (s, e) => { if (e.Data != null) outputBuilder.AppendLine(e.Data); };
-        process.ErrorDataReceived += (s, e) => { if (e.Data != null) errorBuilder.AppendLine(e.Data); };
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
         if (!string.IsNullOrEmpty(inputToStdin))
         {
             using var sw = process.StandardInput;
             await sw.WriteAsync(inputToStdin);
+            sw.Close();
         }
         else
         {
             process.StandardInput.Close();
         }
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
 
         if (!process.WaitForExit(TimeoutSeconds * 1000))
         {
@@ -312,7 +309,10 @@ public class CliExecutorService : ICliExecutor, IDisposable
             throw new TimeoutException($"CLI process ({provider}) timed out.");
         }
 
-        var result = ParseCliOutput(outputBuilder.ToString(), errorBuilder.ToString(), provider, systemPrompt, userPrompt);
+        var output = await stdoutTask;
+        var stderr = await stderrTask;
+
+        var result = ParseCliOutput(output, stderr, provider, systemPrompt, userPrompt);
         process.Dispose();
         return result;
     }
@@ -403,18 +403,37 @@ public class CliExecutorService : ICliExecutor, IDisposable
         int totalPt = 0, totalCt = 0, totalTt = 0;
         bool foundAnyJson = false;
 
-        var allJsonObjects = JsonUtils.ExtractAllJsonObjects(output);
-        foreach (var jsonText in allJsonObjects)
+        // Strategy 1: Try parsing the whole output as a single JSON object (common case)
+        try
         {
-            try
+            var trimmedOutput = output.Trim();
+            if (trimmedOutput.StartsWith("{") && trimmedOutput.EndsWith("}"))
             {
-                using var doc = JsonDocument.Parse(jsonText);
+                using var doc = JsonDocument.Parse(trimmedOutput);
                 if (TryParseJsonElement(doc.RootElement, ref finalContent, ref finalModel, ref totalPt, ref totalCt, ref totalTt, isIncremental: true))
                 {
                     foundAnyJson = true;
                 }
             }
-            catch (JsonException) { }
+        }
+        catch (JsonException) { }
+
+        // Strategy 2: Extract all JSON objects (handles mixed text/JSON output)
+        if (!foundAnyJson)
+        {
+            var allJsonObjects = JsonUtils.ExtractAllJsonObjects(output);
+            foreach (var jsonText in allJsonObjects)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(jsonText);
+                    if (TryParseJsonElement(doc.RootElement, ref finalContent, ref finalModel, ref totalPt, ref totalCt, ref totalTt, isIncremental: true))
+                    {
+                        foundAnyJson = true;
+                    }
+                }
+                catch (JsonException) { }
+            }
         }
 
         if (!foundAnyJson)
@@ -560,10 +579,32 @@ public class CliExecutorService : ICliExecutor, IDisposable
         if (!foundContent)
         {
             if (root.TryGetProperty("response", out var res)) { content = (content ?? "") + res.GetString(); foundContent = true; }
-            else if (root.TryGetProperty("content", out var res3)) { content = (content ?? "") + res3.GetString(); foundContent = true; }
+            else if (root.TryGetProperty("content", out var res3) && res3.ValueKind == JsonValueKind.String) { content = (content ?? "") + res3.GetString(); foundContent = true; }
             else if (root.TryGetProperty("text", out var res4)) { content = (content ?? "") + res4.GetString(); foundContent = true; }
             else if (root.TryGetProperty("data", out var dataProp) && dataProp.TryGetProperty("content", out var dataContent)) { content = (content ?? "") + dataContent.GetString(); foundContent = true; }
             else if (root.TryGetProperty("message", out var msgProp) && msgProp.TryGetProperty("content", out var msgContent)) { content = (content ?? "") + msgContent.GetString(); foundContent = true; }
+
+            // Gemini API native format: candidates[0].content.parts[*].text
+            if (!foundContent && root.TryGetProperty("candidates", out var candidatesEl) &&
+                candidatesEl.ValueKind == JsonValueKind.Array && candidatesEl.GetArrayLength() > 0)
+            {
+                var firstCandidate = candidatesEl[0];
+                if (firstCandidate.TryGetProperty("content", out var candidateContent) &&
+                    candidateContent.TryGetProperty("parts", out var partsEl) &&
+                    partsEl.ValueKind == JsonValueKind.Array)
+                {
+                    var sb = new StringBuilder();
+                    foreach (var part in partsEl.EnumerateArray())
+                    {
+                        if (part.TryGetProperty("text", out var partText))
+                        {
+                            var txt = partText.GetString();
+                            if (!string.IsNullOrEmpty(txt)) sb.Append(txt);
+                        }
+                    }
+                    if (sb.Length > 0) { content = (content ?? "") + sb.ToString(); foundContent = true; }
+                }
+            }
         }
 
         if (root.TryGetProperty("error", out var errProp))

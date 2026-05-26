@@ -52,25 +52,42 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
+const DEFAULT_ICON = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%236366f1'/><text y='.9em' font-size='80' x='10'>💬</text></svg>";
+
 self.addEventListener('push', (event) => {
-  if (!event.data) return;
+  console.log('[Service Worker] Push Received.');
+  if (!event.data) {
+    console.log('[Service Worker] Push event but no data.');
+    return;
+  }
 
   try {
     const data = event.data.json();
+    console.log('[Service Worker] Push Data:', data);
+    
     const options = {
       body: data.body,
-      icon: data.icon || '/icon.png',
-      badge: '/icon.png',
+      icon: data.icon || DEFAULT_ICON,
+      badge: DEFAULT_ICON,
+      vibrate: [100, 50, 100],
       data: {
         url: data.url || '/'
       }
     };
 
     event.waitUntil(
-      self.registration.showNotification(data.title, options)
+      self.registration.showNotification(data.title || 'AI Chat Notification', options)
     );
   } catch (err) {
-    console.error('Push event error:', err);
+    console.error('[Service Worker] Push event error:', err);
+    // Fallback for non-JSON payload
+    const text = event.data.text();
+    event.waitUntil(
+      self.registration.showNotification('AI Chat', {
+        body: text,
+        icon: DEFAULT_ICON
+      })
+    );
   }
 });
 
