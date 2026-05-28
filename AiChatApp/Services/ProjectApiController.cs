@@ -55,15 +55,19 @@ public static class ProjectApiController
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
             await projectService.DeleteProjectAsync(id, userId);
             return Results.Ok();
-        });
+        }).DisableAntiforgery();
 
-        group.MapPost("/{id}/agents", async (int id, [FromForm] string roleName, [FromForm] string systemPrompt, [FromForm] string color, [FromForm] string? preferredProvider, ProjectService projectService, ClaimsPrincipal user) =>
+        group.MapPost("/{id}/agents", async (int id, HttpContext context, ProjectService projectService, ClaimsPrincipal user) =>
         {
+            var form = await context.Request.ReadFormAsync();
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var project = await projectService.GetProjectAsync(id, userId);
             if (project == null) return Results.NotFound();
 
-            var agent = await projectService.AddAgentAsync(id, roleName, systemPrompt, color, preferredProvider);
+            var agent = await projectService.AddAgentAsync(id,
+                form["roleName"].ToString(), form["systemPrompt"].ToString(),
+                form["color"].ToString(), form["preferredProvider"].ToString(),
+                form["goal"].ToString(), form["backstory"].ToString());
             return Results.Ok(agent);
         }).DisableAntiforgery();
 
@@ -78,12 +82,15 @@ public static class ProjectApiController
         });
 
         group.MapPut("/{projectId}/agents/{agentId}", async (
-            int projectId, int agentId, 
-            [FromForm] string roleName, [FromForm] string systemPrompt, [FromForm] string color, [FromForm] string? preferredProvider,
+            int projectId, int agentId, HttpContext context,
             ProjectService projectService, ClaimsPrincipal user) =>
         {
+            var form = await context.Request.ReadFormAsync();
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var agent = await projectService.UpdateAgentAsync(agentId, roleName, systemPrompt, color, preferredProvider, userId);
+            var agent = await projectService.UpdateAgentAsync(agentId,
+                form["roleName"].ToString(), form["systemPrompt"].ToString(),
+                form["color"].ToString(), form["preferredProvider"].ToString(), userId,
+                form["goal"].ToString(), form["backstory"].ToString());
             return agent != null ? Results.Ok(agent) : Results.NotFound();
         }).DisableAntiforgery();
         

@@ -19,8 +19,9 @@
                     </div>
                 </div>
                 <input type="hidden" name="mode" id="mode-input" value="" />
+                <input type="hidden" name="processType" id="process-type-input" value="hierarchical" />
             </div>
-            <div id="project-agent-selector" class="flex items-center gap-2 px-3 py-1.5 overflow-x-auto no-scrollbar border-b border-base-content/5 hidden"><span class="text-[9px] font-bold opacity-30 uppercase">Agent:</span><div id="project-agent-chips" class="flex items-center gap-1.5"></div></div>
+            <div id="project-agent-selector" class="flex items-center gap-2 px-3 py-1.5 overflow-x-auto no-scrollbar border-b border-base-content/5 hidden"><span class="text-[9px] font-bold opacity-30 uppercase">Agent:</span><div id="project-agent-chips" class="flex items-center gap-1.5"></div><div class="ml-auto flex items-center gap-1 shrink-0"><span class="text-[9px] font-bold opacity-30 uppercase">Process:</span><button type="button" id="process-toggle-btn" onclick="toggleProcessType()" class="badge badge-xs badge-outline opacity-60 hover:opacity-100 cursor-pointer" title="Toggle Sequential/Hierarchical">Hierarchical</button></div></div>
             <!-- Attachment preview strip -->
             <div id="attachment-preview" class="hidden flex flex-wrap gap-2 px-3 py-2 border-b border-base-content/5"></div>
             <div class="flex items-end gap-2 w-full">

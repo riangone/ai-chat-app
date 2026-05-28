@@ -292,6 +292,8 @@ public static class ChatEndpoints
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var userDefaultProvider = user.FindFirstValue("DefaultProvider") ?? "";
             var isCooperative = form["mode"] == "cooperative";
+            var processTypeStr = form["processType"].ToString();
+            var processType = processTypeStr == "sequential" ? CrewProcessType.Sequential : CrewProcessType.Hierarchical;
 
             var attachmentIds = form["attachmentIds"].ToString()
                 .Split(',', StringSplitOptions.RemoveEmptyEntries)
@@ -316,7 +318,7 @@ public static class ChatEndpoints
                 if (attachmentIds.Count > 0) await attachmentSvc.LinkToMessageAsync(attachmentIds, uMsg.Id, userId);
 
                 try {
-                    var (html, _) = await ai.CooperateAsync(enrichedContent, userId, aMsg.Id, session.Id, provider, selectedAgents.Any() ? selectedAgents : null);
+                    var (html, _) = await ai.CooperateAsync(enrichedContent, userId, aMsg.Id, session.Id, provider, selectedAgents.Any() ? selectedAgents : null, null, processType);
                     aMsg.Content = html;
                     aiResponse = html;
                     tracker.FireAndForget(() => consolidation.TryConsolidateAsync(content, html, userId), "Memory Consolidation");
@@ -492,6 +494,8 @@ public static class ChatEndpoints
             var attachmentContext = attachmentIds.Count > 0
                 ? await attachmentSvc.BuildPromptContextAsync(attachmentIds, userId) : "";
             var enrichedContent = string.IsNullOrEmpty(attachmentContext) ? content : content + "\n" + attachmentContext;
+            var processTypeStr = form["processType"].ToString();
+            var streamProcessType = processTypeStr == "sequential" ? CrewProcessType.Sequential : CrewProcessType.Hierarchical;
 
             context.Response.Headers.Append("Content-Type", "text/event-stream");
             context.Response.Headers.Append("Cache-Control", "no-cache");
@@ -549,7 +553,7 @@ public static class ChatEndpoints
                     {
                         var payload = JsonSerializer.Serialize(new { role, html = stepHtml });
                         await SendEvent("step-complete", payload);
-                    });
+                    }, processType: streamProcessType);
                 keepAliveCts2.Cancel();
                 aMsg.Content = html;
                 session.UpdatedAt = DateTime.UtcNow;

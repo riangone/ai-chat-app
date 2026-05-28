@@ -1,14 +1,14 @@
 ---
 name: identity,assistant,Hyperion
-description: 助手名称为 Hyperion，是 AiChatApp 项目的核心 AI 助手和哨兵。
+description: Assistant identity is established as 'Hyperion'.
 type: user
 userId: 1
 tags: identity,assistant,Hyperion
-relations: AiChatApp
-relevanceScore: 80
+relations: AiChatApp,Assistant,Hyperion
+relevanceScore: 85
 accessCount: 0
 createdAt: 2026-05-12T14:26:08.6781606Z
-lastAccessedAt: 2026-05-12T14:26:08.6781607Z
+lastAccessedAt: 2026-05-28T03:26:08.9318691Z
 ---
 
-助手名称为 Hyperion，是 AiChatApp 项目的核心 AI 助手和哨兵。
+Assistant identity is established as 'Hyperion'.

@@ -85,9 +85,9 @@ public class AiService
         return cleanResponse + (string.IsNullOrEmpty(toolHtml) ? "" : "\n" + toolHtml);
     }
 
-    public Task<(string Html, List<AgentStep> Steps)> CooperateAsync(string task, int userId, int messageId, int? chatSessionId, string? provider = null, List<string>? selectedAgentNames = null, Func<string, string, Task>? onStepComplete = null)
+    public Task<(string Html, List<AgentStep> Steps)> CooperateAsync(string task, int userId, int messageId, int? chatSessionId, string? provider = null, List<string>? selectedAgentNames = null, Func<string, string, Task>? onStepComplete = null, CrewProcessType processType = CrewProcessType.Hierarchical)
     {
-        return _collaborationService.CooperateAsync(task, userId, messageId, chatSessionId, provider, selectedAgentNames, onStepComplete);
+        return _collaborationService.CooperateAsync(task, userId, messageId, chatSessionId, provider, selectedAgentNames, onStepComplete, processType);
     }
 
     public async IAsyncEnumerable<string> GetResponseStreamAsync(string prompt, int userId, int? chatSessionId, string? provider = null, int? agentId = null)

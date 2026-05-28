@@ -186,6 +186,19 @@
         function updatePresetDropdown() { const d = document.getElementById('preset-dropdown'); if(!d) return; const p = translations[currentLang].presets || {}; d.innerHTML = Object.keys(p).map(n => `<li><a onclick="applyRolePreset('${n}')">${n}</a></li>`).join(''); }
         function syncProviders() { const m = document.querySelector('select[name="provider"]'), a = document.getElementById('new-agent-provider'); if(m&&a) a.innerHTML = Array.from(m.options).map(o => `<option value="${o.value}">${o.textContent}</option>`).join(''); }
         window.showAgentModal = () => { syncProviders(); document.getElementById('agent_modal').showModal(); };
+        function toggleProcessType() {
+            const input = document.getElementById('process-type-input');
+            const btn = document.getElementById('process-toggle-btn');
+            if (!input || !btn) return;
+            const current = input.value;
+            if (current === 'hierarchical') {
+                input.value = 'sequential';
+                btn.textContent = 'Sequential';
+            } else {
+                input.value = 'hierarchical';
+                btn.textContent = 'Hierarchical';
+            }
+        }
         function setRequestState(requesting) { isSending = requesting; const form = document.getElementById('chat-form'); if (!form) return; form.classList.toggle('requesting', requesting); document.getElementById('loading-spinner')?.classList.toggle('hidden', !requesting); document.getElementById('send-btn')?.toggleAttribute('disabled', requesting); document.getElementById('chat-input')?.toggleAttribute('disabled', requesting); }
         function syncActiveSessionFromDom() { 
             const activeChatBox = document.querySelector('#chat-box'), sessionInput = document.getElementById('session-id-input'); 
@@ -720,13 +733,15 @@
         function startEditAgent(aid) {
             const a = (window.currentProjectAgents || []).find(a => a.id === aid);
             if (!a) return;
-            
+
             editingAgentId = aid;
             document.getElementById('new-agent-role').value = a.roleName;
+            document.getElementById('new-agent-goal').value = a.goal || '';
+            document.getElementById('new-agent-backstory').value = a.backstory || '';
             document.getElementById('new-agent-prompt').value = a.systemPrompt;
             document.getElementById('new-agent-provider').value = a.preferredProvider || 'gemini';
             document.getElementById('new-agent-color').value = a.color || 'primary';
-            
+
             const btn = document.getElementById('add-agent-btn');
             if (btn) {
                 btn.textContent = 'Update';
@@ -737,6 +752,8 @@
         function cancelEditAgent() {
             editingAgentId = null;
             document.getElementById('new-agent-role').value = '';
+            document.getElementById('new-agent-goal').value = '';
+            document.getElementById('new-agent-backstory').value = '';
             document.getElementById('new-agent-prompt').value = '';
             const btn = document.getElementById('add-agent-btn');
             if (btn) {
@@ -745,21 +762,23 @@
             }
         }
 
-        async function addNewAgent() { 
-            const f=new FormData(); 
-            f.append('roleName',document.getElementById('new-agent-role').value); 
-            f.append('systemPrompt',document.getElementById('new-agent-prompt').value); 
-            f.append('preferredProvider',document.getElementById('new-agent-provider').value); 
-            f.append('color',document.getElementById('new-agent-color').value); 
-            
-            const url = editingAgentId 
+        async function addNewAgent() {
+            const f = new FormData();
+            f.append('roleName', document.getElementById('new-agent-role').value);
+            f.append('goal', document.getElementById('new-agent-goal').value);
+            f.append('backstory', document.getElementById('new-agent-backstory').value);
+            f.append('systemPrompt', document.getElementById('new-agent-prompt').value);
+            f.append('preferredProvider', document.getElementById('new-agent-provider').value);
+            f.append('color', document.getElementById('new-agent-color').value);
+
+            const url = editingAgentId
                 ? `/api/projects/${selectedProjectId}/agents/${editingAgentId}`
                 : `/api/projects/${selectedProjectId}/agents`;
             const method = editingAgentId ? 'PUT' : 'POST';
 
             try {
                 const res = await fetch(url, { method, body: f });
-                if(res.ok){
+                if (res.ok) {
                     loadAgents(selectedProjectId);
                     cancelEditAgent();
                 } else {
@@ -2595,7 +2614,7 @@ function handleSuggestionAction(command, payload) {
                     </div>
                     <div class="swiper-slide">
                         <div class="shell-header">
-                            <div class="shell-badge"><span data-i18n="projects-title">Workspaces</span></div>
+                            <div class="shell-badge"><span data-i18n="projects-title">Projects</span></div>
                             <div class="right-actions">
                                 <button onclick="project_modal.showModal()" class="btn btn-ghost btn-sm btn-circle text-primary" data-i18n-title="new-project"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></button>
                                 <button onclick="closeSlide('projects')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">

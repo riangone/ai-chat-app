@@ -4,7 +4,9 @@ namespace AiChatApp.Services;
 
 public enum ContextDepth { Light, Standard, Full }
 
-public record AgentDefinition(string Name, string DisplayName, string Description, string SystemPrompt);
+public enum CrewProcessType { Sequential, Hierarchical }
+
+public record AgentDefinition(string Name, string DisplayName, string Description, string SystemPrompt, string Goal = "", string Backstory = "");
 
 public record SubtaskDef(string Id, string Title, string Agent, string Task, string ExpectedOutput, List<string> Deps);
 

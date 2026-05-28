@@ -25,6 +25,7 @@ public class AppDbContext : DbContext
     public DbSet<PushSubscription> PushSubscriptions => Set<PushSubscription>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<FinancialAsset> FinancialAssets => Set<FinancialAsset>();
+    public DbSet<Crew> Crews => Set<Crew>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

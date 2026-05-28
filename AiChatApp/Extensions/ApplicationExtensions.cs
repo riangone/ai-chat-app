@@ -275,6 +275,36 @@ public static class ApplicationExtensions
         command.CommandText = "CREATE INDEX IF NOT EXISTS IX_Attachments_MessageId ON Attachments (MessageId);";
         command.ExecuteNonQuery();
 
+        // AgentProfiles: add Goal and Backstory columns (CrewAI trinity)
+        command.CommandText = "PRAGMA table_info(AgentProfiles);";
+        var agentProfileColumns = new List<string>();
+        using (var reader = command.ExecuteReader()) { while (reader.Read()) agentProfileColumns.Add(reader.GetString(1)); }
+        if (!agentProfileColumns.Contains("Goal"))
+        {
+            command.CommandText = "ALTER TABLE AgentProfiles ADD COLUMN Goal TEXT NOT NULL DEFAULT '';";
+            command.ExecuteNonQuery();
+        }
+        if (!agentProfileColumns.Contains("Backstory"))
+        {
+            command.CommandText = "ALTER TABLE AgentProfiles ADD COLUMN Backstory TEXT NOT NULL DEFAULT '';";
+            command.ExecuteNonQuery();
+        }
+
+        // Crews table
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS Crews (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Name TEXT NOT NULL,
+                Description TEXT NOT NULL DEFAULT '',
+                Process TEXT NOT NULL DEFAULT 'hierarchical',
+                AgentIds TEXT NOT NULL DEFAULT '[]',
+                TaskTemplates TEXT NOT NULL DEFAULT '[]',
+                UserId INTEGER NOT NULL,
+                CreatedAt DATETIME NOT NULL,
+                UpdatedAt DATETIME NOT NULL
+            );";
+        command.ExecuteNonQuery();
+
         // FinancialAssets table
         command.CommandText = @"
             CREATE TABLE IF NOT EXISTS FinancialAssets (

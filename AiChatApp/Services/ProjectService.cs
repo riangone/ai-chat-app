@@ -57,12 +57,14 @@ public class ProjectService
         return project;
     }
 
-    public async Task<AgentProfile> AddAgentAsync(int projectId, string roleName, string systemPrompt, string color, string? preferredProvider = null)
+    public async Task<AgentProfile> AddAgentAsync(int projectId, string roleName, string systemPrompt, string color, string? preferredProvider = null, string goal = "", string backstory = "")
     {
         var agent = new AgentProfile
         {
             ProjectId = projectId,
             RoleName = roleName,
+            Goal = goal,
+            Backstory = backstory,
             SystemPrompt = systemPrompt,
             Color = color,
             PreferredProvider = preferredProvider
@@ -105,15 +107,17 @@ public class ProjectService
         }
     }
 
-    public async Task<AgentProfile?> UpdateAgentAsync(int agentId, string roleName, string systemPrompt, string color, string? preferredProvider, int userId)
+    public async Task<AgentProfile?> UpdateAgentAsync(int agentId, string roleName, string systemPrompt, string color, string? preferredProvider, int userId, string goal = "", string backstory = "")
     {
         var agent = await _db.AgentProfiles
             .Include(a => a.Project)
             .FirstOrDefaultAsync(a => a.Id == agentId && a.Project!.UserId == userId);
-            
+
         if (agent == null) return null;
 
         agent.RoleName = roleName;
+        agent.Goal = goal;
+        agent.Backstory = backstory;
         agent.SystemPrompt = systemPrompt;
         agent.Color = color;
         agent.PreferredProvider = preferredProvider;

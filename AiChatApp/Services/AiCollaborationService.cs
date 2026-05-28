@@ -54,7 +54,7 @@ public class AiCollaborationService
         _logger = logger;
     }
 
-    public async Task<(string Html, List<AgentStep> Steps)> CooperateAsync(string task, int userId, int messageId, int? chatSessionId, string? provider = null, List<string>? selectedAgentNames = null, Func<string, string, Task>? onStepComplete = null)
+    public async Task<(string Html, List<AgentStep> Steps)> CooperateAsync(string task, int userId, int messageId, int? chatSessionId, string? provider = null, List<string>? selectedAgentNames = null, Func<string, string, Task>? onStepComplete = null, CrewProcessType processType = CrewProcessType.Hierarchical)
     {
         var targetProvider = provider ?? "gemini"; // Default to gemini if not provided
         var workingDir = await GetProjectRootAsync(chatSessionId);
@@ -81,18 +81,24 @@ public class AiCollaborationService
         else if (session?.Project?.Agents != null && session.Project.Agents.Any())
         {
             var activeAgents = session.Project.Agents.Where(a => a.IsActive).OrderBy(a => a.Id).ToList();
-            agentsToRun = activeAgents.Select(a => new AgentDefinition(a.RoleName, a.RoleName, "DB Agent", a.SystemPrompt)).ToList();
+            agentsToRun = activeAgents.Select(a => new AgentDefinition(a.RoleName, a.RoleName, "DB Agent", a.SystemPrompt, a.Goal, a.Backstory)).ToList();
         }
 
-        if (agentsToRun.Any())
+        if (processType == CrewProcessType.Sequential || agentsToRun.Any())
         {
+            // Sequential mode: chain agents one by one
+            if (!agentsToRun.Any())
+            {
+                var skills = await _skillManager.GetAllSkillsAsync(userId);
+                agentsToRun = skills.Select(s => new AgentDefinition(s.Name, s.DisplayName, s.Description, s.Prompt)).ToList();
+            }
             var sharedProjectRoot = await GetProjectRootAsync(chatSessionId);
             var sharedPolicies = await _promptService.LoadPoliciesAsync();
             string lastOutput = "";
             foreach (var agent in agentsToRun)
             {
                 string input = string.IsNullOrEmpty(lastOutput) ? task : $"Task: {task}\n\nPrevious Agent Output:\n{lastOutput}";
-                var step = await RunAgentStepAsync(agent.Name, agent.SystemPrompt, input, messageId, targetProvider, userId, chatSessionId, workingDir: sharedProjectRoot, policies: sharedPolicies, session: session);
+                var step = await RunAgentStepAsync(agent.Name, agent.SystemPrompt, input, messageId, targetProvider, userId, chatSessionId, workingDir: sharedProjectRoot, policies: sharedPolicies, session: session, agentGoal: agent.Goal, agentBackstory: agent.Backstory);
                 var toolOutput = await _toolExecutor.ExecuteToolsAsync(step.Output, sharedProjectRoot);
                 if (toolOutput != step.Output) { step.Output = toolOutput; await _db.SaveChangesAsync(); }
 
@@ -116,7 +122,7 @@ public class AiCollaborationService
             return (_responseProcessor.BuildCooperativeHtml(steps, lastOutput), steps);
         }
 
-        // Harness Engineering (Default Pipeline)
+        // Hierarchical mode: use orchestrator plan + task graph
         var pipeline = _pipelineLoader.Get("default") ?? throw new Exception("Default pipeline not found.");
         string currentInput = task;
         string contextFromPreviousStages = "";
@@ -124,7 +130,7 @@ public class AiCollaborationService
         TaskBlackboard? activeBoard = null;
         var pipelineProjectRoot = await GetProjectRootAsync(chatSessionId);
         var pipelinePolicies = await _promptService.LoadPoliciesAsync();
-        List<AgentDefinition>? pipelineAgents = null;
+        List<AgentDefinition>? pipelineAgents = agentsToRun.Any() ? agentsToRun : null;
 
         foreach (var stage in pipeline.Stages)
         {
@@ -231,7 +237,7 @@ public class AiCollaborationService
         return (_responseProcessor.BuildCooperativeHtml(steps, steps.Last().Output), steps);
     }
 
-    public async Task<AgentStep> RunAgentStepAsync(string role, string persona, string input, int messageId, string provider, int userId, int? chatSessionId = null, int attemptNumber = 1, string? workingDir = null, string? policies = null, ChatSession? session = null, IEnumerable<LongTermMemory>? sharedMemories = null, IEnumerable<Skill>? sharedSkills = null)
+    public async Task<AgentStep> RunAgentStepAsync(string role, string persona, string input, int messageId, string provider, int userId, int? chatSessionId = null, int attemptNumber = 1, string? workingDir = null, string? policies = null, ChatSession? session = null, IEnumerable<LongTermMemory>? sharedMemories = null, IEnumerable<Skill>? sharedSkills = null, string? agentGoal = null, string? agentBackstory = null)
     {
         var roleSkillsTask = sharedSkills != null ? Task.FromResult(sharedSkills.ToList()) : _memorySearch.SearchSkillsAsync(input, userId, agentRole: role);
         var memoriesTask = sharedMemories != null ? Task.FromResult(sharedMemories.ToList()) : _memorySearch.SearchAsync(input, userId);
@@ -239,7 +245,28 @@ public class AiCollaborationService
         policies ??= await _promptService.LoadPoliciesAsync();
         var sb = new StringBuilder();
         if (session == null && chatSessionId.HasValue) session = await _db.ChatSessions.Include(s => s.Project).ThenInclude(p => p!.Agents).FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
-        if (session != null) { var projectAgent = session.Project?.Agents.FirstOrDefault(a => a.RoleName.Equals(role, StringComparison.OrdinalIgnoreCase)); if (projectAgent != null) { sb.AppendLine(projectAgent.SystemPrompt); sb.AppendLine(); } }
+
+        // Build CrewAI-style agent identity block
+        string? resolvedGoal = agentGoal;
+        string? resolvedBackstory = agentBackstory;
+        if (session != null)
+        {
+            var projectAgent = session.Project?.Agents.FirstOrDefault(a => a.RoleName.Equals(role, StringComparison.OrdinalIgnoreCase));
+            if (projectAgent != null)
+            {
+                resolvedGoal ??= projectAgent.Goal;
+                resolvedBackstory ??= projectAgent.Backstory;
+                sb.AppendLine(projectAgent.SystemPrompt);
+                sb.AppendLine();
+            }
+        }
+        if (!string.IsNullOrEmpty(resolvedGoal) || !string.IsNullOrEmpty(resolvedBackstory))
+        {
+            sb.AppendLine($"You are {role}.");
+            if (!string.IsNullOrEmpty(resolvedGoal)) sb.AppendLine($"Your goal: {resolvedGoal}");
+            if (!string.IsNullOrEmpty(resolvedBackstory)) sb.AppendLine($"Background: {resolvedBackstory}");
+            sb.AppendLine();
+        }
         sb.AppendLine(persona); sb.AppendLine(policies);
         var memories = (await memoriesTask).Take(5);
         if (memories.Any()) { sb.AppendLine("\n[ユーザーの既知情報・長期記憶]:"); foreach (var m in memories) sb.AppendLine($"- {m.Content}"); }
@@ -294,7 +321,7 @@ public class AiCollaborationService
         var layerTasks = layer.Select(async subtask => {
             var agentDef = allAgents.FirstOrDefault(a => a.Name.Equals(subtask.Agent, StringComparison.OrdinalIgnoreCase)) ?? new AgentDefinition(subtask.Agent, subtask.Agent, "", "You are a helpful AI assistant.");
             string? issues = null; reviewerIssuesPerTask?.TryGetValue(subtask.Id, out issues); var input = BuildAgentInput(subtask, board, plan, issues);
-            var step = await RunAgentStepAsync(agentDef.Name, agentDef.SystemPrompt, input, messageId, provider, userId, chatSessionId, revisionNumber + 1, projectRoot, policies, session, sharedMemories, sharedSkills);
+            var step = await RunAgentStepAsync(agentDef.Name, agentDef.SystemPrompt, input, messageId, provider, userId, chatSessionId, revisionNumber + 1, projectRoot, policies, session, sharedMemories, sharedSkills, agentDef.Goal, agentDef.Backstory);
             var toolOut = await _toolExecutor.ExecuteToolsAsync(step.Output, projectRoot); if (toolOut != step.Output) { step.Output = toolOut; await _db.SaveChangesAsync(); }
             board.Write(subtask.Id, agentDef.Name, step.Output, revision: revisionNumber);
             _ = Task.Run(async () => { try { await _evalService.EvaluateStepAsync(step.Id, subtask.Task, step.Output, provider); } catch (Exception ex) { _logger.LogError(ex, "EvaluateStepAsync failed for step {StepId}", step.Id); } });
