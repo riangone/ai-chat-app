@@ -90,12 +90,13 @@ public class MemoryFileService : IDisposable
     // ─── 読み込み ───────────────────────────────────────────────────────────
 
     /// <summary>指定ユーザーの記憶を全件返す。userId=0のファイルは全ユーザーに共有。</summary>
-    public async Task<List<LongTermMemory>> GetMemoriesForUserAsync(int userId)
+    public async Task<List<LongTermMemory>> GetMemoriesForUserAsync(int userId, string? agentRole = null)
     {
         await EnsureCacheLoadedAsync();
 
         return _cache!
-            .Where(m => m.UserId == 0 || m.UserId == userId)
+            .Where(m => (m.UserId == 0 || m.UserId == userId) &&
+                        (agentRole == null || m.BoundAgentRole == null || m.BoundAgentRole == agentRole))
             .OrderByDescending(m => m.CreatedAt)
             .ToList();
     }
@@ -103,10 +104,10 @@ public class MemoryFileService : IDisposable
     private const int MaxScoringCandidates = 150;
 
     /// <summary>プロンプトに関連する記憶を多段スコアリングで検索する。</summary>
-    public async Task<List<LongTermMemory>> SearchAsync(string prompt, int userId, int maxResults = 5)
+    public async Task<List<LongTermMemory>> SearchAsync(string prompt, int userId, int maxResults = 5, string? agentRole = null)
     {
         // Cap candidates before the O(n) scoring loop to prevent unbounded CPU growth.
-        var all = (await GetMemoriesForUserAsync(userId))
+        var all = (await GetMemoriesForUserAsync(userId, agentRole))
             .Where(m => m.RelevanceScore > 20)
             .OrderByDescending(m => m.RelevanceScore)
             .Take(MaxScoringCandidates)
@@ -213,6 +214,7 @@ public class MemoryFileService : IDisposable
             accessCount: {memory.AccessCount}
             createdAt: {memory.CreatedAt:O}
             lastAccessedAt: {memory.LastAccessedAt:O}
+            boundAgentRole: {memory.BoundAgentRole ?? ""}
             ---
 
             {memory.Content}
@@ -312,6 +314,7 @@ public class MemoryFileService : IDisposable
                 AccessCount = GetInt("accessCount", 0),
                 CreatedAt = GetDate("createdAt"),
                 LastAccessedAt = GetDate("lastAccessedAt"),
+                BoundAgentRole = Get("boundAgentRole") is { Length: > 0 } bar ? bar : null,
                 SourceFile = Path.GetFileName(filePath),
             };
         }

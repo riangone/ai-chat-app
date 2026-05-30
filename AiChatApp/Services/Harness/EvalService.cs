@@ -2,6 +2,7 @@ using System.Text.Json;
 using AiChatApp.Data;
 using AiChatApp.Models.Harness;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using AiChatApp.Services.Infrastructure;
 
 namespace AiChatApp.Services.Harness;
@@ -76,6 +77,19 @@ public class EvalService
             }
 
             await _db.SaveChangesAsync();
+
+            // 評価が正常に保存された後、Hermes Learning Loop をトリガーしてスキル抽出を試みる
+            var skillLearning = _serviceProvider.GetRequiredService<SkillLearningService>();
+            _ = Task.Run(async () => {
+                try 
+                { 
+                    await skillLearning.TryExtractSkillFromStepAsync(agentStepId); 
+                }
+                catch (Exception ex) 
+                { 
+                    _logger.LogError($"Skill extraction failed for step {agentStepId}: {ex.Message}"); 
+                }
+            });
         }
         catch (Exception ex)
         {

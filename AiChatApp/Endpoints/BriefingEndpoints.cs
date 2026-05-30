@@ -96,7 +96,7 @@ public static class BriefingEndpoints
                 _ => "晚上好"
             };
 
-            // Call Gemini for a dynamic greeting
+            // Call Antigravity for a dynamic greeting
             string aiGreeting = "";
             try 
             {

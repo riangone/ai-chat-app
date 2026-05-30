@@ -167,6 +167,11 @@ public static class ApplicationExtensions
             command.CommandText = "ALTER TABLE LongTermMemories ADD COLUMN UpdatedAt DATETIME NOT NULL DEFAULT '2025-01-01 00:00:00';";
             command.ExecuteNonQuery();
         }
+        if (!memoryColumns.Contains("BoundAgentRole"))
+        {
+            command.CommandText = "ALTER TABLE LongTermMemories ADD COLUMN BoundAgentRole TEXT;";
+            command.ExecuteNonQuery();
+        }
 
         // 5. Explicitly create InputHistories table if it doesn't exist
         command.CommandText = @"

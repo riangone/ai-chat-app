@@ -1,4 +1,5 @@
 #!/bin/bash
+export PATH="/home/ubuntu/.dotnet:/home/ubuntu/.local/bin:$PATH"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="$SCRIPT_DIR/app.pid"

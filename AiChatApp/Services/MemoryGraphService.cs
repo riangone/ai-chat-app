@@ -41,12 +41,12 @@ public class MemoryGraphService
     /// 全ての記憶ファイルから関係性をスキャンし、メモリ内グラフを構築する。
     /// 最後に構築してから1分以内であればキャッシュを再利用する。
     /// </summary>
-    public async Task BuildGraphAsync(int userId, bool force = false)
+    public async Task BuildGraphAsync(int userId, bool force = false, string? agentRole = null)
     {
         var graph = GetUserGraph(userId);
         if (!force && DateTime.UtcNow - graph.LastBuildTime < TimeSpan.FromMinutes(1)) return;
 
-        var memories = await _fileService.GetMemoriesForUserAsync(userId);
+        var memories = await _fileService.GetMemoriesForUserAsync(userId, agentRole);
         graph.AdjList.Clear();
 
         foreach (var mem in memories)
@@ -81,7 +81,7 @@ public class MemoryGraphService
     /// <summary>
     /// 指定された記憶に関連する他の記憶を探索する（1ステップ）。
     /// </summary>
-    public async Task<List<LongTermMemory>> GetRelatedMemoriesAsync(LongTermMemory seed, int userId, int limit = 3)
+    public async Task<List<LongTermMemory>> GetRelatedMemoriesAsync(LongTermMemory seed, int userId, int limit = 3, string? agentRole = null)
     {
         if (string.IsNullOrEmpty(seed.Relations) && string.IsNullOrEmpty(seed.Tags)) return [];
 
@@ -102,7 +102,7 @@ public class MemoryGraphService
             }
         }
 
-        var allMemories = await _fileService.GetMemoriesForUserAsync(userId);
+        var allMemories = await _fileService.GetMemoriesForUserAsync(userId, agentRole);
         return allMemories
             .Where(m => m.SourceFile != null && relatedFiles.Contains(m.SourceFile))
             .Take(limit)

@@ -86,7 +86,8 @@ public class SessionMemoryService
             _db.LongTermMemories.Add(new LongTermMemory
             {
                 UserId = userId,
-                Content = $"[Session:{sessionId}] {m.Key}: {m.Value}"
+                Content = $"[Session:{sessionId}] {m.Key}: {m.Value}",
+                BoundAgentRole = m.AgentName
             });
             m.IsPromoted = true;
         }

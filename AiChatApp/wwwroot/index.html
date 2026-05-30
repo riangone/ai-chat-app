@@ -739,7 +739,7 @@
             document.getElementById('new-agent-goal').value = a.goal || '';
             document.getElementById('new-agent-backstory').value = a.backstory || '';
             document.getElementById('new-agent-prompt').value = a.systemPrompt;
-            document.getElementById('new-agent-provider').value = a.preferredProvider || 'gemini';
+            document.getElementById('new-agent-provider').value = a.preferredProvider || 'antigravity';
             document.getElementById('new-agent-color').value = a.color || 'primary';
 
             const btn = document.getElementById('add-agent-btn');
@@ -2796,7 +2796,7 @@ function handleSuggestionAction(command, payload) {
                                             <div class="settings-kv">
                                                 <span class="text-sm opacity-60">Default AI Model</span>
                                                 <select id="default-provider-select" onchange="changeDefaultProvider(this.value)" class="select select-bordered select-sm rounded-xl">
-                                                    <option value="gemini">Gemini</option>
+                                                    <option value="antigravity">Antigravity</option>
                                                     <option value="copilot">GitHub Copilot</option>
                                                     <option value="claude">Claude Code</option>
                                                     <option value="codex">Codex</option>

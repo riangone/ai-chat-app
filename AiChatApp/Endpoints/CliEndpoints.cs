@@ -15,12 +15,12 @@ public static class CliEndpoints
         group.MapGet("/sessions", (IConfiguration config) => {
             var sessions = new List<dynamic>();
             
-            // 1. Gemini
-            var geminiPath = config["CliPaths:Gemini"] ?? "/home/ubuntu/.gemini/tmp/ai-chat-app/chats";
-            if (Directory.Exists(geminiPath)) {
-                sessions.AddRange(Directory.GetFiles(geminiPath, "session-*.json")
+            // 1. Antigravity
+            var antigravityPath = config["CliPaths:Antigravity"] ?? config["CliPaths:Gemini"] ?? "/home/ubuntu/.gemini/tmp/ai-chat-app/chats";
+            if (Directory.Exists(antigravityPath)) {
+                sessions.AddRange(Directory.GetFiles(antigravityPath, "session-*.json")
                     .Select(f => new FileInfo(f))
-                    .Select(f => new { Source = "Gemini", Name = f.Name, Time = f.LastWriteTime, Path = f.FullName }));
+                    .Select(f => new { Source = "Antigravity", Name = f.Name, Time = f.LastWriteTime, Path = f.FullName }));
             }
 
             // 2. Claude
@@ -49,7 +49,7 @@ public static class CliEndpoints
 
             return Results.Content(string.Concat(sorted.Select(s => {
                 var badgeColor = s.Source switch {
-                    "Gemini" => "badge-primary",
+                    "Antigravity" => "badge-primary",
                     "Claude" => "badge-secondary",
                     "Codex" => "badge-accent",
                     "Copilot" => "badge-info",
@@ -73,13 +73,13 @@ public static class CliEndpoints
             htmlBuilder.Append("<div id='chat-box' class='flex-1 overflow-y-auto p-4 md:p-6 space-y-8 custom-scrollbar'>");
             htmlBuilder.Append($@"<div class='alert alert-info shadow-sm mb-4'><svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' class='stroke-current shrink-0 w-6 h-6'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'></path></svg><span>Viewing {source} Session (Read-Only)</span></div>");
 
-            if (source == "Gemini") {
+            if (source == "Antigravity" || source == "Gemini") {
                 var json = File.ReadAllText(path);
                 using var doc = JsonDocument.Parse(json);
                 var messages = doc.RootElement.GetProperty("messages");
                 foreach (var msg in messages.EnumerateArray()) {
                     var type = msg.GetProperty("type").GetString();
-                    var isAi = type == "gemini";
+                    var isAi = type == "gemini" || type == "antigravity";
                     string content = isAi ? (msg.GetProperty("content").GetString() ?? "") : 
                         string.Join("\n", msg.GetProperty("content").EnumerateArray().Select(c => c.GetProperty("text").GetString()));
                     htmlBuilder.Append(HtmlUtils.RenderMessage(new Message { Content = content, IsAi = isAi }));

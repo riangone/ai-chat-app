@@ -110,7 +110,7 @@ public class AiPromptService
     {
         if (lightDepth) return GetSystemPromptTemplate(agentRole ?? "Assistant", "You are a helpful AI assistant.");
         
-        var memoriesTask = _memorySearch.SearchAsync(prompt, userId);
+        var memoriesTask = _memorySearch.SearchAsync(prompt, userId, agentRole: agentRole);
         var policiesTask = LoadPoliciesAsync();
 
         async Task<(List<Skill> Skills, ChatSession? Session, string SessionMemoryContext)> LoadDbDataAsync()

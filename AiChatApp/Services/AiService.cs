@@ -44,8 +44,8 @@ public class AiService
         _toolService = toolService;
     }
 
-    public string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "gemini";
-    public string FallbackProvider => _config["AiSettings:FallbackProvider"] ?? "gemini";
+    public string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "antigravity";
+    public string FallbackProvider => _config["AiSettings:FallbackProvider"] ?? "antigravity";
 
     public async Task<List<AgentDefinition>> GetAvailableAgentsAsync(int userId)
     {

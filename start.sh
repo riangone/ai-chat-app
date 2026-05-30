@@ -1,4 +1,5 @@
 #!/bin/bash
+export PATH="/home/ubuntu/.dotnet:/home/ubuntu/.local/bin:$PATH"
 PID_FILE="app.pid"
 
 if [ -f "$PID_FILE" ]; then

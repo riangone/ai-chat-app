@@ -14,6 +14,7 @@ public class LongTermMemory
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastAccessedAt { get; set; } = DateTime.UtcNow;
+    public string? BoundAgentRole { get; set; }
 
     [NotMapped]
     public string? SourceFile { get; set; }

@@ -295,7 +295,7 @@ public static class HarnessEndpoints
                 .Join(db.Messages, s => s.MessageId, m => m.Id, (s, m) => new { Step = s, m.ChatSessionId })
                 .Join(db.ChatSessions, x => x.ChatSessionId, cs => cs.Id, (x, cs) => new {
                     Step = x.Step,
-                    SessionProvider = (cs.PreferredProvider ?? "gemini").ToLower()
+                    SessionProvider = (cs.PreferredProvider ?? "antigravity").ToLower()
                 })
                 .ToListAsync();
 

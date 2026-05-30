@@ -8,7 +8,7 @@ public static class ProviderRegistry
         var m = model?.ToLower() ?? "";
         
         if (p.Contains("copilot")) return "Copilot";
-        if (p.Contains("gemini") || m.Contains("gemini")) return "Gemini";
+        if (p.Contains("antigravity") || p.Contains("gemini") || m.Contains("antigravity") || m.Contains("gemini")) return "Antigravity";
         if (p.Contains("claude") || p.Contains("anthropic") || m.Contains("claude") || m.Contains("anthropic") || m.Contains("sonnet") || m.Contains("haiku") || m.Contains("opus")) return "Claude";
         if (p.Contains("codex") || m.Contains("codex")) return "Codex";
         if (p.Contains("opencode") || p.Contains("open-code") || m.Contains("opencode") || m.Contains("open-code")) return "OpenCode";
@@ -22,7 +22,7 @@ public static class ProviderRegistry
     public static string GetColorClass(string provider)
     {
         return provider switch {
-            "Gemini" => "text-blue-400",
+            "Antigravity" or "Gemini" => "text-blue-400",
             "Claude" => "text-orange-400",
             "Codex" => "text-emerald-400",
             "Copilot" => "text-indigo-400",
@@ -33,9 +33,10 @@ public static class ProviderRegistry
         };
     }
 
-    public static readonly string[] AllProviders = { "Gemini", "Claude", "Codex", "Copilot", "OpenCode", "OpenAI", "DeepSeek" };
+    public static readonly string[] AllProviders = { "Antigravity", "Claude", "Codex", "Copilot", "OpenCode", "OpenAI", "DeepSeek" };
 
     public static readonly Dictionary<string, long> Quotas = new() {
+        { "Antigravity", 10000000 },
         { "Gemini", 10000000 },
         { "Claude", 5000000 },
         { "Codex", 2000000 },

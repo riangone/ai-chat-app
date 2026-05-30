@@ -32,13 +32,13 @@ public class CliExecutorService : ICliExecutor, IDisposable
         _config = config;
     }
 
-    private string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "gemini";
-    private string FallbackProvider => _config["AiSettings:FallbackProvider"] ?? "gemini";
+    private string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "antigravity";
+    private string FallbackProvider => _config["AiSettings:FallbackProvider"] ?? "antigravity";
     private int TimeoutSeconds => int.TryParse(_config["AiSettings:TimeoutSeconds"], out var s) ? s : 300;
 
     // Only stdin-based providers can be pre-warmed; arg-based ones need the prompt at spawn time.
     private static bool SupportsPreWarm(string normalizedProvider) =>
-        normalizedProvider != "opencode" && normalizedProvider != "copilot";
+        normalizedProvider != "opencode" && normalizedProvider != "copilot" && normalizedProvider != "antigravity" && normalizedProvider != "gemini";
 
     private Process? ClaimWarmProcess(string key)
     {
@@ -101,7 +101,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
     public async IAsyncEnumerable<StreamChunk> ExecuteStreamAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null)
     {
         var targetProvider = (provider ?? DefaultProvider).ToLowerInvariant();
-        var useJsonStreaming = targetProvider is "gemini" or "claude" or "claudecode" or "copilot" or "codex" or "opencode";
+        var useJsonStreaming = targetProvider is "claude" or "claudecode" or "copilot" or "codex" or "opencode";
 
         var format = outputFormat ?? (useJsonStreaming ? "stream-json" : null);
         var processInfo = SetupProcessInfo(provider ?? DefaultProvider, workingDirectory, format, agentMode: agentMode, persistent: false);
@@ -115,7 +115,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
             processInfo.ArgumentList.Add(inputToStdin);
             inputToStdin = string.Empty;
         }
-        else if (targetProvider == "copilot")
+        else if (targetProvider == "copilot" || targetProvider == "antigravity" || targetProvider == "gemini")
         {
             processInfo.ArgumentList.Add("-p");
             processInfo.ArgumentList.Add(inputToStdin);
@@ -258,12 +258,12 @@ public class CliExecutorService : ICliExecutor, IDisposable
         var processInfo = SetupProcessInfo(provider, workingDirectory, outputFormat: outputFormat, agentMode: agentMode, persistent: false);
         string inputToStdin = string.IsNullOrEmpty(systemPrompt) ? prompt : $"System: {systemPrompt}\n\nUser: {prompt}";
 
-        if (provider == "opencode")
+        if (targetProvider == "opencode")
         {
             processInfo.ArgumentList.Add(inputToStdin);
             inputToStdin = string.Empty;
         }
-        else if (provider == "copilot")
+        else if (targetProvider == "copilot" || targetProvider == "antigravity" || targetProvider == "gemini")
         {
             processInfo.ArgumentList.Add("-p");
             processInfo.ArgumentList.Add(inputToStdin);
@@ -327,8 +327,9 @@ public class CliExecutorService : ICliExecutor, IDisposable
             "claude" => "claude",
             "codex" => "codex",
             "opencode" => "opencode",
-            "gemini" => "gemini",
-            _ => DefaultProvider.ToLowerInvariant()
+            "antigravity" => "antigravity",
+            "gemini" => "antigravity",
+            _ => (DefaultProvider.ToLowerInvariant() == "gemini" || DefaultProvider.ToLowerInvariant() == "antigravity") ? "antigravity" : DefaultProvider.ToLowerInvariant()
         };
 
         var processInfo = new ProcessStartInfo
@@ -344,6 +345,8 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
         processInfo.EnvironmentVariables["GEMINI_SANDBOX"] = "false";
         processInfo.EnvironmentVariables["GEMINI_CLI_TRUST_WORKSPACE"] = "true";
+        processInfo.EnvironmentVariables["ANTIGRAVITY_SANDBOX"] = "false";
+        processInfo.EnvironmentVariables["ANTIGRAVITY_CLI_TRUST_WORKSPACE"] = "true";
 
         if (targetProvider == "codex")
         {
@@ -364,6 +367,10 @@ public class CliExecutorService : ICliExecutor, IDisposable
             processInfo.ArgumentList.Add("--allow-all-tools");
             processInfo.ArgumentList.Add("--output-format");
             processInfo.ArgumentList.Add(outputFormat ?? "json");
+        }
+        else if (targetProvider == "antigravity" || targetProvider == "gemini" || fileName == "antigravity")
+        {
+            processInfo.ArgumentList.Add("--dangerously-skip-permissions");
         }
         else
         {

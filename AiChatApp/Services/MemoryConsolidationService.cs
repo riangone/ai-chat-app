@@ -63,6 +63,12 @@ public class MemoryConsolidationService
 
             // Trigger actual consolidation
             await PerformConsolidationAsync(conversationToProcess, userId);
+
+            // Also run Ebbinghaus active consolidation and pruning asynchronously
+            _ = Task.Run(async () => {
+                try { await ConsolidateAndPruneMemoriesAsync(userId); }
+                catch (Exception ex) { _logger.LogError(ex, "ConsolidateAndPruneMemoriesAsync failed"); }
+            });
         }
         finally
         {
@@ -158,4 +164,141 @@ public class MemoryConsolidationService
 
     private record ConsolidationRoot(List<ConsolidationItem> Memories);
     private record ConsolidationItem(string Content, string Tags, List<string>? Relations);
+
+    public async Task ConsolidateAndPruneMemoriesAsync(int userId)
+    {
+        try
+        {
+            var memories = await _fileService.GetMemoriesForUserAsync(userId);
+            if (!memories.Any()) return;
+
+            var now = DateTime.UtcNow;
+            var updatedMemories = new List<LongTermMemory>();
+            var memoriesToDelete = new List<LongTermMemory>();
+
+            // 1. 艾宾浩斯遗忘衰减 (Decay RelevanceScore based on time elapsed since LastAccessedAt)
+            foreach (var mem in memories)
+            {
+                var daysElapsed = (now - mem.LastAccessedAt).TotalDays;
+                if (daysElapsed >= 1)
+                {
+                    // 每天衰减 2 点相关性得分
+                    int decayAmount = (int)(daysElapsed * 2);
+                    mem.RelevanceScore = Math.Max(0, mem.RelevanceScore - decayAmount);
+                    mem.UpdatedAt = now;
+                }
+
+                // 相关性过低的记忆被淘汰/归档
+                if (mem.RelevanceScore < 20 && !string.IsNullOrEmpty(mem.SourceFile))
+                {
+                    memoriesToDelete.Add(mem);
+                }
+                else
+                {
+                    updatedMemories.Add(mem);
+                }
+            }
+
+            // 执行物理删除
+            foreach (var mem in memoriesToDelete)
+            {
+                _logger.LogInformation("[MemoryConsolidation] Pruning memory file {File} due to low relevance score ({Score})", mem.SourceFile, mem.RelevanceScore);
+                await _fileService.DeleteByFileNameAsync(mem.SourceFile!);
+            }
+
+            // 保存衰减后的记忆
+            foreach (var mem in updatedMemories)
+            {
+                await _fileService.WriteAsync(mem);
+            }
+
+            // 2. 主动记忆整理 (Merge similar/conflicting memories)
+            if (updatedMemories.Count > 3)
+            {
+                await PerformActiveConsolidationAsync(updatedMemories, userId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[MemoryConsolidation] Active pruning and consolidation failed: {Message}", ex.Message);
+        }
+    }
+
+    private async Task PerformActiveConsolidationAsync(List<LongTermMemory> activeMemories, int userId)
+    {
+        // 提取相似或容易冲突的记忆，送给 LLM 合并
+        var groups = activeMemories
+            .Where(m => !string.IsNullOrEmpty(m.Tags))
+            .GroupBy(m => m.Tags.Split(',')[0].Trim().ToLowerInvariant())
+            .Where(g => g.Count() > 1) // 相同主要标签有多条
+            .ToList();
+
+        foreach (var group in groups)
+        {
+            var memoriesToMerge = group.ToList();
+            var memoryTexts = string.Join("\n\n", memoriesToMerge.Select(m => $"- [File: {m.SourceFile}] {m.Content}"));
+
+            string mergePrompt = $$"""
+                You are a Memory Consolidator Agent. Your task is to merge and resolve conflicts among multiple fragments of long-term memories under the tag/topic "{{group.Key}}".
+                
+                Combine them into a single, clean, structured facts list or unified memory text. Resolve any factual contradictions by prioritizing newer or more complete info.
+                
+                MEMORIES TO MERGE:
+                {{memoryTexts}}
+                
+                OUTPUT FORMAT (Strict JSON only):
+                {
+                  "mergedContent": "Fully consolidated facts and narrative. No duplicate statements.",
+                  "relations": ["Entity1", "Entity2"]
+                }
+                """;
+
+            try
+            {
+                string provider = _aiService.DefaultProvider;
+                string rawJson = await _aiService.ExecuteCliDirectAsync(mergePrompt, provider);
+                string jsonPart = JsonUtils.ExtractJson(rawJson);
+
+                using var doc = JsonDocument.Parse(jsonPart);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("mergedContent", out var contentProp))
+                {
+                    var mergedContent = contentProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(mergedContent))
+                    {
+                        var relations = new List<string>();
+                        if (root.TryGetProperty("relations", out var relProp))
+                        {
+                            foreach (var item in relProp.EnumerateArray())
+                            {
+                                relations.Add(item.GetString() ?? "");
+                            }
+                        }
+
+                        // 保存合并后的第一个记忆，删除多余的记忆
+                        var primary = memoriesToMerge[0];
+                        primary.Content = mergedContent;
+                        primary.Relations = relations.Any() ? string.Join(",", relations.Distinct()) : primary.Relations;
+                        primary.RelevanceScore = Math.Min(100, primary.RelevanceScore + 10);
+                        primary.LastAccessedAt = DateTime.UtcNow;
+                        await _fileService.WriteAsync(primary);
+
+                        for (int i = 1; i < memoriesToMerge.Count; i++)
+                        {
+                            if (!string.IsNullOrEmpty(memoriesToMerge[i].SourceFile))
+                            {
+                                await _fileService.DeleteByFileNameAsync(memoriesToMerge[i].SourceFile!);
+                            }
+                        }
+
+                        _logger.LogInformation("[MemoryConsolidation] Successfully merged {Count} memories under tag '{Tag}' into '{File}'", memoriesToMerge.Count, group.Key, primary.SourceFile);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[MemoryConsolidation] Error merging group '{Tag}': {Message}", group.Key, ex.Message);
+            }
+        }
+    }
 }
