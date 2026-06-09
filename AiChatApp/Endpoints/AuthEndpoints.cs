@@ -61,9 +61,12 @@ public static class AuthEndpoints
 
         group.MapGet("/me", (ClaimsPrincipal user) => {
             if (user.Identity?.IsAuthenticated != true) return Results.Unauthorized();
+            var isAdminClaim = user.FindFirst("IsAdmin")?.Value;
+            var isAdmin = isAdminClaim != null && bool.TryParse(isAdminClaim, out var adminVal) && adminVal;
             return Results.Ok(new {
                 id = user.FindFirstValue(ClaimTypes.NameIdentifier),
-                username = user.Identity.Name
+                username = user.Identity.Name,
+                isAdmin = isAdmin
             });
         }).RequireAuthorization();
 

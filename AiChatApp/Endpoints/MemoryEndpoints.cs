@@ -58,8 +58,9 @@ public static class MemoryEndpoints
             return Results.Ok();
         }).DisableAntiforgery();
 
-        group.MapDelete("/{fileName}", async (string fileName, MemoryFileService fileService) => {
-            await fileService.DeleteByFileNameAsync(fileName);
+        group.MapDelete("/{fileName}", async (string fileName, ClaimsPrincipal user, MemoryFileService fileService) => {
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            await fileService.DeleteByFileNameAsync(fileName, userId);
             return Results.Ok();
         });
 

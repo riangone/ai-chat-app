@@ -39,6 +39,10 @@ app.UseStaticFiles(new StaticFileOptions
 
 // Initialize Database and Pipelines
 await app.InitializeDatabaseAsync();
+using (var scope = app.Services.CreateScope())
+{
+    scope.ServiceProvider.GetRequiredService<MemoryFileService>();
+}
 
 // Map Endpoints
 app.MapAuthEndpoints();

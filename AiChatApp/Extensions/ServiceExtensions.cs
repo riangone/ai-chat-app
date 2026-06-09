@@ -22,6 +22,7 @@ public static class ServiceExtensions
         services.AddMemoryCache();
         services.AddSingleton<IBackgroundTaskTracker, BackgroundTaskTracker>();
         services.AddSingleton<ICliExecutor, CliExecutorService>();
+        services.AddSingleton<HeadroomCompressionService>();
         services.AddSingleton<MemoryFileService>();
         services.AddSingleton<MemoryGraphService>();
         services.AddScoped<MemorySearchService>();
@@ -29,6 +30,7 @@ public static class ServiceExtensions
         services.AddScoped<ProjectService>();
         services.AddScoped<SessionMemoryService>();
         services.AddScoped<SkillLearningService>();
+        services.AddScoped<MultiAiCouncilService>();
         services.AddSingleton<SkillManagerService>();
         services.AddSingleton<PipelineLoaderService>();
         services.AddScoped<SchemaValidationService>();

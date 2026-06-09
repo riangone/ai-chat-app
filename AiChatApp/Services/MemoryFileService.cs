@@ -1,17 +1,17 @@
 using AiChatApp.Models;
 using System.Text.RegularExpressions;
+using System.Collections.Concurrent;
 
 namespace AiChatApp.Services;
 
 /// <summary>
-/// mdファイルを唯一の記憶ストアとして管理する。DBは使用しない。
+/// 各ユーザーごとのサブディレクトリを用いて、mdファイルを物理的・論理的に隔離して管理する記憶ストア。
 /// </summary>
 public class MemoryFileService : IDisposable
 {
     private readonly string _memoryDir;
-    private List<LongTermMemory>? _cache;
-    private readonly SemaphoreSlim _cacheLock = new(1, 1);
-    private readonly FileSystemWatcher? _watcher;
+    private readonly ConcurrentDictionary<int, List<LongTermMemory>> _userCaches = new();
+    private readonly ConcurrentDictionary<int, SemaphoreSlim> _userLocks = new();
 
     public MemoryFileService(IConfiguration config)
     {
@@ -29,59 +29,113 @@ public class MemoryFileService : IDisposable
         _memoryDir = dir.Replace("~/", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + "/");
         Directory.CreateDirectory(_memoryDir);
 
+        // 旧バージョンのフラットな記憶ファイルを、ユーザー別の物理サブディレクトリへ移行
+        MigrateOldMemories();
+    }
+
+    private SemaphoreSlim GetUserLock(int userId)
+    {
+        return _userLocks.GetOrAdd(userId, _ => new SemaphoreSlim(1, 1));
+    }
+
+    private void MigrateOldMemories()
+    {
         try
         {
-            _watcher = new FileSystemWatcher(_memoryDir, "*.md")
+            if (!Directory.Exists(_memoryDir)) return;
+
+            foreach (var filePath in Directory.GetFiles(_memoryDir, "*.md"))
             {
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.CreationTime,
-                EnableRaisingEvents = true
-            };
-            _watcher.Changed += OnFileChanged;
-            _watcher.Created += OnFileChanged;
-            _watcher.Deleted += OnFileChanged;
-            _watcher.Renamed += OnFileChanged;
+                var fileName = Path.GetFileName(filePath);
+                if (fileName.Equals("MEMORY.md", StringComparison.OrdinalIgnoreCase))
+                {
+                    File.Delete(filePath);
+                    continue;
+                }
+
+                var text = File.ReadAllText(filePath);
+                var match = Regex.Match(text, @"^---\s*\n(.*?)\n---\s*\n?(.*)", RegexOptions.Singleline);
+                if (!match.Success) continue;
+
+                var fm = match.Groups[1].Value;
+                string Get(string key) =>
+                    Regex.Match(fm, $@"^{key}:\s*(.+)$", RegexOptions.Multiline).Groups[1].Value.Trim() is { Length: > 0 } v ? v : "";
+
+                int.TryParse(Get("userId"), out var userId);
+
+                var targetDir = userId == 0 
+                    ? Path.Combine(_memoryDir, "shared") 
+                    : Path.Combine(_memoryDir, $"user_{userId}");
+
+                Directory.CreateDirectory(targetDir);
+                var targetPath = Path.Combine(targetDir, fileName);
+
+                if (!File.Exists(targetPath))
+                {
+                    File.Move(filePath, targetPath);
+                }
+                else
+                {
+                    File.Delete(filePath);
+                }
+            }
         }
-        catch { /* Watcher might fail in some environments */ }
+        catch { /* 静かに無視 */ }
     }
 
-    private void OnFileChanged(object sender, FileSystemEventArgs e)
+    private async Task EnsureUserCacheLoadedAsync(int userId)
     {
-        if (e.Name?.Equals("MEMORY.md", StringComparison.OrdinalIgnoreCase) == true) return;
-        _cacheLock.Wait();
-        try
-        {
-            _cache = null; // Invalidate cache
-        }
-        finally
-        {
-            _cacheLock.Release();
-        }
-    }
+        if (_userCaches.ContainsKey(userId)) return;
 
-    private async Task EnsureCacheLoadedAsync()
-    {
-        if (_cache != null) return;
-        await _cacheLock.WaitAsync();
+        var userLock = GetUserLock(userId);
+        await userLock.WaitAsync();
         try
         {
-            if (_cache != null) return;
+            if (_userCaches.ContainsKey(userId)) return;
+
             var result = new List<LongTermMemory>();
-            if (Directory.Exists(_memoryDir))
+
+            // 1. 共有メモリのロード (shared/)
+            var sharedDir = Path.Combine(_memoryDir, "shared");
+            if (Directory.Exists(sharedDir))
             {
-                foreach (var filePath in Directory.GetFiles(_memoryDir, "*.md"))
+                foreach (var filePath in Directory.GetFiles(sharedDir, "*.md"))
                 {
                     var fileName = Path.GetFileName(filePath);
                     if (fileName.Equals("MEMORY.md", StringComparison.OrdinalIgnoreCase)) continue;
 
                     var mem = await ParseFileAsync(filePath);
-                    if (mem != null) result.Add(mem);
+                    if (mem != null)
+                    {
+                        mem.UserId = 0;
+                        result.Add(mem);
+                    }
                 }
             }
-            _cache = result;
+
+            // 2. ユーザー個別メモリのロード (user_{userId}/)
+            var userDir = Path.Combine(_memoryDir, $"user_{userId}");
+            if (Directory.Exists(userDir))
+            {
+                foreach (var filePath in Directory.GetFiles(userDir, "*.md"))
+                {
+                    var fileName = Path.GetFileName(filePath);
+                    if (fileName.Equals("MEMORY.md", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    var mem = await ParseFileAsync(filePath);
+                    if (mem != null)
+                    {
+                        mem.UserId = userId;
+                        result.Add(mem);
+                    }
+                }
+            }
+
+            _userCaches[userId] = result;
         }
         finally
         {
-            _cacheLock.Release();
+            userLock.Release();
         }
     }
 
@@ -92,13 +146,16 @@ public class MemoryFileService : IDisposable
     /// <summary>指定ユーザーの記憶を全件返す。userId=0のファイルは全ユーザーに共有。</summary>
     public async Task<List<LongTermMemory>> GetMemoriesForUserAsync(int userId, string? agentRole = null)
     {
-        await EnsureCacheLoadedAsync();
+        await EnsureUserCacheLoadedAsync(userId);
 
-        return _cache!
-            .Where(m => (m.UserId == 0 || m.UserId == userId) &&
-                        (agentRole == null || m.BoundAgentRole == null || m.BoundAgentRole == agentRole))
-            .OrderByDescending(m => m.CreatedAt)
-            .ToList();
+        if (_userCaches.TryGetValue(userId, out var list))
+        {
+            return list
+                .Where(m => agentRole == null || m.BoundAgentRole == null || m.BoundAgentRole == agentRole)
+                .OrderByDescending(m => m.CreatedAt)
+                .ToList();
+        }
+        return new List<LongTermMemory>();
     }
 
     private const int MaxScoringCandidates = 150;
@@ -196,10 +253,16 @@ public class MemoryFileService : IDisposable
     /// <summary>記憶をファイルに書き込む。SourceFileが設定されていれば上書き、なければ新規ファイル生成。</summary>
     public async Task WriteAsync(LongTermMemory memory)
     {
-        await EnsureCacheLoadedAsync();
+        await EnsureUserCacheLoadedAsync(memory.UserId);
 
         var fileName = memory.SourceFile ?? GenerateFileName(memory.Tags);
-        var filePath = Path.Combine(_memoryDir, fileName);
+        
+        var targetDir = memory.UserId == 0 
+            ? Path.Combine(_memoryDir, "shared") 
+            : Path.Combine(_memoryDir, $"user_{memory.UserId}");
+
+        Directory.CreateDirectory(targetDir);
+        var filePath = Path.Combine(targetDir, fileName);
 
         var shortDesc = memory.Content.Length > 80 ? memory.Content[..80] + "..." : memory.Content;
         var fm = $"""
@@ -224,42 +287,69 @@ public class MemoryFileService : IDisposable
         memory.SourceFile = fileName;
 
         // キャッシュ更新
-        await _cacheLock.WaitAsync();
-        try
+        if (memory.UserId == 0)
         {
-            if (_cache != null && !_cache.Any(m => m.SourceFile == fileName))
+            _userCaches.Clear();
+        }
+        else
+        {
+            var userLock = GetUserLock(memory.UserId);
+            await userLock.WaitAsync();
+            try
             {
-                _cache.Add(memory);
+                if (_userCaches.TryGetValue(memory.UserId, out var list))
+                {
+                    if (!list.Any(m => m.SourceFile == fileName))
+                    {
+                        list.Add(memory);
+                    }
+                }
+            }
+            finally
+            {
+                userLock.Release();
             }
         }
-        finally
-        {
-            _cacheLock.Release();
-        }
 
-        await RefreshIndexAsync();
+        await RefreshUserIndexAsync(memory.UserId);
     }
 
     // ─── 削除 ───────────────────────────────────────────────────────────────
 
-    public async Task DeleteByFileNameAsync(string safeFileName)
+    public async Task DeleteByFileNameAsync(string safeFileName, int userId)
     {
         if (safeFileName.Contains('/') || safeFileName.Contains('\\') || safeFileName.Contains("..")) return;
-        var path = Path.Combine(_memoryDir, safeFileName);
+
+        var targetDir = userId == 0 
+            ? Path.Combine(_memoryDir, "shared") 
+            : Path.Combine(_memoryDir, $"user_{userId}");
+
+        var path = Path.Combine(targetDir, safeFileName);
         if (File.Exists(path)) File.Delete(path);
 
         // キャッシュから削除
-        await _cacheLock.WaitAsync();
-        try
+        if (userId == 0)
         {
-            _cache?.RemoveAll(m => m.SourceFile == safeFileName);
+            _userCaches.Clear();
         }
-        finally
+        else
         {
-            _cacheLock.Release();
+            var userLock = GetUserLock(userId);
+            await userLock.WaitAsync();
+            try
+            {
+                if (_userCaches.TryGetValue(userId, out var list))
+                {
+                    list.RemoveAll(m => m.SourceFile == safeFileName);
+                }
+            }
+            finally
+            {
+                userLock.Release();
+            }
         }
 
-        await RefreshIndexAsync();
+        await RefreshUserIndexAsync(userId);
     }
 
     // ─── ファイル名生成 ──────────────────────────────────────────────────────
@@ -323,29 +413,38 @@ public class MemoryFileService : IDisposable
 
     // ─── インデックス更新 ────────────────────────────────────────────────────
 
-    public async Task RefreshIndexAsync()
+    public async Task RefreshUserIndexAsync(int userId)
     {
-        await EnsureCacheLoadedAsync();
-        if (_cache == null) return;
+        await EnsureUserCacheLoadedAsync(userId);
 
-        var indexPath = Path.Combine(_memoryDir, "MEMORY.md");
-        var lines = new List<string> { "# Memory Index", "" };
+        var targetDir = userId == 0 
+            ? Path.Combine(_memoryDir, "shared") 
+            : Path.Combine(_memoryDir, $"user_{userId}");
 
-        // キャッシュを使用してインデックス生成（ファイル再読み込み不要）
-        var sorted = _cache.OrderBy(m => m.SourceFile).ToList();
-        foreach (var mem in sorted)
+        Directory.CreateDirectory(targetDir);
+        var indexPath = Path.Combine(targetDir, "MEMORY.md");
+
+        if (_userCaches.TryGetValue(userId, out var list))
         {
-            var title = mem.Tags.Split(',')[0].Trim();
-            var hook = mem.Content.Length > 60 ? mem.Content[..60].Replace('\n', ' ') + "..." : mem.Content.Replace('\n', ' ');
-            lines.Add($"- [{title}]({mem.SourceFile}) — {hook}");
-        }
+            var lines = new List<string> { $"# {(userId == 0 ? "Shared" : $"User {userId}")} Memory Index", "" };
 
-        await File.WriteAllTextAsync(indexPath, string.Join("\n", lines) + "\n");
+            var sorted = list.OrderBy(m => m.SourceFile).ToList();
+            foreach (var mem in sorted)
+            {
+                var title = mem.Tags.Split(',')[0].Trim();
+                var hook = mem.Content.Length > 60 ? mem.Content[..60].Replace('\n', ' ') + "..." : mem.Content.Replace('\n', ' ');
+                lines.Add($"- [{title}]({mem.SourceFile}) — {hook}");
+            }
+
+            await File.WriteAllTextAsync(indexPath, string.Join("\n", lines) + "\n");
+        }
     }
 
     public void Dispose()
     {
-        _watcher?.Dispose();
-        _cacheLock?.Dispose();
+        foreach (var userLock in _userLocks.Values)
+        {
+            userLock.Dispose();
+        }
     }
 }

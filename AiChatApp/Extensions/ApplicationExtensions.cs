@@ -18,7 +18,7 @@ public static class ApplicationExtensions
             var adminPassword = Environment.GetEnvironmentVariable("ADMIN_INITIAL_PASSWORD") ?? "admin123";
             if (adminPassword == "admin123")
                 app.Logger.LogWarning("Using default admin password 'admin123'. Set ADMIN_INITIAL_PASSWORD env var in production.");
-            var admin = new User { Username = "admin", PasswordHash = BCrypt.Net.BCrypt.HashPassword(adminPassword), DefaultProvider = "" };
+            var admin = new User { Username = "admin", PasswordHash = BCrypt.Net.BCrypt.HashPassword(adminPassword), DefaultProvider = "", IsAdmin = true };
             db.Users.Add(admin);
             await db.SaveChangesAsync();
         }

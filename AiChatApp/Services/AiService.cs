@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 using AiChatApp.Data;
 using AiChatApp.Models;
 using AiChatApp.Services.Infrastructure;
@@ -21,6 +22,7 @@ public class AiService
     private readonly AiResponseProcessor _responseProcessor;
     private readonly AiCollaborationService _collaborationService;
     private readonly AssistantToolService _toolService;
+    private readonly HeadroomCompressionService _headroom;
 
     public AiService(
         AppDbContext db,
@@ -31,7 +33,8 @@ public class AiService
         AiPromptService promptService,
         AiResponseProcessor responseProcessor,
         AiCollaborationService collaborationService,
-        AssistantToolService toolService)
+        AssistantToolService toolService,
+        HeadroomCompressionService headroom)
     {
         _db = db;
         _skillManager = skillManager;
@@ -42,6 +45,7 @@ public class AiService
         _responseProcessor = responseProcessor;
         _collaborationService = collaborationService;
         _toolService = toolService;
+        _headroom = headroom;
     }
 
     public string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "antigravity";
@@ -55,6 +59,13 @@ public class AiService
 
     public async Task<string> GetResponseAsync(string prompt, int userId, int? chatSessionId, string? provider = null, int? agentId = null)
     {
+        var user = await _db.Users.FindAsync(userId);
+        bool isAdmin = user?.IsAdmin ?? false;
+        if (!isAdmin && IsCodeModificationRequest(prompt))
+        {
+            return "拒绝执行：检测到代码修改指示。由于您没有管理员权限，无法执行涉及代码修改的操作。\nAccess Denied: Code modification request detected. Since you do not have administrator permissions, operations involving code modifications cannot be executed.";
+        }
+
         var targetProvider = string.IsNullOrWhiteSpace(provider) ? DefaultProvider : provider;
         AgentProfile? agent = agentId.HasValue ? await _db.AgentProfiles.FindAsync(agentId.Value) : null;
 
@@ -73,8 +84,14 @@ public class AiService
         var systemPrompt = await _promptService.BuildSystemPromptAsync(fullPrompt, userId, chatSessionId, agent?.RoleName, agent, session);
         if (agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
 
+        var compressed = await _headroom.CompressAsync(systemPrompt, history, targetProvider);
+        var effectiveSystem = compressed?.CompressedSystemPrompt ?? systemPrompt;
+        var effectiveHistory = compressed?.CompressedHistory;
+        string effectivePrompt = string.IsNullOrEmpty(effectiveHistory) ? prompt : $"{effectiveHistory}\nUser: {prompt}";
+        effectivePrompt = _promptService.ResolveImageReferences(effectivePrompt, workingDir);
+
         var sw = Stopwatch.StartNew();
-        var result = await _cliExecutor.ExecuteAsync(fullPrompt, targetProvider, systemPrompt, prompt, workingDir);
+        var result = await _cliExecutor.ExecuteAsync(effectivePrompt, targetProvider, effectiveSystem, prompt, workingDir);
         sw.Stop();
 
         await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", result.Model, targetProvider, systemPrompt ?? "Default Assistant", fullPrompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
@@ -85,13 +102,28 @@ public class AiService
         return cleanResponse + (string.IsNullOrEmpty(toolHtml) ? "" : "\n" + toolHtml);
     }
 
-    public Task<(string Html, List<AgentStep> Steps)> CooperateAsync(string task, int userId, int messageId, int? chatSessionId, string? provider = null, List<string>? selectedAgentNames = null, Func<string, string, Task>? onStepComplete = null, CrewProcessType processType = CrewProcessType.Hierarchical)
+    public async Task<(string Html, List<AgentStep> Steps)> CooperateAsync(string task, int userId, int messageId, int? chatSessionId, string? provider = null, List<string>? selectedAgentNames = null, Func<string, string, Task>? onStepComplete = null, CrewProcessType processType = CrewProcessType.Hierarchical)
     {
-        return _collaborationService.CooperateAsync(task, userId, messageId, chatSessionId, provider, selectedAgentNames, onStepComplete, processType);
+        var user = await _db.Users.FindAsync(userId);
+        bool isAdmin = user?.IsAdmin ?? false;
+        if (!isAdmin && IsCodeModificationRequest(task))
+        {
+            return ("拒绝执行：检测到代码修改指示。由于您没有管理员权限，无法执行涉及代码修改的操作。\nAccess Denied: Code modification request detected. Since you do not have administrator permissions, operations involving code modifications cannot be executed.", new List<AgentStep>());
+        }
+
+        return await _collaborationService.CooperateAsync(task, userId, messageId, chatSessionId, provider, selectedAgentNames, onStepComplete, processType);
     }
 
     public async IAsyncEnumerable<string> GetResponseStreamAsync(string prompt, int userId, int? chatSessionId, string? provider = null, int? agentId = null)
     {
+        var user = await _db.Users.FindAsync(userId);
+        bool isAdmin = user?.IsAdmin ?? false;
+        if (!isAdmin && IsCodeModificationRequest(prompt))
+        {
+            yield return "拒绝执行：检测到代码修改指示。由于您没有管理员权限，无法执行涉及代码修改的操作。\nAccess Denied: Code modification request detected. Since you do not have administrator permissions, operations involving code modifications cannot be executed.";
+            yield break;
+        }
+
         var targetProvider = provider ?? DefaultProvider;
         AgentProfile? agent = agentId.HasValue ? await _db.AgentProfiles.FindAsync(agentId.Value) : null;
 
@@ -110,6 +142,12 @@ public class AiService
 
         if (agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
 
+        var compressed = await _headroom.CompressAsync(systemPrompt, history, targetProvider);
+        var effectiveSystem = compressed?.CompressedSystemPrompt ?? systemPrompt;
+        var effectiveHistory = compressed?.CompressedHistory;
+        string effectivePrompt = string.IsNullOrEmpty(effectiveHistory) ? prompt : $"{effectiveHistory}\nUser: {prompt}";
+        effectivePrompt = _promptService.ResolveImageReferences(effectivePrompt, workingDir);
+
         var sw = Stopwatch.StartNew();
         var fullResponse = new StringBuilder();
         string? extractedModel = null;
@@ -118,9 +156,9 @@ public class AiService
         var prefixBuffer = new StringBuilder();
         bool prefixHandled = false;
         const int maxPrefixBuffer = 16384;
-        var dynamicFrags = _responseProcessor.BuildDynamicFragments(systemPrompt, fullPrompt);
+        var dynamicFrags = _responseProcessor.BuildDynamicFragments(effectiveSystem, effectivePrompt);
 
-        await foreach (var chunk in _cliExecutor.ExecuteStreamAsync(processedPrompt, targetProvider, systemPrompt, prompt, workingDir))
+        await foreach (var chunk in _cliExecutor.ExecuteStreamAsync(effectivePrompt, targetProvider, effectiveSystem, prompt, workingDir))
         {
             if (chunk.Text != null)
             {
@@ -163,6 +201,16 @@ public class AiService
 
     public async Task<string> ExecuteProactiveAgentAsync(ProactiveAgentProfile profile, string prompt, int? userId = null, int? chatSessionId = null, string? provider = null)
     {
+        if (userId.HasValue)
+        {
+            var user = await _db.Users.FindAsync(userId.Value);
+            bool isAdmin = user?.IsAdmin ?? false;
+            if (!isAdmin && IsCodeModificationRequest(prompt))
+            {
+                return "拒绝执行：检测到代码修改指示。由于您没有管理员权限，无法执行涉及代码修改的操作。\nAccess Denied: Code modification request detected. Since you do not have administrator permissions, operations involving code modifications cannot be executed.";
+            }
+        }
+
         var targetProvider = provider ?? profile.PreferredProvider ?? DefaultProvider;
         var workingDir = await GetProjectRootAsync(chatSessionId);
         var sb = new StringBuilder(profile.SystemPrompt);
@@ -241,5 +289,42 @@ public class AiService
         };
         _db.AgentSteps.Add(step);
         await _db.SaveChangesAsync();
+    }
+
+    private static readonly Regex CodeModRegex = new(
+        @"\b(write|modify|edit|save|update|change|create|rewrite|overwrite|delete|remove|patch|fix|refactor|add|inject|insert)\b.*\b(code|file|script|program|class|function|struct|method|repo|repository|database|schema|project)\b" +
+        @"|修改(代码|文件|配置|脚本|项目)|编辑(代码|文件|脚本)|写入(代码|文件|脚本)|更新(代码|文件|配置)|创建(代码|文件|脚本)|保存到(代码|文件)|替换(代码|文件)|删除(代码|文件)|重构(代码|文件)|修复(代码|文件|bug|Bug)" +
+        @"|(コード|ファイル|スクリプト|クラス|関数|メソッド|レポ|リポジトリ|データベース|スキーマ|プロジェクト).*(書き込み|変更|修正|編集|作成|保存|削除|上書き|パッチ|リファクタリング)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled
+    );
+
+    private static readonly Regex FileExtensionRegex = new(
+        @"\b\w+\.(cs|js|ts|html|css|json|py|sh|sql|yml|yaml|md|csproj|sln)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled
+    );
+
+    private static bool IsCodeModificationRequest(string prompt)
+    {
+        if (string.IsNullOrEmpty(prompt)) return false;
+
+        // 1. 直接触发核心代码修改正则
+        if (CodeModRegex.IsMatch(prompt)) return true;
+
+        // 2. 如果包含文件后缀，且同时包含修改意图词
+        if (FileExtensionRegex.IsMatch(prompt))
+        {
+            var lowercasePrompt = prompt.ToLower();
+            string[] modificationKeywords = { 
+                "write", "modify", "edit", "save", "update", "change", "create", "delete", "remove", "add", "patch", "fix", "refactor",
+                "改", "写", "设", "增", "删", "修", "换", "替换", "更新", "保存", "添加",
+                "書き", "変更", "修正", "編集", "作成", "保存", "削除", "追加" 
+            };
+            if (modificationKeywords.Any(keyword => lowercasePrompt.Contains(keyword)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

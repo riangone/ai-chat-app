@@ -108,6 +108,9 @@ public class AiPromptService
 
     public async Task<string> BuildSystemPromptAsync(string prompt, int userId, int? chatSessionId, string? agentRole, AgentProfile? selectedAgent = null, ChatSession? preloadedSession = null, bool lightDepth = false)
     {
+        var user = await _db.Users.FindAsync(userId);
+        bool isAdmin = user?.IsAdmin ?? false;
+
         if (lightDepth) return GetSystemPromptTemplate(agentRole ?? "Assistant", "You are a helpful AI assistant.");
         
         var memoriesTask = _memorySearch.SearchAsync(prompt, userId, agentRole: agentRole);
@@ -140,6 +143,15 @@ public class AiPromptService
             prompt.Contains("問題") || prompt.Contains("修正");
 
         var sb = new StringBuilder(GetSystemPromptTemplate("Default", "あなたは高度なAIアシスタントです。現在はソフトウェア開発プロジェクトのコンテキストで動作しています。"));
+        
+        var userName = user?.Username ?? "Unknown";
+        sb.Append($"\n\n[USER CONTEXT]\n- Current User ID: {userId}\n- Current User Name: {userName}\n- Role: {(isAdmin ? "Administrator" : "Normal User")}");
+
+        sb.Append("\n\n[PRIVACY & MEMORY ISOLATION RULES]\n1. You MUST NOT use any command-line tools or file system tools (such as list_dir, view_file, grep_search, or cat/grep in terminal) to read or search files under the `memory/` directory. All allowed long-term memories for the current user have already been loaded and injected in the context below. Directly accessing files inside `memory/` violates multi-tenant privacy!\n2. You only serve the current user (Name: " + userName + ", ID: " + userId + "). If you find any information or memory belonging to other users (e.g., oneriang, Tanaka) through file reads or environment context, you MUST ignore it and never treat it as the current user's profile.");
+        if (!isAdmin)
+        {
+            sb.Append("\n\n[SECURITY INSTRUCTION]\nThe current user is NOT an administrator (IsAdmin is false). You must NOT perform, suggest, or support any code modifications, file write/edit/delete operations, or tool executions that change the project repository. If the user's input asks you to change, edit, refactor, write, or modify code or files of ai-chat-pro (or any project), you MUST strictly refuse to execute the change, stating that code modification is restricted to administrator users only.");
+        }
         if (isSubstantialPrompt) sb.Append(policies);
         if (selectedAgent != null) sb.Append($"\n\n[現在のアクティブエージェント]:\n役割: {selectedAgent.RoleName}\n指示: {selectedAgent.SystemPrompt}");
         if (session?.Project != null) {

@@ -203,7 +203,7 @@ public class MemoryConsolidationService
             foreach (var mem in memoriesToDelete)
             {
                 _logger.LogInformation("[MemoryConsolidation] Pruning memory file {File} due to low relevance score ({Score})", mem.SourceFile, mem.RelevanceScore);
-                await _fileService.DeleteByFileNameAsync(mem.SourceFile!);
+                await _fileService.DeleteByFileNameAsync(mem.SourceFile!, userId);
             }
 
             // 保存衰减后的记忆
@@ -287,7 +287,7 @@ public class MemoryConsolidationService
                         {
                             if (!string.IsNullOrEmpty(memoriesToMerge[i].SourceFile))
                             {
-                                await _fileService.DeleteByFileNameAsync(memoriesToMerge[i].SourceFile!);
+                                await _fileService.DeleteByFileNameAsync(memoriesToMerge[i].SourceFile!, userId);
                             }
                         }
 
