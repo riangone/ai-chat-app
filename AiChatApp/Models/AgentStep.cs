@@ -16,6 +16,7 @@ public class AgentStep
     public int AttemptNumber { get; set; } = 1;             // 差し戻し時は 2, 3...
     public bool WasAccepted { get; set; } = true;           // Reviewerが承認したか
     public int DurationMs { get; set; }                     // 実行時間（ミリ秒）
+    public int? PromptVariantId { get; set; }               // 使用したプロンプト変体 (null = ベースラインテンプレート)
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public Message? Message { get; set; }

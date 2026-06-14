@@ -400,6 +400,8 @@
             
             const dp = document.getElementById('default-provider-select');
             if (dp && currentUser?.defaultProvider) dp.value = currentUser.defaultProvider;
+            
+            applyMenuVisibility();
         }
         async function loadCurrentUser() { try { const r = await fetch('/api/auth/me'); if (!r.ok) return; currentUser = await r.json(); renderUserProfile(); } catch {} }
         async function handlePasswordChange(form) {
@@ -1335,22 +1337,37 @@ function handleSuggestionAction(command, payload) {
             'chat':     { label: 'Chat',      sidebarIdx: 1,  alwaysOpen: true },
             'history':  { label: 'History',   sidebarIdx: 2  },
             'projects': { label: 'Projects',  sidebarIdx: 3  },
-            'todo':     { label: 'TODO', sidebarIdx: 4  },
+            'todo':     { label: 'TODO',      sidebarIdx: 4  },
             'notes':    { label: 'Notes',     sidebarIdx: 5  },
             'finance':  { label: 'Finance',   sidebarIdx: 6  },
             'files':    { label: 'Files',     sidebarIdx: 7  },
             'memory':   { label: 'Memory',    sidebarIdx: 8  },
             'mindmap':  { label: 'Mindmap',   sidebarIdx: 9  },
-            'projects': { label: 'Projects',  sidebarIdx: 10  },
-            'skills':   { label: 'Skills',    sidebarIdx: 11  },
-            'history':  { label: 'History',   sidebarIdx: 12  },
-            'cli':      { label: 'CLI',       sidebarIdx: 13 },
-            'harness':  { label: 'Harness',   sidebarIdx: 14 },
-            'pipeline': { label: 'Pipeline',  sidebarIdx: 15 },
-            'stats':    { label: 'Stats',     sidebarIdx: 16 },
-            'settings': { label: 'Settings',  sidebarIdx: 17 },
+            'skills':   { label: 'Skills',    sidebarIdx: 10 },
+            'cli':      { label: 'CLI',       sidebarIdx: 11 },
+            'harness':  { label: 'Harness',   sidebarIdx: 12 },
+            'pipeline': { label: 'Pipeline',  sidebarIdx: 13 },
+            'stats':    { label: 'Stats',     sidebarIdx: 14 },
+            'settings': { label: 'Settings',  sidebarIdx: 15 },
         };
         let openSlideIds = ['home', 'chat', 'history', 'todo'];
+
+        function applyMenuVisibility() {
+            if (!currentUser) return;
+            const username = currentUser.username;
+            const isAdmin = currentUser.isAdmin || username === 'admin';
+            if (!isAdmin) {
+                document.querySelectorAll('[data-admin-only="true"]').forEach(el => {
+                    el.style.setProperty('display', 'none', 'important');
+                    el.classList.add('hidden');
+                });
+            } else {
+                document.querySelectorAll('[data-admin-only="true"]').forEach(el => {
+                    el.style.removeProperty('display');
+                    el.classList.remove('hidden');
+                });
+            }
+        }
 
         function initSlidePool() {
             const slideIds = ['home','chat','todo','notes','finance','files','memory','mindmap','projects','skills','history','cli','harness','pipeline','stats','settings'];
@@ -1371,6 +1388,14 @@ function handleSuggestionAction(command, payload) {
         }
 
         function openSlide(slideId) {
+            const adminOnlySlides = ['projects', 'skills', 'cli', 'harness', 'pipeline', 'stats'];
+            const username = currentUser?.username;
+            const isAdmin = currentUser?.isAdmin || username === 'admin';
+            if (!isAdmin && adminOnlySlides.includes(slideId)) {
+                console.warn('Unauthorized slide access:', slideId);
+                return;
+            }
+
             const def = SLIDE_DEFS[slideId];
             if (!def) return;
             const wrapper = document.querySelector('.swiper-wrapper');
@@ -1535,7 +1560,18 @@ function handleSuggestionAction(command, payload) {
                 }
             };
 
-            document.body.addEventListener('htmx:afterOnLoad', function(evt) { if (evt.detail.target.id === 'chat-panel' || evt.detail.target.id === 'chat-box') { renderMarkdown(); syncActiveSessionFromDom(); openSlide('chat'); } });
+            document.body.addEventListener('htmx:afterOnLoad', function(evt) {
+                if (evt.detail.target.id === 'chat-panel' || evt.detail.target.id === 'chat-box') {
+                    renderMarkdown();
+                    syncActiveSessionFromDom();
+                    openSlide('chat');
+                }
+                if (currentUser) {
+                    renderUserProfile();
+                } else {
+                    applyMenuVisibility();
+                }
+            });
         });
         marked.setOptions({ gfm: true, breaks: true });
 
@@ -1770,6 +1806,7 @@ function handleSuggestionAction(command, payload) {
         let filesSwiper = null;
         window.filesSwiper = filesSwiper;
         let fileRoot = localStorage.getItem('fileRoot') || '';
+        window.getCurrentFilesRoot = function() { return fileRoot; };
         let currentFilesPath = '';
 
         function browsePath(path) {
@@ -1779,6 +1816,98 @@ function handleSuggestionAction(command, payload) {
             if (fileRoot) params.set('root', fileRoot);
             htmx.ajax('GET', `/api/files?${params.toString()}`, '#files-content');
         }
+
+        function enablePathEdit() {
+            const wrapper = document.getElementById('breadcrumbs-wrapper');
+            const input = document.getElementById('path-input');
+            if (wrapper && input) {
+                wrapper.classList.add('hidden');
+                input.classList.remove('hidden');
+                input.focus();
+                input.select();
+            }
+        }
+
+        function disablePathEdit() {
+            const wrapper = document.getElementById('breadcrumbs-wrapper');
+            const input = document.getElementById('path-input');
+            if (wrapper && input) {
+                wrapper.classList.remove('hidden');
+                input.classList.add('hidden');
+                input.value = currentFilesPath;
+            }
+        }
+
+        // Keyboard navigation for File Manager (Backspace or Alt+Up to go up)
+        document.addEventListener('keydown', (e) => {
+            const filesSlide = document.getElementById('files-slide');
+            if (!filesSlide || (!filesSlide.classList.contains('swiper-slide-active') && filesSlide.style.display === 'none')) {
+                return;
+            }
+
+            const activeEl = document.activeElement;
+            if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
+                return;
+            }
+
+            if (e.key === 'Backspace' || (e.altKey && e.key === 'ArrowUp')) {
+                e.preventDefault();
+                if (currentFilesPath) {
+                    const parts = currentFilesPath.split('/');
+                    parts.pop();
+                    const parentPath = parts.join('/');
+                    browsePath(parentPath);
+                }
+            }
+        });
+
+        // Drag & drop file upload for files manager
+        document.addEventListener('DOMContentLoaded', () => {
+            const panel = document.getElementById('files-panel');
+            if (!panel) return;
+
+            // Create overlay dynamically if it doesn't exist
+            let overlay = document.getElementById('files-drag-overlay');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'files-drag-overlay';
+                overlay.className = 'hidden absolute inset-0 z-50 bg-base-300/80 backdrop-blur-sm flex flex-col items-center justify-center border-4 border-dashed border-primary m-4 rounded-3xl animate-pulse pointer-events-none';
+                overlay.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-12 h-12 text-primary mb-2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z" /></svg>
+                    <p class="text-xs font-black uppercase tracking-widest text-primary">Drop files here to upload</p>
+                `;
+                panel.appendChild(overlay);
+            }
+
+            let dragCounter = 0;
+
+            panel.addEventListener('dragenter', e => {
+                e.preventDefault();
+                dragCounter++;
+                overlay.classList.remove('hidden');
+            });
+
+            panel.addEventListener('dragover', e => {
+                e.preventDefault();
+            });
+
+            panel.addEventListener('dragleave', e => {
+                e.preventDefault();
+                dragCounter--;
+                if (dragCounter === 0) {
+                    overlay.classList.add('hidden');
+                }
+            });
+
+            panel.addEventListener('drop', e => {
+                e.preventDefault();
+                dragCounter = 0;
+                overlay.classList.add('hidden');
+                if (e.dataTransfer?.files?.length) {
+                    uploadFiles(e.dataTransfer.files);
+                }
+            });
+        });
 
         function viewFile(path) {
             const params = new URLSearchParams({ path });
@@ -1795,21 +1924,47 @@ function handleSuggestionAction(command, payload) {
             }
         }
 
-        function createFileOrDir() {
-            const name = prompt('Enter file or directory name (prefix with / for directory):');
+        function createFile() {
+            const name = prompt('Enter file name:');
             if (!name) return;
-            const isDir = name.startsWith('/');
-            const actualName = isDir ? name.slice(1) : name;
-            const path = currentFilesPath ? `${currentFilesPath}/${actualName}` : actualName;
+            const path = currentFilesPath ? `${currentFilesPath}/${name}` : name;
             
             const fd = new FormData();
             fd.append('path', path);
             if (fileRoot) fd.append('root', fileRoot);
-            fd.append('isDirectory', isDir.toString());
-            if (!isDir) fd.append('content', '');
+            fd.append('isDirectory', 'false');
+            fd.append('content', '');
             
             fetch('/api/files', { method: 'POST', body: fd })
-                .then(r => { if (r.ok) browsePath(currentFilesPath); })
+                .then(r => { if (r.ok) browsePath(currentFilesPath); else alert('Failed to create file'); })
+                .catch(console.error);
+        }
+
+        function createFolder() {
+            const name = prompt('Enter folder name:');
+            if (!name) return;
+            const path = currentFilesPath ? `${currentFilesPath}/${name}` : name;
+            
+            const fd = new FormData();
+            fd.append('path', path);
+            if (fileRoot) fd.append('root', fileRoot);
+            fd.append('isDirectory', 'true');
+            
+            fetch('/api/files', { method: 'POST', body: fd })
+                .then(r => { if (r.ok) browsePath(currentFilesPath); else alert('Failed to create folder'); })
+                .catch(console.error);
+        }
+
+        function uploadFiles(files) {
+            if (!files || files.length === 0) return;
+            const fd = new FormData();
+            fd.append('path', currentFilesPath);
+            if (fileRoot) fd.append('root', fileRoot);
+            for (const f of files) {
+                fd.append('files', f);
+            }
+            fetch('/api/files/upload', { method: 'POST', body: fd })
+                .then(r => { if (r.ok) browsePath(currentFilesPath); else alert('Upload failed'); })
                 .catch(console.error);
         }
 
@@ -1824,6 +1979,83 @@ function handleSuggestionAction(command, payload) {
 
         function getCurrentFilesPath() {
             return currentFilesPath;
+        }
+
+        function enterEditMode(safeRelPath, safeParentDir) {
+            const pre = document.getElementById('file-pre-element');
+            if (!pre) return;
+            
+            const codeEl = document.getElementById('file-code-element');
+            const text = codeEl ? codeEl.textContent : pre.textContent;
+            
+            // Create textarea
+            const textarea = document.createElement('textarea');
+            textarea.id = 'file-edit-textarea';
+            textarea.className = 'w-full h-[65vh] text-[11px] font-mono p-5 rounded-2xl border border-base-content/10 bg-base-300/50 focus:outline-none focus:border-primary/50 resize-y leading-relaxed flex-1 custom-scrollbar';
+            textarea.value = text;
+            
+            // Replace pre with textarea
+            const parent = pre.parentElement;
+            parent.replaceChild(textarea, pre);
+            
+            // Adjust header buttons
+            const rightActions = document.getElementById('file-viewer-actions-right');
+            
+            // Hide edit button
+            const editBtn = document.getElementById('file-edit-btn');
+            if (editBtn) editBtn.style.display = 'none';
+            
+            // Add Cancel and Save buttons
+            const cancelBtn = document.createElement('button');
+            cancelBtn.id = 'file-cancel-btn';
+            cancelBtn.className = 'btn btn-ghost btn-xs text-xs font-bold';
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.onclick = () => exitEditMode(safeRelPath);
+            
+            const saveBtn = document.createElement('button');
+            saveBtn.id = 'file-save-btn';
+            saveBtn.className = 'btn btn-primary btn-xs text-xs font-bold rounded-lg px-3';
+            saveBtn.textContent = 'Save';
+            saveBtn.onclick = () => saveFile(safeRelPath, textarea.value);
+            
+            rightActions.insertBefore(cancelBtn, editBtn);
+            rightActions.insertBefore(saveBtn, editBtn);
+            
+            // Handle back button prompt
+            const backBtn = document.getElementById('file-back-btn');
+            if (backBtn) {
+                backBtn.onclick = () => {
+                    if (confirm('Discard changes?')) {
+                        browsePath(safeParentDir);
+                    }
+                };
+            }
+        }
+        
+        function exitEditMode(safeRelPath) {
+            viewFile(safeRelPath);
+        }
+        
+        function saveFile(path, newContent) {
+            const fd = new FormData();
+            fd.append('path', path);
+            if (fileRoot) fd.append('root', fileRoot);
+            fd.append('content', newContent);
+            fd.append('isDirectory', 'false');
+            
+            fetch('/api/files', { method: 'POST', body: fd })
+                .then(r => {
+                    if (r.ok) {
+                        alert('File saved successfully!');
+                        viewFile(path);
+                    } else {
+                        alert('Failed to save file');
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    alert('Error saving file');
+                });
         }
 
         let mermaidInitialized = false;
@@ -2118,6 +2350,12 @@ function handleSuggestionAction(command, payload) {
         document.addEventListener('htmx:afterSwap', (evt) => {
             if (evt.detail.target.id === 'files-content' || evt.detail.target.id === 'notes-list' || evt.detail.target.id === 'chat-list') {
                 updateUI();
+                if (evt.detail.target.id === 'files-content') {
+                    if (window.hljs) {
+                        const codeEl = document.getElementById('file-code-element');
+                        if (codeEl) hljs.highlightElement(codeEl);
+                    }
+                }
             }
             if (evt.detail.target.tagName === 'ASIDE' || evt.detail.target.querySelector('aside')) {
                 updateProactiveHistoryUI();
@@ -2542,7 +2780,7 @@ function handleSuggestionAction(command, payload) {
                                 </button>
                             </div>
                         </div>
-                        <div id="files-panel" class="flex flex-col flex-1">
+                        <div id="files-panel" class="relative flex flex-col flex-1">
                             <div id="files-content" class="flex-1 overflow-y-auto custom-scrollbar">
                                 <div class="flex items-center justify-center h-20 opacity-30"><span class="loading loading-spinner loading-sm"></span></div>
                             </div>
@@ -2634,7 +2872,75 @@ function handleSuggestionAction(command, payload) {
                                 </button>
                             </div>
                         </div>
-                        <div id="skills-panel" class="flex flex-col flex-1"><div id="skills-list-container" hx-get="/api/skills" hx-trigger="loadSkills" hx-target="#skills-list" class="flex-1 overflow-y-auto p-6 custom-scrollbar"><div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6" id="skills-list"></div></div></div>
+                        <div id="skills-panel" class="flex flex-col flex-1 overflow-hidden bg-base-100">
+                            <!-- 顶部进化控制台 & 主动触发区 -->
+                            <div class="p-6 bg-gradient-to-r from-base-200 to-base-300 border-b border-base-300">
+                                <div class="max-w-5xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                    <div class="flex-1">
+                                        <h2 class="text-base font-extrabold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent flex items-center gap-2">
+                                            🧬 Hyperion 进化控制中心
+                                        </h2>
+                                        <p class="text-[11px] opacity-60 mt-1 leading-relaxed">
+                                            基于多 AI 协同评议机制 (Gemini 提议 + Claude 验证)，从您的历史会话与高质量执行步骤中自动抽取、提炼出可重用的进化指令。
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <button hx-post="/api/skills/evolution/deliberate"
+                                                hx-target="#evolution-notification"
+                                                hx-indicator="#deliberation-spinner"
+                                                class="btn btn-primary bg-gradient-to-r from-primary to-secondary border-none hover:scale-105 transition-all duration-300 text-white font-semibold text-xs gap-2 shadow-md shadow-primary/20">
+                                            <svg id="deliberation-spinner" class="animate-spin h-3 w-3 mr-1 htmx-indicator" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                            <span>触发多 AI 协同评议</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <!-- 异步通知与结果提示 -->
+                                <div class="max-w-5xl mx-auto mt-3" id="evolution-notification"></div>
+                            </div>
+
+                            <!-- 中部：待审批提案与常规技能列表 -->
+                            <div class="flex-1 overflow-y-auto custom-scrollbar p-6">
+                                <div class="max-w-5xl mx-auto flex flex-col gap-6">
+                                    <!-- 待审批提案 (Evolution Proposals) -->
+                                    <div>
+                                        <div class="flex items-center gap-2 mb-3">
+                                            <span class="w-2 h-2 rounded-full bg-secondary"></span>
+                                            <h3 class="font-bold text-xs tracking-wide uppercase opacity-80">
+                                                待审批的进化提案 (Evolution Proposals)
+                                            </h3>
+                                        </div>
+                                        <div id="evolution-list" 
+                                             hx-get="/api/skills/evolution" 
+                                             hx-trigger="load, loadSkills from:body" 
+                                             class="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
+                                             <!-- 异步加载内容 -->
+                                        </div>
+                                    </div>
+
+                                    <div class="divider opacity-10 my-2"></div>
+
+                                    <!-- 常规已启用技能 -->
+                                    <div>
+                                        <div class="flex items-center gap-2 mb-3">
+                                            <span class="w-2 h-2 rounded-full bg-primary"></span>
+                                            <h3 class="font-bold text-xs tracking-wide uppercase opacity-80">
+                                                已启用的常规技能 (Active Skills)
+                                            </h3>
+                                        </div>
+                                        <div id="skills-list-container" 
+                                             hx-get="/api/skills" 
+                                             hx-trigger="loadSkills" 
+                                             hx-target="#skills-list" 
+                                             class="w-full">
+                                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="skills-list"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div class="swiper-slide">
                         <div class="shell-header">
@@ -2834,7 +3140,7 @@ function handleSuggestionAction(command, payload) {
                                         </div>
                                     </section>
 
-                                    <section class="settings-card space-y-4">
+                                    <section class="settings-card space-y-4" data-admin-only="true" style="display: none;">
                                         <div class="settings-section-title" data-i18n="technical-tools">Technical Tools</div>
                                         <div class="flex flex-wrap gap-2">
                                             <button onclick="openSlide('harness')" class="btn btn-outline btn-sm rounded-xl gap-2">

@@ -26,6 +26,7 @@ public class AppDbContext : DbContext
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<FinancialAsset> FinancialAssets => Set<FinancialAsset>();
     public DbSet<Crew> Crews => Set<Crew>();
+    public DbSet<PromptVariant> PromptVariants => Set<PromptVariant>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -58,5 +59,8 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Attachment>()
             .HasIndex(a => a.MessageId);
+
+        modelBuilder.Entity<PromptVariant>()
+            .HasIndex(v => new { v.TemplatePath, v.Status });
     }
 }

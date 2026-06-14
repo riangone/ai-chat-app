@@ -108,6 +108,29 @@ public static class ApplicationExtensions
             command.CommandText = "ALTER TABLE AgentSteps ADD COLUMN Provider TEXT NOT NULL DEFAULT '';";
             command.ExecuteNonQuery();
         }
+        if (!agentStepColumns.Contains("PromptVariantId"))
+        {
+            command.CommandText = "ALTER TABLE AgentSteps ADD COLUMN PromptVariantId INTEGER;";
+            command.ExecuteNonQuery();
+        }
+
+        // PromptVariants table (Loop 2: prompt template evolution)
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS PromptVariants (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                TemplatePath TEXT NOT NULL,
+                FileName TEXT NOT NULL,
+                Status TEXT NOT NULL DEFAULT 'challenger',
+                ParentVariantId INTEGER,
+                Hypothesis TEXT NOT NULL DEFAULT '',
+                TrialCount INTEGER NOT NULL DEFAULT 0,
+                AvgScore REAL,
+                CreatedAt DATETIME NOT NULL,
+                PromotedAt DATETIME
+            );";
+        command.ExecuteNonQuery();
+        command.CommandText = "CREATE INDEX IF NOT EXISTS IX_PromptVariants_TemplatePath_Status ON PromptVariants (TemplatePath, Status);";
+        command.ExecuteNonQuery();
 
         // 5. Explicitly create Notes table if it doesn't exist (Existing logic)
         command.CommandText = @"

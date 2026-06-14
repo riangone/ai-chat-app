@@ -1,22 +1,28 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AiChatApp.Data;
 using AiChatApp.Models.Harness;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace AiChatApp.Services.Harness;
+
+public record ResolvedPrompt(string Content, int? VariantId);
 
 public class PipelineLoaderService
 {
     private readonly string _pipelinesDir;
     private readonly string _promptsDir;
+    private readonly double _challengerTraffic;
     private readonly ILogger<PipelineLoaderService> _logger;
     private Dictionary<string, PipelineConfig> _cache = new();
     private FileSystemWatcher? _watcher;
     private readonly object _lockObj = new();
 
-    public PipelineLoaderService(ILogger<PipelineLoaderService> logger)
+    public PipelineLoaderService(ILogger<PipelineLoaderService> logger, IConfiguration configuration)
     {
         _logger = logger;
+        _challengerTraffic = configuration.GetValue<double?>("AiSettings:Evolution:ChallengerTraffic") ?? 0.3;
         
         // Try to find pipelines directory in several potential locations
         var baseDir = AppContext.BaseDirectory;
@@ -107,6 +113,52 @@ public class PipelineLoaderService
         }
 
         return await File.ReadAllTextAsync(fullPath);
+    }
+
+    /// <summary>変体ファイルの置き場所。ベースラインの prompts/ は決して書き換えない。</summary>
+    public string VariantsDir => Path.Combine(_promptsDir, "variants");
+
+    public IReadOnlyList<PipelineConfig> GetAllPipelines()
+    {
+        lock (_lockObj)
+        {
+            return _cache.Values.ToList();
+        }
+    }
+
+    /// <summary>
+    /// Loop 2 (prompt evolution) の変体解決。champion 変体があればそれを、
+    /// 有効な challenger があれば ChallengerTraffic の確率でそちらを返す。
+    /// いかなるエラーでもベースラインにフォールバックし、サービングを壊さない。
+    /// </summary>
+    public async Task<ResolvedPrompt> ResolvePromptAsync(string templatePath, AppDbContext db, Random rng)
+    {
+        try
+        {
+            var active = await db.PromptVariants
+                .Where(v => v.TemplatePath == templatePath && (v.Status == "champion" || v.Status == "challenger"))
+                .ToListAsync();
+
+            var champion = active.FirstOrDefault(v => v.Status == "champion");
+            var challenger = active.FirstOrDefault(v => v.Status == "challenger");
+
+            var chosen = challenger != null && rng.NextDouble() < _challengerTraffic ? challenger : champion;
+            if (chosen != null)
+            {
+                var variantPath = Path.Combine(VariantsDir, chosen.FileName);
+                if (File.Exists(variantPath))
+                {
+                    return new ResolvedPrompt(await File.ReadAllTextAsync(variantPath), chosen.Id);
+                }
+                _logger.LogWarning("Prompt variant file missing, falling back to baseline: {Path}", variantPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ResolvePromptAsync failed for {Template}, falling back to baseline", templatePath);
+        }
+
+        return new ResolvedPrompt(await GetPromptTemplateAsync(templatePath), null);
     }
 
     public void WatchForChanges(Action<string> onFileChanged)

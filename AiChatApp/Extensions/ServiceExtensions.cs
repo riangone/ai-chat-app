@@ -62,6 +62,9 @@ public static class ServiceExtensions
 
         services.AddSignalR();
         
+        // Loop 2: prompt evolution (gated internally by AiSettings:Evolution:Enabled, default off)
+        services.AddHostedService<PromptEvolutionService>();
+
         var proactiveEnabled = configuration.GetValue<bool>("ProactiveSettings:Enabled");
         if (proactiveEnabled)
         {

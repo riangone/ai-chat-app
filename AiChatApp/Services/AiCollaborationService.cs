@@ -138,13 +138,22 @@ public class AiCollaborationService
             if (activePlan != null && stage.Role != "reviewer") continue;
 
             AgentStep? stageStep = null;
-            string stagePersona = !string.IsNullOrEmpty(stage.SystemPromptTemplate) ? await _pipelineLoader.GetPromptTemplateAsync(stage.SystemPromptTemplate) : stage.SystemPromptInline ?? "You are a helpful AI assistant.";
+            int? stageVariantId = null;
+            string stagePersona;
+            if (!string.IsNullOrEmpty(stage.SystemPromptTemplate))
+            {
+                var resolvedPrompt = await _pipelineLoader.ResolvePromptAsync(stage.SystemPromptTemplate, _db, Random.Shared);
+                stagePersona = resolvedPrompt.Content;
+                stageVariantId = resolvedPrompt.VariantId;
+            }
+            else stagePersona = stage.SystemPromptInline ?? "You are a helpful AI assistant.";
             if (stage.RetryOnQualityFail) stagePersona += "\n\nAfter your response, on a new line, include exactly [QUALITY_OK] if your response fully satisfies the task, or [QUALITY_FAIL] if it is incomplete or needs revision.";
 
             for (int attempt = 1; attempt <= stage.MaxAttempts; attempt++)
             {
                 string combinedInput = string.IsNullOrEmpty(contextFromPreviousStages) ? currentInput : $"Task: {task}\n\nContext from previous stages:\n{contextFromPreviousStages}\n\nCurrent stage input: {currentInput}";
                 stageStep = await RunAgentStepAsync(stage.Name, stagePersona, combinedInput, messageId, stage.Provider ?? targetProvider, userId, chatSessionId, attempt, pipelineProjectRoot, pipelinePolicies, session);
+                stageStep.PromptVariantId = stageVariantId;
                 var toolOutput = await _toolExecutor.ExecuteToolsAsync(stageStep.Output, pipelineProjectRoot);
                 if (toolOutput != stageStep.Output) stageStep.Output = toolOutput;
 
@@ -215,9 +224,10 @@ public class AiCollaborationService
                     var revised = await ReviseFailedSubtasksAsync(activePlan, feedback, activeBoard, messageId, targetProvider, userId, chatSessionId, onStepComplete, steps, pipelineAgents!, session);
                     if (revised)
                     {
-                        var reviewPersona = await _pipelineLoader.GetPromptTemplateAsync("stage_reviewer.md");
+                        var reviewResolved = await _pipelineLoader.ResolvePromptAsync("stage_reviewer.md", _db, Random.Shared);
                         var reviewInput = BuildTaskGraphReviewInput(activePlan, activeBoard, task);
-                        var newReviewStep = await RunAgentStepAsync("Reviewer", reviewPersona, reviewInput, messageId, targetProvider, userId, chatSessionId, 2, pipelineProjectRoot, pipelinePolicies);
+                        var newReviewStep = await RunAgentStepAsync("Reviewer", reviewResolved.Content, reviewInput, messageId, targetProvider, userId, chatSessionId, 2, pipelineProjectRoot, pipelinePolicies);
+                        newReviewStep.PromptVariantId = reviewResolved.VariantId;
                         newReviewStep.WasAccepted = true;
                         await _db.SaveChangesAsync();
                         steps.Add(newReviewStep);

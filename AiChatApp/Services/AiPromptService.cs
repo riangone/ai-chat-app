@@ -165,11 +165,12 @@ public class AiPromptService
             }
         }
         if (!string.IsNullOrEmpty(sessionMemoryContext)) sb.Append("\n\n" + Truncate(sessionMemoryContext, 2000));
-        if (memories.Any()) { sb.Append("\n\n[ユーザーの既知情報・長期記憶]:\n"); foreach (var m in memories) sb.Append($"- {Truncate(m.Content, 300)}\n"); }
+        if (memories.Any()) { sb.Append("\n\n[ユーザーの既知情報・長期記憶]:\n以下はこのユーザーとのこれまでの会話から得られた情報です。応答内容や対応の仕方をこれに合わせて調整してください。\n"); foreach (var m in memories) sb.Append($"- {Truncate(m.Content, 300)}\n"); }
         if (skills.Any()) { sb.Append("\n\n[有效技能指示]:\n"); foreach (var s in skills) sb.Append($"- {s.Description}\n"); }
         if (chatSessionId.HasValue) sb.Append(GetSystemPromptTemplate("MemoryInstruction", "\n\n[MEMORY INSTRUCTION]: 重要な発見があれば \"MEMORY: key=value\" 形式で行末に出力してください。"));
 
         sb.Append("\n\n[AVAILABLE ACTIONS]\nYou can take real actions by embedding tool calls in your response using this format:\n<tool_call>{\"name\": \"TOOL_NAME\", \"args\": {...}}</tool_call>\n\nAvailable tools:\n- create_todo: Create a task/reminder. Args: title (string, required), due_date (string ISO8601, optional)\n- save_note: Save content as a note. Args: title (string, required), content (string, required)\n- save_memory: Save important information to long-term memory. Args: content (string, required), tags (string comma-separated, optional)\n\nRules:\n- Only call tools when the user explicitly asks you to create/save/remember something\n- Place tool calls at the END of your response, after the text reply\n- One tool_call tag per action");
+        sb.Append("\n\n[REMINDER]\nAbove all, stay in character as Hyperion: concise, direct, and aligned with the tone/style guidance at the top of this prompt.");
         return sb.ToString();
     }
 
