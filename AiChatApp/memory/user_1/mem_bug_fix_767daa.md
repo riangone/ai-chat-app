@@ -1,20 +1,21 @@
 ---
 name: bug-fix,css,shadow-dom,daisyui
-description: 已对“bug-fix”标签下的多项长期记忆进行了整合与去重，主要修复内容按模块/项目分类如下：
+description: 已整合“bug-fix”标签下的所有长期记忆碎片。主要修复内容按模块与项目分类如下：
 
-1. **Auto-Dealer-Demo 项目与详情页修复*...
+1. **Auto-Dealer-Demo 项目与详情页修复**
+   ...
 type: user
 userId: 1
 tags: bug-fix,css,shadow-dom,daisyui
-relations: Auto-Dealer-Demo,NetYamlForge,JPCS,AiChatApp,AI Assistant,DaisyUI,SQLite,HTMX,Nginx,Gemini CLI
-relevanceScore: 87
-accessCount: 233
+relations: Auto-Dealer-Demo,NetYamlForge,JPCS,AiChatApp,Gemini CLI,Database,.env Parser,Financial Management,HTMX
+relevanceScore: 97
+accessCount: 369
 createdAt: 2026-06-01T05:43:45.7634459Z
-lastAccessedAt: 2026-06-14T11:08:41.0821171Z
+lastAccessedAt: 2026-06-23T01:52:16.2091161Z
 boundAgentRole: 
 ---
 
-已对“bug-fix”标签下的多项长期记忆进行了整合与去重，主要修复内容按模块/项目分类如下：
+已整合“bug-fix”标签下的所有长期记忆碎片。主要修复内容按模块与项目分类如下：
 
 1. **Auto-Dealer-Demo 项目与详情页修复**
    - 修复了 AI 决定管理详情页（DetailPage.cshtml）点击“承认”（Approve）按钮时报“找不到アクションハンドラー 'approve_ai_decision'”的错误。根本原因是前端按钮指向了不存在的后端动作 `ExecuteAction`，现已修正为 `InvokeAction` 并统一了参数命名。

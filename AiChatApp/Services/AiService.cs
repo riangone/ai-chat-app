@@ -158,6 +158,8 @@ public class AiService
         const int maxPrefixBuffer = 16384;
         var dynamicFrags = _responseProcessor.BuildDynamicFragments(effectiveSystem, effectivePrompt);
 
+        var filter = new WorkSummaryStreamFilter();
+
         await foreach (var chunk in _cliExecutor.ExecuteStreamAsync(effectivePrompt, targetProvider, effectiveSystem, prompt, workingDir))
         {
             if (chunk.Text != null)
@@ -165,7 +167,11 @@ public class AiService
                 fullResponse.Append(chunk.Text);
                 var (toYield, handled) = _responseProcessor.HandlePrefixBuffer(prefixBuffer, chunk.Text, prefixHandled, maxPrefixBuffer, dynamicFrags);
                 prefixHandled = handled;
-                if (toYield != null) yield return toYield;
+                if (toYield != null)
+                {
+                    var filtered = filter.ProcessChunk(toYield);
+                    if (filtered != null) yield return filtered;
+                }
             }
             if (chunk.Model != null) extractedModel = chunk.Model;
             if (chunk.PromptTokens > 0) pt = chunk.PromptTokens;
@@ -176,8 +182,16 @@ public class AiService
         if (!prefixHandled && prefixBuffer.Length > 0)
         {
             var stripped = _responseProcessor.StripEchoedPromptPrefix(prefixBuffer.ToString(), dynamicFrags);
-            if (!string.IsNullOrEmpty(stripped)) yield return stripped;
+            if (!string.IsNullOrEmpty(stripped))
+            {
+                var filtered = filter.ProcessChunk(stripped);
+                if (filtered != null) yield return filtered;
+            }
         }
+
+        var flushed = filter.Flush();
+        if (flushed != null) yield return flushed;
+
         sw.Stop();
 
         if (fullResponse.Length == 0 && targetProvider != FallbackProvider)
@@ -326,5 +340,153 @@ public class AiService
         }
 
         return false;
+    }
+}
+
+public class WorkSummaryStreamFilter
+{
+    private readonly StringBuilder _buffer = new();
+    private bool _inFilterMode = false;
+    private bool _summaryDetected = false;
+
+    private string GetCleanBuffer()
+    {
+        var sb = new StringBuilder();
+        int dashCount = 0;
+        foreach (char c in _buffer.ToString())
+        {
+            if (char.IsWhiteSpace(c)) continue;
+            if (c == '-')
+            {
+                dashCount++;
+                if (dashCount <= 3) sb.Append('-');
+            }
+            else
+            {
+                dashCount = 0;
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
+    }
+
+    private static readonly string[] CleanSummaryHeaders = {
+        "---**工作总结**", "---**工作サマリー**", "---**工作概要**",
+        "---**SummaryofWork**", "---**TaskSummary**", "---**WorkSummary**", "---**Summary**",
+        "---**工作总结", "---**工作サマリー", "---**工作概要",
+        "---**SummaryofWork", "---**TaskSummary", "---**WorkSummary", "---**Summary",
+        // Heading format (### 工作总结 without --- separator)
+        "###工作总结", "###工作サマリー", "###工作概要",
+        "###SummaryofWork", "###TaskSummary", "###WorkSummary", "###Summary",
+        "##工作总结", "##工作サマリー", "##工作概要",
+        "##SummaryofWork", "##TaskSummary", "##WorkSummary", "##Summary"
+    };
+
+    public string? ProcessChunk(string chunk)
+    {
+        if (_summaryDetected) return null;
+
+        _buffer.Append(chunk);
+        var bufStr = _buffer.ToString();
+
+        if (!_inFilterMode)
+        {
+            int dashIdx = bufStr.IndexOf("---");
+            if (dashIdx >= 0)
+            {
+                bool isStartingDashes = dashIdx == 0 || bufStr[dashIdx - 1] == '\n' || bufStr[dashIdx - 1] == '\r';
+                if (isStartingDashes)
+                {
+                    _inFilterMode = true;
+                    var toYield = bufStr[..dashIdx];
+                    _buffer.Remove(0, dashIdx);
+                    return toYield + ProcessChunk(string.Empty);
+                }
+            }
+
+            // Also trigger on ## heading at line start (e.g., "### 工作总结")
+            for (int i = 0; i < bufStr.Length; i++)
+            {
+                if (bufStr[i] == '#' && (i == 0 || bufStr[i - 1] == '\n' || bufStr[i - 1] == '\r'))
+                {
+                    _inFilterMode = true;
+                    var toYield = bufStr[..i];
+                    _buffer.Remove(0, i);
+                    return toYield + ProcessChunk(string.Empty);
+                }
+            }
+
+            int keepLen = 0;
+            if (bufStr.EndsWith("---")) keepLen = 3;
+            else if (bufStr.EndsWith("--")) keepLen = 2;
+            else if (bufStr.EndsWith("-")) keepLen = 1;
+            // Trailing # at line boundary — may be start of a heading
+            else if (bufStr.Length >= 1 && bufStr[^1] == '#' && (bufStr.Length == 1 || bufStr[^2] == '\n' || bufStr[^2] == '\r'))
+                keepLen = 1;
+            else if (bufStr.Length >= 2 && bufStr[^1] == '#' && bufStr[^2] == '#' && (bufStr.Length == 2 || bufStr[^3] == '\n' || bufStr[^3] == '\r'))
+                keepLen = 2;
+            else if (bufStr.Length >= 3 && bufStr[^1] == '#' && bufStr[^2] == '#' && bufStr[^3] == '#' && (bufStr.Length == 3 || bufStr[^4] == '\n' || bufStr[^4] == '\r'))
+                keepLen = 3;
+
+            if (keepLen > 0)
+            {
+                int fragStart = bufStr.Length - keepLen;
+                bool isStarting = fragStart == 0 || bufStr[fragStart - 1] == '\n' || bufStr[fragStart - 1] == '\r';
+                if (isStarting)
+                {
+                    var toYield = bufStr[..fragStart];
+                    _buffer.Remove(0, fragStart);
+                    return toYield;
+                }
+            }
+
+            _buffer.Clear();
+            return bufStr;
+        }
+        else
+        {
+            var cleanBuf = GetCleanBuffer();
+
+            bool isConfirmed = CleanSummaryHeaders.Any(h => cleanBuf.StartsWith(h, StringComparison.OrdinalIgnoreCase));
+            if (isConfirmed)
+            {
+                _summaryDetected = true;
+                _buffer.Clear();
+                return null;
+            }
+
+            bool isPossible = cleanBuf == "-" || cleanBuf == "--" || cleanBuf == "---" || cleanBuf == "---*" || cleanBuf == "---**";
+            if (!isPossible)
+            {
+                isPossible = CleanSummaryHeaders.Any(h => h.StartsWith(cleanBuf, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (isPossible)
+            {
+                if (_buffer.Length > 300)
+                {
+                    _inFilterMode = false;
+                    var toYield = _buffer.ToString();
+                    _buffer.Clear();
+                    return toYield;
+                }
+                return null;
+            }
+            else
+            {
+                _inFilterMode = false;
+                var toYield = _buffer.ToString();
+                _buffer.Clear();
+                return toYield;
+            }
+        }
+    }
+
+    public string? Flush()
+    {
+        if (_summaryDetected) return null;
+        var toYield = _buffer.ToString();
+        _buffer.Clear();
+        return string.IsNullOrEmpty(toYield) ? null : toYield;
     }
 }

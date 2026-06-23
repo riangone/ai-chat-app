@@ -333,6 +333,29 @@ public static class ApplicationExtensions
             );";
         command.ExecuteNonQuery();
 
+        // VocabCards table
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS VocabCards (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                UserId INTEGER NOT NULL,
+                Word TEXT NOT NULL,
+                Translation TEXT NOT NULL,
+                Reading TEXT,
+                Example TEXT,
+                ExampleTranslation TEXT,
+                Tags TEXT,
+                Category TEXT,
+                Level INTEGER NOT NULL DEFAULT 0,
+                TimesCorrect INTEGER NOT NULL DEFAULT 0,
+                TimesWrong INTEGER NOT NULL DEFAULT 0,
+                NextReviewAt DATETIME,
+                CreatedAt DATETIME NOT NULL,
+                UpdatedAt DATETIME NOT NULL
+            );";
+        command.ExecuteNonQuery();
+        command.CommandText = "CREATE INDEX IF NOT EXISTS IX_VocabCards_UserId_NextReviewAt ON VocabCards (UserId, NextReviewAt);";
+        command.ExecuteNonQuery();
+
         // FinancialAssets table
         command.CommandText = @"
             CREATE TABLE IF NOT EXISTS FinancialAssets (
@@ -347,6 +370,46 @@ public static class ApplicationExtensions
                 ChangePercent REAL,
                 LastUpdatedAt DATETIME NOT NULL
             );";
+        command.ExecuteNonQuery();
+
+        // Courses / Lessons / UserLessonProgress tables
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS Courses (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                UserId INTEGER NOT NULL,
+                Title TEXT NOT NULL,
+                Description TEXT,
+                IconEmoji TEXT NOT NULL DEFAULT '📚',
+                Color TEXT NOT NULL DEFAULT '#58cc02',
+                ""Order"" INTEGER NOT NULL DEFAULT 0,
+                CreatedAt DATETIME NOT NULL
+            );";
+        command.ExecuteNonQuery();
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS Lessons (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                CourseId INTEGER NOT NULL,
+                Title TEXT NOT NULL,
+                ""Order"" INTEGER NOT NULL DEFAULT 0,
+                ExercisesJson TEXT NOT NULL DEFAULT '[]',
+                XpReward INTEGER NOT NULL DEFAULT 10
+            );";
+        command.ExecuteNonQuery();
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS UserLessonProgresses (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                UserId INTEGER NOT NULL,
+                LessonId INTEGER NOT NULL,
+                Score INTEGER NOT NULL DEFAULT 0,
+                XpEarned INTEGER NOT NULL DEFAULT 0,
+                CompletedAt DATETIME NOT NULL
+            );";
+        command.ExecuteNonQuery();
+        command.CommandText = "CREATE INDEX IF NOT EXISTS IX_Courses_UserId ON Courses (UserId);";
+        command.ExecuteNonQuery();
+        command.CommandText = "CREATE INDEX IF NOT EXISTS IX_Lessons_CourseId ON Lessons (CourseId);";
+        command.ExecuteNonQuery();
+        command.CommandText = "CREATE INDEX IF NOT EXISTS IX_UserLessonProgresses_UserId ON UserLessonProgresses (UserId, LessonId);";
         command.ExecuteNonQuery();
 
         // Invalidate policy cache when policy files change

@@ -45,6 +45,7 @@ public static class ServiceExtensions
         services.AddScoped<AttachmentService>();
         services.AddSingleton<ProactiveBrainService>();
         services.AddSingleton<WebPushService>();
+        services.AddSingleton<NewsCacheService>();
 
         services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options => {
             options.SerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
@@ -64,6 +65,9 @@ public static class ServiceExtensions
         
         // Loop 2: prompt evolution (gated internally by AiSettings:Evolution:Enabled, default off)
         services.AddHostedService<PromptEvolutionService>();
+
+        // 毎朝7時に米中日のニュースを自動収集
+        services.AddHostedService<NewsBriefingScheduler>();
 
         var proactiveEnabled = configuration.GetValue<bool>("ProactiveSettings:Enabled");
         if (proactiveEnabled)

@@ -27,6 +27,10 @@ public class AppDbContext : DbContext
     public DbSet<FinancialAsset> FinancialAssets => Set<FinancialAsset>();
     public DbSet<Crew> Crews => Set<Crew>();
     public DbSet<PromptVariant> PromptVariants => Set<PromptVariant>();
+    public DbSet<VocabCard> VocabCards => Set<VocabCard>();
+    public DbSet<Course> Courses => Set<Course>();
+    public DbSet<Lesson> Lessons => Set<Lesson>();
+    public DbSet<UserLessonProgress> UserLessonProgresses => Set<UserLessonProgress>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -62,5 +66,8 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<PromptVariant>()
             .HasIndex(v => new { v.TemplatePath, v.Status });
+
+        modelBuilder.Entity<VocabCard>()
+            .HasIndex(v => new { v.UserId, v.NextReviewAt });
     }
 }

@@ -38,7 +38,8 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
     // Only stdin-based providers can be pre-warmed; arg-based ones need the prompt at spawn time.
     private static bool SupportsPreWarm(string normalizedProvider) =>
-        normalizedProvider != "opencode" && normalizedProvider != "copilot" && normalizedProvider != "antigravity" && normalizedProvider != "gemini";
+        normalizedProvider != "opencode" && normalizedProvider != "copilot" &&
+        normalizedProvider != "antigravity" && normalizedProvider != "gemini";
 
     private Process? ClaimWarmProcess(string key)
     {
@@ -633,6 +634,11 @@ public class CliExecutorService : ICliExecutor, IDisposable
         text = Regex.Replace(text, @"(^(Thought|Thinking|Reasoning):.*?\n\n)", "", RegexOptions.Singleline | RegexOptions.IgnoreCase, timeout);
         text = Regex.Replace(text, @"\n\n(Thought|Thinking|Reasoning):.*?\n\n", "\n\n", RegexOptions.Singleline | RegexOptions.IgnoreCase, timeout);
         text = Regex.Replace(text, @"(Thought|Thinking|Reasoning):.*?$", "", RegexOptions.Singleline | RegexOptions.IgnoreCase, timeout);
+        
+        // 过滤 antigravity cli 生成的工作总结/サマリー/Summary (bold + --- separator format)
+        text = Regex.Replace(text, @"\n---\s*\n\*\*(工作总结|工作サマリー|工作概要|Summary of Work|Task Summary|Work Summary|Summary)\*\*：?[\s\S]*$", "", RegexOptions.IgnoreCase, timeout);
+        // Heading format: "### 工作总结" (no --- separator)
+        text = Regex.Replace(text, @"\n+#{1,4}\s*(工作总结|工作サマリー|工作概要|Summary of Work|Task Summary|Work Summary|Summary)\s*\n[\s\S]*$", "", RegexOptions.IgnoreCase, timeout);
         return text.Trim();
     }
 
