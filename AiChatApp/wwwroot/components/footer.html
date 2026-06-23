@@ -12,10 +12,15 @@
                         <option value="claude">Claude Code</option>
                         <option value="codex">Codex</option>
                         <option value="opencode">OpenCode</option>
+                        <option value="lmstudio">LM Studio</option>
                     </select>
                     <div class="flex items-center gap-1.5 ml-2">
                         <input type="checkbox" id="stream-toggle" class="checkbox checkbox-xs checkbox-primary" checked onchange="saveStreamPreference(this.checked)" />
                         <label for="stream-toggle" class="text-[10px] font-bold opacity-40 cursor-pointer uppercase">Stream</label>
+                    </div>
+                    <div class="flex items-center gap-1.5 ml-2">
+                        <input type="checkbox" id="plan-mode-toggle" class="checkbox checkbox-xs checkbox-warning" onchange="onPlanModeToggle(this.checked)" />
+                        <label for="plan-mode-toggle" class="text-[10px] font-bold opacity-40 cursor-pointer uppercase text-warning">Plan</label>
                     </div>
                 </div>
                 <input type="hidden" name="mode" id="mode-input" value="" />

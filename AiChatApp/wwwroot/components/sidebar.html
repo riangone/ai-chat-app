@@ -39,6 +39,21 @@
         </div>
     </div>
 
+    <!-- Recent Sessions -->
+<div class="border-t border-base-content/5 pt-1">
+    <button class="w-full flex items-center justify-between px-4 py-2 text-left select-none hover:bg-base-200/30 transition-colors" onclick="toggleSidebarSessions()">
+        <span class="text-[9px] font-black uppercase tracking-[0.2em] opacity-30">Sessions</span>
+        <svg id="sidebar-sessions-chevron" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="3" stroke="currentColor" class="w-2.5 h-2.5 opacity-20 transition-transform duration-200">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+        </svg>
+    </button>
+    <div id="sidebar-sessions-panel" class="hidden overflow-y-auto max-h-44 custom-scrollbar px-2 pb-2 space-y-0.5">
+        <div id="sidebar-sessions-inner" class="flex items-center justify-center py-3">
+            <span class="loading loading-spinner loading-xs opacity-20"></span>
+        </div>
+    </div>
+</div>
+
     <div class="p-4 mt-auto border-t border-base-content/5">
 <div class="flex items-center gap-3 px-3 py-2"><div id="sidebar-avatar" class="w-10 h-10 rounded-xl bg-primary text-primary-content flex items-center justify-center font-black shadow-md">?</div><div class="flex-1 overflow-hidden"><p id="sidebar-username" class="text-sm font-bold truncate">...</p><p class="text-[10px] opacity-40 uppercase font-bold tracking-wider" data-i18n="authenticated">Authenticated</p></div></div></div>
 </aside>

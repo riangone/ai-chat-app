@@ -124,6 +124,19 @@ public static class ChatEndpoints
             return Results.Content(html, "text/html");
         });
 
+        group.MapGet("/chat/sessions", async (int? limit, AppDbContext db, ClaimsPrincipal user) => {
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var take = limit ?? 20;
+            var sessions = await db.ChatSessions
+                .AsNoTracking()
+                .Where(s => s.UserId == userId)
+                .OrderByDescending(s => s.UpdatedAt)
+                .Take(take)
+                .Select(s => new { s.Id, s.Title, provider = s.PreferredProvider, updatedAt = s.UpdatedAt })
+                .ToListAsync();
+            return Results.Ok(sessions);
+        }).RequireAuthorization();
+
         group.MapDelete("/chat/{id}", async (int id, AppDbContext db, ClaimsPrincipal user) => {
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var session = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
