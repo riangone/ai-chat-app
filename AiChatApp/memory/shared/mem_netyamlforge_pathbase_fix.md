@@ -5,7 +5,7 @@ type: user
 userId: 0
 tags: NetYamlForge PathBase 路径问题与修复
 relations: relevanceScore: 80
-relevanceScore: 62
+relevanceScore: 23
 accessCount: 2
 createdAt: 2026-04-30T10:43:45.3027202Z
 lastAccessedAt: 2026-06-21T10:40:47.8180973Z

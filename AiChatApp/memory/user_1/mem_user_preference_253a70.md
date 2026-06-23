@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: user preference,dashboard customization,dashboard.yml
 relations: dashboard.yml,每月新增照片
-relevanceScore: 80
+relevanceScore: 40
 accessCount: 0
 createdAt: 2026-06-22T03:06:42.9710399Z
 lastAccessedAt: 2026-06-22T03:06:42.9710401Z

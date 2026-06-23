@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: 页面配置,YAML,精简界面
 relations: Gallery.yaml,PhotoImport.yaml,PhotoManage.yaml,ProcessingQueue.yaml,AiSearch.yaml,AiAssistant.yaml
-relevanceScore: 70
+relevanceScore: 24
 accessCount: 0
 createdAt: 2026-06-21T23:38:37.5359678Z
 lastAccessedAt: 2026-06-21T23:38:37.5359679Z

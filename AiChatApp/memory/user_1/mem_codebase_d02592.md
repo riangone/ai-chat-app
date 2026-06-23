@@ -7,9 +7,9 @@ userId: 1
 tags: codebase,architecture
 relations: NetYamlForge,AiChatApp,PageController,AiService,CliExecutorService,AiPromptService,LocalEmbeddingService,EmbeddingGeneratorExecutor,PromptVariant,PromptEvolutionService,AppDbContext,PipelineLoaderService,PhotoAnnotatorExecutor
 relevanceScore: 90
-accessCount: 37
+accessCount: 68
 createdAt: 2026-06-20T08:05:11.7465446Z
-lastAccessedAt: 2026-06-23T02:39:44.5389244Z
+lastAccessedAt: 2026-06-23T14:45:49.0867011Z
 boundAgentRole: 
 ---
 

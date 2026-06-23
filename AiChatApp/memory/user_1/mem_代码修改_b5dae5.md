@@ -9,9 +9,9 @@ userId: 1
 tags: 代码修改,PhotoAnnotationHandlers,annotate_now
 relations: PhotoAnnotationHandlers.cs,AnnotateNowHandler,PhotoAnnotatorExecutor.cs,AnnotateSingleAsync,TableDdlBuilder.cs,DynamicEntitySchemaMigrationService.cs,IsDeleted
 relevanceScore: 90
-accessCount: 35
+accessCount: 66
 createdAt: 2026-06-19T13:00:22.2009803Z
-lastAccessedAt: 2026-06-23T02:39:44.5389247Z
+lastAccessedAt: 2026-06-23T14:45:49.0867016Z
 boundAgentRole: 
 ---
 

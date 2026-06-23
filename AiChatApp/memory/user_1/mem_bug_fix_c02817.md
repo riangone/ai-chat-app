@@ -9,9 +9,9 @@ userId: 1
 tags: bug_fix,frontend,cshtml,polling
 relations: _JobRow.cshtml,BatchJobController.cs,_List.cshtml,project_settings,Validator,Gemini CLI,AnnotationPrompt
 relevanceScore: 90
-accessCount: 37
+accessCount: 68
 createdAt: 2026-06-20T02:04:22.8621270Z
-lastAccessedAt: 2026-06-23T02:39:44.5389250Z
+lastAccessedAt: 2026-06-23T14:45:49.0867013Z
 boundAgentRole: 
 ---
 

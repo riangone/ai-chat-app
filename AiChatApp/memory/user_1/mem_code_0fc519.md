@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: code,worker,routing,PhotoAnnotationHandlers
 relations: PhotoAnnotationHandlers.cs,worker_routing,lmstudio_annotation_worker,antigravity_cli_worker
-relevanceScore: 70
+relevanceScore: 24
 accessCount: 0
 createdAt: 2026-06-21T23:28:09.0491544Z
 lastAccessedAt: 2026-06-21T23:28:09.0491546Z

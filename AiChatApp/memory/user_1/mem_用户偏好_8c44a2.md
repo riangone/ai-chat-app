@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: 用户偏好,Photo Vault,界面设计,前端优化
 relations: Photo Vault,SectionDefinition,Hidden
-relevanceScore: 70
+relevanceScore: 24
 accessCount: 0
 createdAt: 2026-06-21T23:38:37.5350144Z
 lastAccessedAt: 2026-06-21T23:38:37.5350145Z

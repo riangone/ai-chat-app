@@ -233,9 +233,13 @@
         .agent-step-row.step-open + .agent-step-detail { display: block; }
         /* Plan Approval Bar */
         #plan-approval-bar {
+            display: none;
             border-top: 1px solid hsl(var(--wa) / 0.25);
             background: hsl(var(--wa) / 0.06);
             padding: 0.75rem 1rem;
+        }
+        #plan-approval-bar.plan-visible {
+            display: block;
             animation: fadeIn 0.2s ease-out;
         }
         /* Provider badge in header */
@@ -615,7 +619,8 @@
             if(selectedAgentId) fd.set('agentId', selectedAgentId);
             if(pendingAttachments.length > 0) fd.set('attachmentIds', pendingAttachments.map(a=>a.id).join(','));
             addUserMessage(c || '[attachment]'); document.getElementById('chat-input').value=''; resetInputHeight(); clearAttachments(); setRequestState(true);
-            
+            dismissPlan();
+
             const isStream = document.getElementById('stream-toggle')?.checked !== false;
             
             try { 
@@ -697,7 +702,6 @@
                     const t=de.decode(value);
                     t.split('\n').forEach(l=>{if(l.startsWith('data: ')){const d=l.slice(6); if(d.startsWith('[DONE')){const m=d.match(/^\[DONE:(\d+):(\d+):(\d+)\]$/);if(m)updateTokenInfo(id,+m[1],+m[2],+m[3]);}else if(d.startsWith('[ERROR:')){b.innerHTML=`<span class="text-error">${d.slice(7,-1)}</span>`;}else{acc+=d.replace(/\\n/g,'\n').replace(/\\r/g,'\r'); b.innerHTML=marked.parse(acc); scrollToBottom();}}});
                 }
-                checkForPlanInResponse(acc);
             } catch(err) { b.innerHTML=`<span class="text-error">${i18n('request-error')}</span>`; }
         }
 
@@ -820,14 +824,15 @@
 
         function showPlanApprovalBar(summary) {
             const bar = document.getElementById('plan-approval-bar');
-            const sumEl = document.getElementById('plan-approval-summary');
             if (!bar) return;
+            const sumEl = document.getElementById('plan-approval-summary');
             if (sumEl) sumEl.textContent = (summary || '').slice(0, 120);
-            bar.classList.remove('hidden');
+            bar.classList.add('plan-visible');
         }
 
         function dismissPlan() {
-            document.getElementById('plan-approval-bar')?.classList.add('hidden');
+            const bar = document.getElementById('plan-approval-bar');
+            if (bar) bar.classList.remove('plan-visible');
             _pendingPlan = null;
             _pendingPlanPrompt = '';
         }
@@ -859,10 +864,11 @@
         function checkForPlanInResponse(text) {
             if (!document.getElementById('plan-mode-toggle')?.checked) return;
             if (!text) return;
-            const lower = text.toLowerCase();
-            const isPlan = lower.includes('## plan') || lower.includes('# plan') ||
-                           lower.includes('step 1:') || lower.includes('step 1.') ||
-                           (lower.includes('plan:') && lower.includes('step'));
+            const trimmed = text.trim();
+            const lower = trimmed.toLowerCase();
+            // Only detect explicit plan headers at the START of the response
+            const isPlan = lower.startsWith('## plan') || lower.startsWith('# plan') ||
+                           lower.startsWith('**plan') || lower.startsWith('plan:\n');
             if (isPlan) {
                 _pendingPlan = text;
                 _pendingPlanPrompt = document.getElementById('chat-input')?.value || text.slice(0, 200);
@@ -3692,7 +3698,7 @@ function handleSuggestionAction(command, payload) {
                             </div>
                         </div>
                         <!-- Plan Approval Bar -->
-                        <div id="plan-approval-bar" class="hidden">
+                        <div id="plan-approval-bar">
                             <div class="flex items-center gap-3 px-4 py-3 max-w-3xl mx-auto">
                                 <div class="w-7 h-7 rounded-lg bg-warning/20 text-warning flex items-center justify-center shrink-0">
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3.5 h-3.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25z" /></svg>
