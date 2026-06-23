@@ -17,6 +17,7 @@ public class AiService
     private readonly ICliExecutor _cliExecutor;
     private readonly IConfiguration _config;
     private readonly ILogger<AiService> _logger;
+    private readonly ShadowGitService? _shadowGit;
 
     private readonly AiPromptService _promptService;
     private readonly AiResponseProcessor _responseProcessor;
@@ -34,7 +35,8 @@ public class AiService
         AiResponseProcessor responseProcessor,
         AiCollaborationService collaborationService,
         AssistantToolService toolService,
-        HeadroomCompressionService headroom)
+        HeadroomCompressionService headroom,
+        IServiceProvider serviceProvider)
     {
         _db = db;
         _skillManager = skillManager;
@@ -46,6 +48,7 @@ public class AiService
         _collaborationService = collaborationService;
         _toolService = toolService;
         _headroom = headroom;
+        try { _shadowGit = serviceProvider.GetRequiredService<ShadowGitService>(); } catch { }
     }
 
     public string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "antigravity";
@@ -96,6 +99,9 @@ public class AiService
 
         await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", result.Model, targetProvider, systemPrompt ?? "Default Assistant", fullPrompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
 
+        if (session?.ProjectId != null && session.Project != null)
+            await CreateSnapshotAsync(session);
+
         var toolResults = await _toolService.ExecuteToolCallsAsync(result.Output, userId);
         var cleanResponse = AssistantToolService.StripToolCalls(result.Output);
         var toolHtml = AssistantToolService.BuildResultsHtml(toolResults);
@@ -111,7 +117,16 @@ public class AiService
             return ("拒绝执行：检测到代码修改指示。由于您没有管理员权限，无法执行涉及代码修改的操作。\nAccess Denied: Code modification request detected. Since you do not have administrator permissions, operations involving code modifications cannot be executed.", new List<AgentStep>());
         }
 
-        return await _collaborationService.CooperateAsync(task, userId, messageId, chatSessionId, provider, selectedAgentNames, onStepComplete, processType);
+        var result = await _collaborationService.CooperateAsync(task, userId, messageId, chatSessionId, provider, selectedAgentNames, onStepComplete, processType);
+
+        if (chatSessionId.HasValue)
+        {
+            var coopSession = await _db.ChatSessions.Include(s => s.Project).FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
+            if (coopSession?.ProjectId != null && coopSession.Project != null)
+                await CreateSnapshotAsync(coopSession);
+        }
+
+        return result;
     }
 
     public async IAsyncEnumerable<string> GetResponseStreamAsync(string prompt, int userId, int? chatSessionId, string? provider = null, int? agentId = null)
@@ -202,6 +217,9 @@ public class AiService
 
         await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", extractedModel ?? targetProvider, targetProvider, systemPrompt ?? "Default Assistant", fullPrompt, fullResponse.ToString(), (int)sw.ElapsedMilliseconds, pt, ct, tt);
 
+        if (session?.ProjectId != null && session.Project != null)
+            await CreateSnapshotAsync(session);
+
         var toolResults = await _toolService.ExecuteToolCallsAsync(fullResponse.ToString(), userId);
         var toolHtml = AssistantToolService.BuildResultsHtml(toolResults);
         if (!string.IsNullOrEmpty(toolHtml)) yield return toolHtml;
@@ -246,6 +264,57 @@ public class AiService
             if (messageId > 0) await LogAgentStepAsync(messageId, profile.Role, result.Model, targetProvider, sb.ToString(), prompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
         }
         return result.Output;
+    }
+
+    public async Task<string> GetPlanAsync(string userMessage, string systemPrompt, int userId, int? chatSessionId, string? provider = null)
+    {
+        var targetProvider = provider ?? DefaultProvider;
+        var planPrompt = $@"You are a planning agent. Your task is to analyze the user's request and output a structured plan in JSON format ONLY. Do NOT execute any changes. Do NOT output anything except the JSON plan.
+
+User request: {userMessage}
+
+Output a plan in this exact JSON format:
+{{
+  ""title"": ""Brief description of the task"",
+  ""steps"": [
+    {{""action"": ""Read"", ""target"": ""file path"", ""reason"": ""why this step is needed""}},
+    {{""action"": ""Edit"", ""target"": ""file path"", ""lines"": ""line range"", ""change"": ""description of change""}},
+    {{""action"": ""Bash"", ""command"": ""command to run"", ""reason"": ""why this command is needed""}}
+  ],
+  ""estimated_changes"": ""~X lines"",
+  ""risk"": ""low|medium|high""
+}}";
+        var result = await _cliExecutor.ExecuteAsync(planPrompt, targetProvider, systemPrompt: systemPrompt, userPrompt: userMessage);
+        return result.Output;
+    }
+
+    private async Task CreateSnapshotAsync(ChatSession session)
+    {
+        if (_shadowGit == null || session.ProjectId == null || session.Project == null) return;
+        try
+        {
+            var projectPath = session.Project.RootPath;
+            if (string.IsNullOrEmpty(projectPath) || !Directory.Exists(projectPath)) return;
+            var hash = await _shadowGit.CreateSnapshotAsync(projectPath, $"AI changes for session {session.Id}");
+            if (!string.IsNullOrEmpty(hash))
+            {
+                var lastMsg = await _db.Messages.Where(m => m.ChatSessionId == session.Id).OrderByDescending(m => m.Id).FirstOrDefaultAsync();
+                var snapshot = new FileSnapshot
+                {
+                    SessionId = session.Id,
+                    MessageId = lastMsg?.Id ?? 0,
+                    ProjectPath = projectPath,
+                    SnapshotCommitHash = hash,
+                    CreatedAt = DateTime.UtcNow
+                };
+                _db.FileSnapshots.Add(snapshot);
+                await _db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to create shadow snapshot for session {SessionId}", session.Id);
+        }
     }
 
     public async Task<string> GenerateTitleAsync(string userPrompt, string aiResponse, string? provider = null)

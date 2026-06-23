@@ -15,6 +15,7 @@ public static class ProviderRegistry
         if (p.Contains("deepseek") || m.Contains("deepseek")) return "DeepSeek";
         if (p.Contains("gh-copilot") || m.Contains("gpt-4") && p == "copilot") return "Copilot";
         if (p.Contains("gpt") || p.Contains("openai") || m.Contains("gpt-") || m.Contains("o1-") || m.Contains("o3-")) return "OpenAI";
+        if (p.Contains("lmstudio") || p.Contains("lm-studio") || m.Contains("lmstudio")) return "LmStudio";
         
         return "Other";
     }
@@ -29,11 +30,12 @@ public static class ProviderRegistry
             "OpenCode" => "text-yellow-400",
             "OpenAI" => "text-emerald-500",
             "DeepSeek" => "text-cyan-400",
+            "LmStudio" => "text-pink-400",
             _ => "text-primary"
         };
     }
 
-    public static readonly string[] AllProviders = { "Antigravity", "Claude", "Codex", "Copilot", "OpenCode", "OpenAI", "DeepSeek" };
+    public static readonly string[] AllProviders = { "Antigravity", "Claude", "Codex", "Copilot", "OpenCode", "OpenAI", "DeepSeek", "LmStudio" };
 
     public static readonly Dictionary<string, long> Quotas = new() {
         { "Antigravity", 10000000 },
@@ -44,6 +46,7 @@ public static class ProviderRegistry
         { "OpenCode", 5000000 },
         { "OpenAI", 2000000 },
         { "DeepSeek", 20000000 },
+        { "LmStudio", 100000000 },
         { "Other", 1000000 }
     };
 }

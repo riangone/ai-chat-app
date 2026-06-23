@@ -142,6 +142,41 @@
         #notes-sidebar-toggle {
             transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
         }
+
+        /* Vocab Card Styles */
+        .vocab-card { perspective: 1000px; cursor: pointer; width: 100%; max-width: 360px; min-height: 260px; margin: 0 auto; }
+        .card-inner { position: relative; width: 100%; min-height: 260px; transform-style: preserve-3d; transition: transform 0.4s ease; border-radius: 1.5rem; }
+        .card-inner.flipped { transform: rotateY(180deg); }
+        .card-front, .card-back { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: 1.5rem; padding: 2rem; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; border: 1px solid hsl(var(--bc) / 0.1); box-shadow: 0 8px 32px rgba(0,0,0,0.06); }
+        .card-front { background: hsl(var(--b1)); z-index: 2; }
+        .card-back { background: hsl(var(--b2)); transform: rotateY(180deg); }
+        .vocab-card.swiping-right { transition: transform 0.3s ease; border-color: #22c55e; }
+        .vocab-card.swiping-left { transition: transform 0.3s ease; border-color: #ef4444; }
+        .vocab-result-correct { background: rgba(34,197,94,0.1); }
+        .vocab-result-wrong { background: rgba(239,68,68,0.1); }
+
+        /* Courses / Duolingo Styles */
+        .course-node { position: relative; display: flex; flex-direction: column; align-items: center; margin: 0.5rem 0; }
+        .course-node-btn { width: 72px; height: 72px; border-radius: 50%; border: 4px solid rgba(0,0,0,0.15); display: flex; align-items: center; justify-content: center; font-size: 1.8rem; cursor: pointer; transition: all 0.15s ease; box-shadow: 0 6px 0 rgba(0,0,0,0.2); user-select: none; }
+        .course-node-btn:active { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0,0,0,0.2); }
+        .course-node-btn.locked { filter: grayscale(1); opacity: 0.4; cursor: not-allowed; }
+        .course-node-btn.completed { outline: 3px solid #22c55e; outline-offset: 3px; }
+        .lesson-node { width: 56px; height: 56px; border-radius: 50%; border: 3px solid rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.15s ease; box-shadow: 0 4px 0 rgba(0,0,0,0.15); font-size: 1.1rem; }
+        .lesson-node:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0,0,0,0.15); }
+        .lesson-node.locked { filter: grayscale(1); opacity: 0.35; cursor: not-allowed; }
+        .lesson-node.completed { outline: 2px solid #22c55e; outline-offset: 2px; }
+        .exercise-option { border: 2px solid hsl(var(--bc)/0.15); border-radius: 1rem; padding: 0.75rem 1rem; cursor: pointer; transition: all 0.15s ease; background: hsl(var(--b1)); font-weight: 600; display: flex; align-items: center; gap: 0.75rem; }
+        .exercise-option:hover { border-color: hsl(var(--p)); background: hsl(var(--p)/0.08); }
+        .exercise-option.selected { border-color: #3b82f6 !important; background: #dbeafe !important; color: #1d4ed8 !important; box-shadow: 0 0 0 3px rgba(59,130,246,0.25); }
+        .exercise-option.correct { border-color: #22c55e !important; background: rgba(34,197,94,0.15) !important; color: #166534 !important; }
+        .exercise-option.wrong { border-color: #ef4444 !important; background: rgba(239,68,68,0.12) !important; color: #991b1b !important; }
+        .ex-opt-circle { width: 1.25rem; height: 1.25rem; min-width: 1.25rem; border-radius: 50%; border: 2px solid #cbd5e1; background: #fff; display: flex; align-items: center; justify-content: center; transition: all 0.15s ease; font-size: 0.7rem; }
+        .exercise-option.selected .ex-opt-circle { border-color: #3b82f6; background: #3b82f6; color: #fff; }
+        .exercise-option.correct .ex-opt-circle { border-color: #22c55e; background: #22c55e; color: #fff; }
+        .exercise-option.wrong .ex-opt-circle { border-color: #ef4444; background: #ef4444; color: #fff; }
+        .xp-bar { height: 14px; border-radius: 999px; background: hsl(var(--bc)/0.1); overflow: hidden; }
+        .xp-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #fbbf24, #f59e0b); transition: width 0.5s ease; }
+        .course-connector { width: 3px; height: 24px; background: hsl(var(--bc)/0.15); margin: 2px auto; border-radius: 2px; }
     </style>
     <script>
         const themes = ["light", "dark", "cupcake", "bumblebee", "emerald", "corporate", "synthwave", "retro", "cyberpunk", "valentine", "halloween", "garden", "forest", "aqua", "lofi", "pastel", "fantasy", "wireframe", "black", "luxury", "dracula", "cmyk", "autumn", "business", "acid", "lemonade", "night", "coffee", "winter"];
@@ -298,7 +333,7 @@
             }
         }
         function updateTabBar(index) {
-            const ids = ['home','chat','todo','notes','files','memory','mindmap','projects','skills','history','cli','settings','harness','pipeline','stats'];
+            const ids = ['home','chat','todo','notes','files','memory','mindmap','vocab','courses','projects','skills','history','cli','settings','harness','pipeline','stats'];
             const slideId = ids[index] || 'home';
             const def = SLIDE_DEFS[slideId];
             const sidebarIdx = def?.sidebarIdx ?? -1;
@@ -307,12 +342,12 @@
         }
 
         function ensureTabDataLoaded(index) {
-            const ids = ['home','chat','todo','notes','files','memory','mindmap','projects','skills','history','cli','settings','harness','pipeline','stats'];
+            const ids = ['home','chat','todo','notes','files','memory','mindmap','vocab','courses','projects','skills','history','cli','settings','harness','pipeline','stats'];
             ensureSlideDataLoaded(ids[index] || 'home');
         }
 
         function switchMainTab(index) {
-            const ids = ['home','chat','todo','notes','files','memory','mindmap','projects','skills','history','cli','settings','harness','pipeline','stats'];
+            const ids = ['home','chat','todo','notes','files','memory','mindmap','vocab','courses','projects','skills','history','cli','settings','harness','pipeline','stats'];
             const slideId = ids[index];
             if (slideId) openSlide(slideId);
         }
@@ -1334,23 +1369,26 @@ function handleSuggestionAction(command, payload) {
         // === Dynamic Slide Management ===
         const SLIDE_DEFS = {
             'home':     { label: 'Home',      sidebarIdx: 0,  alwaysOpen: true },
-            'chat':     { label: 'Chat',      sidebarIdx: 1,  alwaysOpen: true },
-            'history':  { label: 'History',   sidebarIdx: 2  },
-            'projects': { label: 'Projects',  sidebarIdx: 3  },
-            'todo':     { label: 'TODO',      sidebarIdx: 4  },
-            'notes':    { label: 'Notes',     sidebarIdx: 5  },
-            'finance':  { label: 'Finance',   sidebarIdx: 6  },
-            'files':    { label: 'Files',     sidebarIdx: 7  },
-            'memory':   { label: 'Memory',    sidebarIdx: 8  },
-            'mindmap':  { label: 'Mindmap',   sidebarIdx: 9  },
-            'skills':   { label: 'Skills',    sidebarIdx: 10 },
-            'cli':      { label: 'CLI',       sidebarIdx: 11 },
-            'harness':  { label: 'Harness',   sidebarIdx: 12 },
-            'pipeline': { label: 'Pipeline',  sidebarIdx: 13 },
-            'stats':    { label: 'Stats',     sidebarIdx: 14 },
-            'settings': { label: 'Settings',  sidebarIdx: 15 },
+            'news':     { label: 'News',      sidebarIdx: 1,  alwaysOpen: true },
+            'chat':     { label: 'Chat',      sidebarIdx: 2,  alwaysOpen: true },
+            'history':  { label: 'History',   sidebarIdx: 3  },
+            'projects': { label: 'Projects',  sidebarIdx: 4  },
+            'todo':     { label: 'TODO',      sidebarIdx: 5  },
+            'notes':    { label: 'Notes',     sidebarIdx: 6  },
+            'finance':  { label: 'Finance',   sidebarIdx: 7  },
+            'files':    { label: 'Files',     sidebarIdx: 8  },
+            'memory':   { label: 'Memory',    sidebarIdx: 9  },
+            'mindmap':  { label: 'Mindmap',   sidebarIdx: 10 },
+            'vocab':    { label: 'Vocab',     sidebarIdx: 11 },
+            'courses':  { label: 'Courses',   sidebarIdx: 12 },
+            'skills':   { label: 'Skills',    sidebarIdx: 13 },
+            'cli':      { label: 'CLI',       sidebarIdx: 15 },
+            'harness':  { label: 'Harness',   sidebarIdx: 16 },
+            'pipeline': { label: 'Pipeline',  sidebarIdx: 17 },
+            'stats':    { label: 'Stats',     sidebarIdx: 18 },
+            'settings': { label: 'Settings',  sidebarIdx: 19 },
         };
-        let openSlideIds = ['home', 'chat', 'history', 'todo'];
+        let openSlideIds = ['home', 'news', 'chat', 'history', 'todo'];
 
         function applyMenuVisibility() {
             if (!currentUser) return;
@@ -1370,7 +1408,7 @@ function handleSuggestionAction(command, payload) {
         }
 
         function initSlidePool() {
-            const slideIds = ['home','chat','todo','notes','finance','files','memory','mindmap','projects','skills','history','cli','harness','pipeline','stats','settings'];
+            const slideIds = ['home','news','chat','todo','notes','finance','files','memory','mindmap','vocab','courses','projects','skills','history','cli','harness','pipeline','stats','settings'];
             const pool = document.createElement('div');
             pool.id = 'slide-pool';
             pool.style.cssText = 'display:none!important;position:absolute;visibility:hidden;pointer-events:none;';
@@ -1458,11 +1496,14 @@ function handleSuggestionAction(command, payload) {
 
         function ensureSlideDataLoaded(slideId) {
             const loaders = {
+                'news':     () => loadNewsBriefingSlide(),
                 'todo':     () => { const el=document.getElementById('todo-list');            if(el&&!el.dataset.loaded){htmx.trigger(el,'refreshTodoList');el.dataset.loaded='true';} },
                 'notes':    () => { const el=document.getElementById('notes-list');           if(el&&!el.dataset.loaded){htmx.trigger(document.body,'refreshNoteList');el.dataset.loaded='true';} },
                 'files':    () => { const f=document.getElementById('files-content');         if(f&&!f.dataset.loaded){browsePath(currentFilesPath||'');f.dataset.loaded='true';} },
                 'memory':   () => { const el=document.getElementById('memory-list-container');if(el&&!el.dataset.loaded){htmx.trigger(el,'loadMemories');el.dataset.loaded='true';} },
                 'mindmap':  () => loadMemoryGraph(),
+                'vocab':    () => { if (!document.getElementById('vocab-study-view').dataset.loaded) { loadVocabReview(); loadVocabCards(); loadVocabStats(); document.getElementById('vocab-study-view').dataset.loaded = 'true'; } },
+                'courses':  () => { const el=document.getElementById('courses-path'); if(el&&!el.dataset.loaded){el.dataset.loaded='loading'; loadCourses().then(()=>{el.dataset.loaded='true';}).catch(()=>{delete el.dataset.loaded;}); } },
                 'projects': () => { const el=document.getElementById('projects-list-container');if(el&&!el.dataset.loaded){htmx.trigger(el,'loadProjects');el.dataset.loaded='true';} },
                 'skills':   () => { const el=document.getElementById('skills-list-container');  if(el&&!el.dataset.loaded){htmx.trigger(el,'loadSkills');el.dataset.loaded='true';} },
                 'history':  () => { const el=document.getElementById('history-list-container'); if(el&&!el.dataset.loaded){htmx.trigger(el,'loadHistory');el.dataset.loaded='true';} },
@@ -1474,6 +1515,726 @@ function handleSuggestionAction(command, payload) {
             const fn = loaders[slideId];
             if (fn) fn();
         }
+        // ---- Vocab Functions ----
+        let vocabCards = [];
+        let vocabReviewQueue = [];
+        let vocabCurrentIndex = 0;
+        let vocabIsFlipped = false;
+        let vocabHammerInstance = null;
+
+        function switchVocabTab(tab) {
+            document.querySelectorAll('#vocab-slide .tab').forEach(t => {
+                t.classList.remove('active', 'bg-primary', 'text-primary-content');
+            });
+            document.getElementById('vocab-study-view').classList.add('hidden');
+            document.getElementById('vocab-cards-view').classList.add('hidden');
+            document.getElementById('vocab-add-view').classList.add('hidden');
+            if (tab === 'study') {
+                document.getElementById('vocab-tab-study').classList.add('active', 'bg-primary', 'text-primary-content');
+                document.getElementById('vocab-study-view').classList.remove('hidden');
+                loadVocabReview();
+            } else if (tab === 'cards') {
+                document.getElementById('vocab-tab-cards').classList.add('active', 'bg-primary', 'text-primary-content');
+                document.getElementById('vocab-cards-view').classList.remove('hidden');
+                loadVocabCards();
+                loadVocabStats();
+            } else {
+                document.getElementById('vocab-tab-add').classList.add('active', 'bg-primary', 'text-primary-content');
+                document.getElementById('vocab-add-view').classList.remove('hidden');
+            }
+        }
+
+        async function loadVocabReview() {
+            try {
+                const r = await fetch('/api/vocab/review');
+                if (!r.ok) return;
+                vocabReviewQueue = await r.json();
+                vocabCurrentIndex = 0;
+                vocabIsFlipped = false;
+                renderVocabCard();
+            } catch (e) { console.error('loadVocabReview', e); }
+        }
+
+        function renderVocabCard() {
+            const container = document.getElementById('vocab-card-container');
+            const hint = document.getElementById('vocab-hint');
+            const actions = document.getElementById('vocab-actions');
+            const progress = document.getElementById('vocab-progress-bar');
+            const progressFill = document.getElementById('vocab-progress-fill');
+            const doneScreen = document.getElementById('vocab-done-screen');
+            const dueCount = document.getElementById('vocab-due-count');
+
+            if (!vocabReviewQueue || vocabReviewQueue.length === 0 || vocabCurrentIndex >= vocabReviewQueue.length) {
+                container.innerHTML = '';
+                hint.classList.add('hidden');
+                actions.classList.add('hidden');
+                progress.classList.add('hidden');
+                doneScreen.classList.remove('hidden');
+                if (dueCount) dueCount.textContent = '0';
+                return;
+            }
+
+            doneScreen.classList.add('hidden');
+            hint.classList.remove('hidden');
+            actions.classList.remove('hidden');
+            progress.classList.remove('hidden');
+
+            const card = vocabReviewQueue[vocabCurrentIndex];
+            const total = vocabReviewQueue.length;
+            const pct = Math.round((vocabCurrentIndex / total) * 100);
+            progressFill.style.width = pct + '%';
+
+            if (dueCount) dueCount.textContent = total;
+
+            container.innerHTML = `
+                <div class="vocab-card" id="vocab-card-el">
+                    <div class="card-inner" id="vocab-card-inner">
+                        <div class="card-front">
+                            <div class="text-3xl font-black mb-3">${escapeHtml(card.word)}</div>
+                            ${card.category ? `<div class="badge badge-ghost badge-sm text-[10px]">${escapeHtml(card.category)}</div>` : ''}
+                            <div class="mt-4 text-xs opacity-30">Tap to reveal</div>
+                        </div>
+                        <div class="card-back">
+                            <div class="text-xl font-bold mb-2">${escapeHtml(card.translation)}</div>
+                            ${card.reading ? `<div class="text-sm opacity-60 mb-3">${escapeHtml(card.reading)}</div>` : ''}
+                            ${card.example ? `<div class="text-xs opacity-70 italic mt-2">${escapeHtml(card.example)}</div>` : ''}
+                            ${card.exampleTranslation ? `<div class="text-xs opacity-50 mt-1">${escapeHtml(card.exampleTranslation)}</div>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('vocab-hint').classList.remove('hidden');
+            document.getElementById('vocab-actions').classList.remove('hidden');
+
+            initVocabHammer();
+        }
+
+        function initVocabHammer() {
+            if (vocabHammerInstance) {
+                vocabHammerInstance.destroy();
+                vocabHammerInstance = null;
+            }
+            const cardEl = document.getElementById('vocab-card-el');
+            if (!cardEl) return;
+
+            const hammer = new Hammer(cardEl);
+            hammer.get('pan').set({ direction: Hammer.DIRECTION_ALL });
+            vocabHammerInstance = hammer;
+
+            let hasEnded = false;
+
+            hammer.on('pan', function(ev) {
+                if (hasEnded) return;
+                const inner = document.getElementById('vocab-card-inner');
+                if (inner) {
+                    inner.style.transform = `translateX(${ev.deltaX}px) rotate(${ev.deltaX * 0.05}deg)`;
+                }
+                if (ev.deltaX > 40) {
+                    cardEl.style.borderColor = '#22c55e';
+                } else if (ev.deltaX < -40) {
+                    cardEl.style.borderColor = '#ef4444';
+                } else {
+                    cardEl.style.borderColor = '';
+                }
+            });
+
+            hammer.on('panend', function(ev) {
+                const inner = document.getElementById('vocab-card-inner');
+                if (hasEnded) return;
+                if (ev.deltaX > 80) {
+                    hasEnded = true;
+                    cardEl.classList.add('swiping-right');
+                    cardEl.style.borderColor = '#22c55e';
+                    setTimeout(() => { submitVocabResult('correct'); hasEnded = false; }, 200);
+                } else if (ev.deltaX < -80) {
+                    hasEnded = true;
+                    cardEl.classList.add('swiping-left');
+                    cardEl.style.borderColor = '#ef4444';
+                    setTimeout(() => { submitVocabResult('wrong'); hasEnded = false; }, 200);
+                } else {
+                    if (inner) inner.style.transform = '';
+                    cardEl.style.borderColor = '';
+                }
+            });
+
+            hammer.on('tap', function() {
+                flipVocabCard();
+            });
+        }
+
+        function flipVocabCard() {
+            const inner = document.getElementById('vocab-card-inner');
+            if (!inner) return;
+            vocabIsFlipped = !vocabIsFlipped;
+            inner.classList.toggle('flipped', vocabIsFlipped);
+        }
+
+        async function submitVocabResult(result) {
+            const card = vocabReviewQueue[vocabCurrentIndex];
+            if (!card) return;
+
+            const container = document.getElementById('vocab-card-container');
+            const cardEl = document.getElementById('vocab-card-el');
+            if (cardEl) {
+                cardEl.classList.add(result === 'correct' ? 'vocab-result-correct' : 'vocab-result-wrong');
+            }
+
+            if (vocabHammerInstance) {
+                vocabHammerInstance.destroy();
+                vocabHammerInstance = null;
+            }
+
+            try {
+                const fd = new FormData();
+                fd.append('result', result);
+                await fetch(`/api/vocab/${card.id}/result`, { method: 'POST', body: fd });
+            } catch (e) { console.error(e); }
+
+            vocabIsFlipped = false;
+            vocabCurrentIndex++;
+            setTimeout(() => renderVocabCard(), 250);
+        }
+
+        async function loadVocabCards() {
+            try {
+                const r = await fetch('/api/vocab/');
+                if (!r.ok) return;
+                const html = await r.text();
+                const list = document.getElementById('vocab-cards-list');
+                if (list) {
+                    list.innerHTML = html || '<div class="text-center opacity-30 py-8 text-xs">No cards yet. Add some!</div>';
+                }
+                const countEl = document.getElementById('vocab-card-count');
+                if (countEl) {
+                    const items = list?.querySelectorAll('.vocab-list-item').length || 0;
+                    countEl.textContent = items;
+                }
+                if (window.htmx) htmx.process(list);
+            } catch (e) { console.error(e); }
+        }
+
+        async function loadVocabStats() {
+            try {
+                const r = await fetch('/api/vocab/stats');
+                if (!r.ok) return;
+                const html = await r.text();
+                const container = document.getElementById('vocab-stats-container');
+                if (container) container.innerHTML = html;
+            } catch (e) { console.error(e); }
+        }
+
+        function filterVocabCards(query) {
+            const items = document.querySelectorAll('.vocab-list-item');
+            const q = query.toLowerCase();
+            items.forEach(item => {
+                const text = item.textContent.toLowerCase();
+                item.classList.toggle('hidden', !text.includes(q));
+            });
+        }
+
+        async function submitVocabAddForm(event) {
+            event.preventDefault();
+            const form = event.target;
+            const fd = new FormData(form);
+            try {
+                const r = await fetch('/api/vocab', { method: 'POST', body: fd });
+                if (r.ok) {
+                    form.reset();
+                    loadVocabCards();
+                    loadVocabStats();
+                    switchVocabTab('cards');
+                } else {
+                    alert('Failed to add card: ' + await r.text());
+                }
+            } catch (e) { console.error(e); alert('Network error'); }
+            return false;
+        }
+
+        async function editVocabCard(id) {
+            try {
+                const r = await fetch(`/api/vocab/${id}`);
+                if (!r.ok) return;
+                const card = await r.json();
+                document.getElementById('vocab-edit-id').value = card.id;
+                document.getElementById('vocab-edit-word').value = card.word;
+                document.getElementById('vocab-edit-translation').value = card.translation;
+                document.getElementById('vocab-edit-reading').value = card.reading || '';
+                document.getElementById('vocab-edit-example').value = card.example || '';
+                document.getElementById('vocab-edit-exampleTranslation').value = card.exampleTranslation || '';
+                document.getElementById('vocab-edit-category').value = card.category || '';
+                document.getElementById('vocab-edit-tags').value = card.tags || '';
+                document.getElementById('vocab-edit-modal').classList.add('modal-open');
+            } catch (e) { console.error(e); }
+        }
+
+        function closeVocabEditModal() {
+            document.getElementById('vocab-edit-modal').classList.remove('modal-open');
+        }
+
+        async function submitVocabEditForm(event) {
+            event.preventDefault();
+            const id = document.getElementById('vocab-edit-id').value;
+            const fd = new FormData();
+            fd.append('word', document.getElementById('vocab-edit-word').value);
+            fd.append('translation', document.getElementById('vocab-edit-translation').value);
+            fd.append('reading', document.getElementById('vocab-edit-reading').value);
+            fd.append('example', document.getElementById('vocab-edit-example').value);
+            fd.append('exampleTranslation', document.getElementById('vocab-edit-exampleTranslation').value);
+            fd.append('category', document.getElementById('vocab-edit-category').value);
+            fd.append('tags', document.getElementById('vocab-edit-tags').value);
+            try {
+                const r = await fetch(`/api/vocab/${id}`, { method: 'PUT', body: fd });
+                if (r.ok) {
+                    closeVocabEditModal();
+                    loadVocabCards();
+                    loadVocabStats();
+                } else {
+                    alert('Failed to update: ' + await r.text());
+                }
+            } catch (e) { console.error(e); }
+            return false;
+        }
+        // ---- End Vocab Functions ----
+
+        // ---- Courses / Duolingo Functions ----
+        let coursesData = [];
+        let currentLesson = null;
+        let currentExercises = [];
+        let currentExIndex = 0;
+        let exHearts = 3;
+        let exCorrect = 0;
+        let selectedOption = null;
+
+        function showCoursesError(msg) {
+            const container = document.getElementById('courses-path');
+            if (container) container.innerHTML = `
+                <div class="flex flex-col items-center justify-center py-16 text-center gap-3">
+                    <div class="text-4xl">⚠️</div>
+                    <p class="text-sm opacity-60">${msg}</p>
+                    <button onclick="reloadCourses()" class="btn btn-sm btn-outline">再試行</button>
+                </div>`;
+        }
+        function reloadCourses() {
+            const el = document.getElementById('courses-path');
+            if (el) { delete el.dataset.loaded; el.innerHTML = '<div class="flex items-center justify-center py-16 opacity-30"><span class="loading loading-spinner loading-md"></span></div>'; }
+            loadCourses().then(() => { if (el) el.dataset.loaded = 'true'; });
+        }
+        async function loadCourses() {
+            try {
+                const [cr, xr] = await Promise.all([fetch('/api/courses/'), fetch('/api/courses/xp')]);
+                if (!cr.ok) {
+                    showCoursesError(`コースの読み込みに失敗しました (${cr.status})`);
+                    return;
+                }
+                coursesData = await cr.json();
+                const xp = xr.ok ? await xr.json() : { totalXp: 0, streak: 0, level: 1 };
+                renderCoursePath(coursesData, xp);
+                updateXpDisplay(xp);
+            } catch (e) {
+                console.error('loadCourses', e);
+                showCoursesError('ネットワークエラーが発生しました');
+            }
+        }
+
+        function updateXpDisplay(xp) {
+            const badge = document.getElementById('courses-xp-badge');
+            if (badge) { badge.classList.remove('hidden'); badge.classList.add('flex'); }
+            const valEl = document.getElementById('courses-xp-val');
+            if (valEl) valEl.textContent = xp.totalXp;
+            const streakEl = document.getElementById('courses-streak');
+            if (streakEl) streakEl.textContent = xp.streak;
+            const levelEl = document.getElementById('courses-level');
+            if (levelEl) levelEl.textContent = xp.level;
+            // XP bar: within current level
+            const levelThresholds = [0, 50, 150, 350, 700, 1200, 2000, 3000, 5000, 99999];
+            const lvl = xp.level;
+            const lo = levelThresholds[lvl - 1] || 0;
+            const hi = levelThresholds[lvl] || lo + 500;
+            const pct = Math.min(100, ((xp.totalXp - lo) / (hi - lo)) * 100);
+            const fill = document.getElementById('courses-xp-bar-fill');
+            if (fill) fill.style.width = pct + '%';
+        }
+
+        function renderCoursePath(courses, xp) {
+            const container = document.getElementById('courses-path');
+            if (!container) return;
+
+            if (courses.length === 0) {
+                container.innerHTML = `
+                    <div class="flex flex-col items-center justify-center py-16 text-center gap-4">
+                        <div class="text-6xl">🦉</div>
+                        <h3 class="text-lg font-black">Ready to learn English?</h3>
+                        <p class="text-sm opacity-50 max-w-xs">AIがあなたのレベルに合った英語コースを作成します。</p>
+                        <button onclick="generateCourse()" class="btn btn-primary btn-lg rounded-2xl font-black mt-2">
+                            ✨ コースを生成する
+                        </button>
+                    </div>`;
+                return;
+            }
+
+            // Render zigzag path
+            let html = '';
+            courses.forEach((course, ci) => {
+                const isFirst = ci === 0;
+                const prevCourse = ci > 0 ? courses[ci - 1] : null;
+                const isUnlocked = isFirst || (prevCourse && prevCourse.completedLessons >= prevCourse.totalLessons);
+                const isCompleted = course.totalLessons > 0 && course.completedLessons >= course.totalLessons;
+                const bg = isUnlocked ? course.color : '#9ca3af';
+
+                // Course header node
+                const side = ci % 2 === 0 ? 'mr-8' : 'ml-8';
+                html += `
+                <div class="course-node ${side} my-2">
+                    <div class="course-node-btn ${isUnlocked ? '' : 'locked'} ${isCompleted ? 'completed' : ''}"
+                         style="background:${bg}; border-color:${bg}88;"
+                         onclick="${isUnlocked ? `expandCourse(${course.id})` : `showLockedToast()`}"
+                         title="${escapeHtml(course.title)}">
+                        ${escapeHtml(course.iconEmoji)}
+                    </div>
+                    <div class="text-xs font-black mt-1 opacity-70 text-center max-w-[90px] truncate">${escapeHtml(course.title)}</div>
+                    ${isCompleted ? '<div class="text-[10px] text-success font-bold">✓ Complete</div>' : `<div class="text-[10px] opacity-40">${course.completedLessons}/${course.totalLessons}</div>`}
+                </div>
+                <div id="course-lessons-${course.id}" class="hidden w-full px-2 mb-2">
+                    ${renderLessonsRow(course, isUnlocked)}
+                </div>`;
+
+                if (ci < courses.length - 1) {
+                    html += `<div class="course-connector mx-auto"></div>`;
+                }
+            });
+
+            // Add "Generate next" button
+            html += `
+                <div class="flex justify-center mt-6 mb-4">
+                    <button onclick="generateCourse()" id="courses-gen-next-btn" class="btn btn-outline btn-primary rounded-2xl gap-2 font-bold">
+                        ✨ 次のコースを生成
+                    </button>
+                </div>`;
+
+            container.innerHTML = html;
+        }
+
+        function renderLessonsRow(course, courseUnlocked) {
+            if (!course.lessons || course.lessons.length === 0) return '';
+            let html = '<div class="flex flex-wrap gap-3 justify-center py-3">';
+            course.lessons.forEach((lesson, li) => {
+                const isUnlocked = courseUnlocked && (li === 0 || course.lessons[li - 1]?.isCompleted);
+                const isCompleted = lesson.isCompleted;
+                const emoji = isCompleted ? '⭐' : isUnlocked ? '📖' : '🔒';
+                html += `
+                    <div class="flex flex-col items-center gap-1">
+                        <div class="lesson-node ${isUnlocked ? '' : 'locked'} ${isCompleted ? 'completed' : ''}"
+                             style="background:${isCompleted ? '#dcfce7' : isUnlocked ? 'hsl(var(--b2))' : 'hsl(var(--b3))'}; border-color:${isCompleted ? '#86efac' : 'hsl(var(--bc)/0.1)'};"
+                             onclick="${isUnlocked ? `startLesson(${lesson.id})` : `showLockedToast()`}"
+                             title="${escapeHtml(lesson.title)}">
+                            ${emoji}
+                        </div>
+                        <div class="text-[10px] font-bold opacity-60 text-center max-w-[64px] truncate">${escapeHtml(lesson.title)}</div>
+                    </div>`;
+            });
+            html += '</div>';
+            return html;
+        }
+
+        function expandCourse(courseId) {
+            const el = document.getElementById('course-lessons-' + courseId);
+            if (!el) return;
+            el.classList.toggle('hidden');
+        }
+
+        function showLockedToast() {
+            const t = document.createElement('div');
+            t.className = 'fixed bottom-24 left-1/2 -translate-x-1/2 bg-base-300 text-xs font-bold px-4 py-2 rounded-full shadow-lg z-50';
+            t.textContent = '🔒 前のレッスンを完了してください';
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 2000);
+        }
+
+        async function generateCourse() {
+            const btn = document.getElementById('courses-gen-btn');
+            const status = document.getElementById('courses-gen-status');
+            const statusText = document.getElementById('courses-gen-status-text');
+            if (btn) btn.disabled = true;
+            if (status) status.style.display = 'flex';
+
+            const abortCtrl = new AbortController();
+            const TIMEOUT_MS = 100000;
+            const timeoutId = setTimeout(() => abortCtrl.abort(), TIMEOUT_MS);
+            // Hard fallback: force-hide after 110s no matter what
+            const hardHideId = setTimeout(() => {
+                if (status) status.style.display = 'none';
+                if (btn) btn.disabled = false;
+            }, 110000);
+
+            // Animated dots while waiting
+            let dotCount = 0;
+            const dotTimer = setInterval(() => {
+                if (!statusText || statusText.textContent.startsWith('コース') || statusText.textContent.startsWith('エラー')) return;
+                const base = statusText.textContent.replace(/\.+$/, '');
+                dotCount = (dotCount + 1) % 4;
+                statusText.textContent = base + '.'.repeat(dotCount);
+            }, 600);
+
+            try {
+                const response = await fetch('/api/courses/generate', { method: 'POST', signal: abortCtrl.signal });
+                if (!response.ok || !response.body) throw new Error(`Generate failed (${response.status})`);
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buf = '';
+                let doneReceived = false;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    const lines = buf.split('\n\n');
+                    buf = lines.pop() || '';
+                    for (const block of lines) {
+                        const [evtLine, dataLine] = block.split('\n');
+                        const evt = evtLine?.replace('event: ', '').trim();
+                        const data = dataLine?.replace('data: ', '').trim();
+                        if (evt === 'status' && statusText) {
+                            dotCount = 0;
+                            statusText.textContent = data;
+                        }
+                        if (evt === 'done') {
+                            doneReceived = true;
+                            clearTimeout(timeoutId);
+                            if (statusText) statusText.textContent = 'コース生成完了！';
+                            const container = document.getElementById('courses-path');
+                            if (container) delete container.dataset.loaded;
+                            await loadCourses();
+                        }
+                        if (evt === 'error') {
+                            clearTimeout(timeoutId);
+                            const msg = (() => { try { return JSON.parse(data || '{}').message; } catch { return data; } })();
+                            if (statusText) statusText.textContent = 'エラー: ' + (msg || '不明なエラー');
+                        }
+                    }
+                }
+                if (!doneReceived && statusText) statusText.textContent = 'タイムアウトまたは接続が切れました';
+            } catch (e) {
+                clearTimeout(timeoutId);
+                console.error('generateCourse', e);
+                if (statusText) statusText.textContent = e.name === 'AbortError' ? '生成がタイムアウトしました (2分)' : 'エラーが発生しました';
+            } finally {
+                clearInterval(dotTimer);
+                clearTimeout(timeoutId);
+                clearTimeout(hardHideId);
+                setTimeout(() => {
+                    if (btn) btn.disabled = false;
+                    if (status) status.style.display = 'none';
+                }, 2000);
+            }
+        }
+
+        async function startLesson(lessonId) {
+            try {
+                const r = await fetch(`/api/courses/lessons/${lessonId}/exercises`);
+                if (!r.ok) return;
+                const data = await r.json();
+                currentLesson = data;
+                currentExercises = data.exercises || [];
+                currentExIndex = 0;
+                exHearts = 3;
+                exCorrect = 0;
+                selectedOption = null;
+
+                if (currentExercises.length === 0) {
+                    showToast('このレッスンには練習問題がありません');
+                    return;
+                }
+                openExerciseModal();
+            } catch (e) { console.error('startLesson', e); }
+        }
+
+        function openExerciseModal() {
+            const modal = document.getElementById('exercise-modal');
+            if (modal) modal.classList.remove('hidden');
+            renderExercise();
+        }
+
+        function closeExerciseModal() {
+            const modal = document.getElementById('exercise-modal');
+            if (modal) modal.classList.add('hidden');
+            currentLesson = null;
+            currentExercises = [];
+            currentExIndex = 0;
+        }
+
+        function renderExercise() {
+            if (currentExIndex >= currentExercises.length) {
+                finishLesson();
+                return;
+            }
+            const ex = currentExercises[currentExIndex];
+            const total = currentExercises.length;
+            const pct = (currentExIndex / total) * 100;
+
+            document.getElementById('ex-progress-bar').style.width = pct + '%';
+            document.getElementById('ex-hearts').textContent = '❤️'.repeat(Math.max(0, exHearts)) + '🖤'.repeat(Math.max(0, 3 - exHearts));
+
+            const typeBadge = document.getElementById('ex-type-badge');
+            const typeLabels = { translate: '翻訳してください', multiple_choice: '正しい答えを選んでください', fill_blank: '空欄を埋めてください' };
+            typeBadge.textContent = typeLabels[ex.type] || ex.type;
+
+            document.getElementById('ex-question').textContent = ex.question || '';
+            document.getElementById('ex-feedback').classList.add('hidden');
+            document.getElementById('ex-check-btn').classList.remove('hidden');
+            document.getElementById('ex-next-btn').classList.add('hidden');
+            document.getElementById('ex-hint-btn').classList.remove('hidden');
+
+            selectedOption = null;
+
+            if (ex.type === 'translate') {
+                document.getElementById('ex-options').innerHTML = '';
+                const ta = document.getElementById('ex-translate-area');
+                ta.classList.remove('hidden');
+                const input = document.getElementById('ex-translate-input');
+                input.value = '';
+                input.disabled = false;
+                input.focus();
+                input.onkeydown = (e) => { if (e.key === 'Enter') checkExercise(); };
+            } else {
+                document.getElementById('ex-translate-area').classList.add('hidden');
+                const opts = ex.options || [];
+                document.getElementById('ex-options').innerHTML = opts.map((o, i) =>
+                    `<button class="exercise-option w-full" onclick="selectOption(this, ${i})"><span class="ex-opt-circle"></span><span>${escapeHtml(o)}</span></button>`
+                ).join('');
+            }
+        }
+
+        function selectOption(el, index) {
+            document.querySelectorAll('.exercise-option').forEach(b => {
+                b.classList.remove('selected');
+                const c = b.querySelector('.ex-opt-circle');
+                if (c) c.textContent = '';
+            });
+            el.classList.add('selected');
+            const circle = el.querySelector('.ex-opt-circle');
+            if (circle) circle.textContent = '✓';
+            const opts = currentExercises[currentExIndex]?.options || [];
+            selectedOption = opts[index];
+        }
+
+        function checkExercise() {
+            const ex = currentExercises[currentExIndex];
+            if (!ex) return;
+
+            let userAnswer = '';
+            if (ex.type === 'translate') {
+                userAnswer = (document.getElementById('ex-translate-input').value || '').trim();
+            } else {
+                userAnswer = selectedOption;
+            }
+
+            if (!userAnswer) {
+                showToast('回答を選択または入力してください');
+                return;
+            }
+
+            const isCorrect = normalizeAnswer(userAnswer) === normalizeAnswer(ex.answer);
+            const fb = document.getElementById('ex-feedback');
+            fb.classList.remove('hidden', 'bg-success/10', 'bg-error/10', 'text-success', 'text-error');
+
+            const getOptText = b => b.querySelectorAll('span')[1]?.textContent.trim() ?? b.textContent.trim();
+            if (isCorrect) {
+                exCorrect++;
+                fb.className = 'rounded-2xl p-4 text-sm font-bold bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-300';
+                fb.textContent = '✓ 正解！' + (ex.hint ? ' ' + ex.hint : '');
+                document.querySelectorAll('.exercise-option').forEach(b => {
+                    if (getOptText(b) === ex.answer) { b.classList.add('correct'); const c = b.querySelector('.ex-opt-circle'); if(c) c.textContent='✓'; }
+                });
+            } else {
+                exHearts--;
+                document.getElementById('ex-hearts').textContent = '❤️'.repeat(Math.max(0, exHearts)) + '🖤'.repeat(Math.max(0, 3 - exHearts));
+                fb.className = 'rounded-2xl p-4 text-sm font-bold bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-300';
+                fb.textContent = '✗ 正解は: ' + ex.answer;
+                document.querySelectorAll('.exercise-option').forEach(b => {
+                    if (getOptText(b) === ex.answer) { b.classList.add('correct'); const c = b.querySelector('.ex-opt-circle'); if(c) c.textContent='✓'; }
+                    if (b.classList.contains('selected')) { b.classList.add('wrong'); const c = b.querySelector('.ex-opt-circle'); if(c) c.textContent='✗'; }
+                });
+                if (ex.type === 'translate') {
+                    const inp = document.getElementById('ex-translate-input');
+                    inp.disabled = true;
+                    inp.classList.add('border-error');
+                }
+                if (exHearts <= 0) {
+                    setTimeout(() => { finishLesson(true); }, 800);
+                    return;
+                }
+            }
+
+            document.getElementById('ex-check-btn').classList.add('hidden');
+            document.getElementById('ex-next-btn').classList.remove('hidden');
+        }
+
+        function normalizeAnswer(s) {
+            return (s || '').toLowerCase().replace(/[^\w぀-ヿ一-鿿]/g, '').trim();
+        }
+
+        function showExHint() {
+            const ex = currentExercises[currentExIndex];
+            if (!ex?.hint) { showToast('ヒントがありません'); return; }
+            showToast('💡 ' + ex.hint);
+        }
+
+        function nextExercise() {
+            currentExIndex++;
+            renderExercise();
+        }
+
+        async function finishLesson(failed = false) {
+            const modal = document.getElementById('exercise-modal');
+            if (modal) modal.classList.add('hidden');
+
+            const total = currentExercises.length;
+            const score = total > 0 ? Math.round((exCorrect / total) * 100) : 0;
+
+            if (!failed || score >= 50) {
+                try {
+                    const r = await fetch(`/api/courses/lessons/${currentLesson.id}/complete?score=${score}`, { method: 'POST' });
+                    if (r.ok) {
+                        const data = await r.json();
+                        showLessonComplete(data.xpEarned || 0, score, failed);
+                        updateXpDisplay({ totalXp: data.totalXp, streak: 0, level: data.level });
+                        const container = document.getElementById('courses-path');
+                        if (container) delete container.dataset.loaded;
+                        await loadCourses();
+                        return;
+                    }
+                } catch (e) { console.error(e); }
+            }
+
+            showLessonComplete(0, score, true);
+        }
+
+        function showLessonComplete(xpEarned, score, failed) {
+            const lc = document.getElementById('lesson-complete-modal');
+            if (!lc) return;
+            document.getElementById('lc-emoji').textContent = failed ? '😅' : score >= 80 ? '🎉' : '✅';
+            document.getElementById('lc-subtitle').textContent = failed ? 'もう一度挑戦してみましょう！' : score >= 80 ? '素晴らしい！' : 'よくできました！';
+            document.getElementById('lc-xp').textContent = '+' + xpEarned;
+            document.getElementById('lc-score').textContent = score + '%';
+            lc.classList.remove('hidden');
+        }
+
+        function closeLessonComplete() {
+            const lc = document.getElementById('lesson-complete-modal');
+            if (lc) lc.classList.add('hidden');
+            currentLesson = null;
+            currentExercises = [];
+        }
+
+        function showToast(msg) {
+            const t = document.createElement('div');
+            t.className = 'fixed bottom-24 left-1/2 -translate-x-1/2 bg-base-300 text-xs font-bold px-4 py-2 rounded-full shadow-lg z-[200]';
+            t.textContent = msg;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 2000);
+        }
+        // ---- End Courses Functions ----
+
         // === End Slide Management ===
 
         window.addEventListener('DOMContentLoaded', () => {
@@ -2391,6 +3152,111 @@ function handleSuggestionAction(command, payload) {
                 setTimeout(() => { if(toastArea.innerHTML.includes('请求超时')) toastArea.innerHTML = ''; }, 5000);
             }
         });
+
+        let newsDetailSwiper = null;
+        function loadNewsBriefingSlide(force = false) {
+            const panel = document.getElementById('news-slide-content');
+            if (!panel) return;
+            if (!force && panel.querySelector('.news-detail-swiper')) {
+                if (window.newsDetailSwiper) window.newsDetailSwiper.update();
+                return;
+            }
+            panel.innerHTML = `
+                <div class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4">
+                    <span class="loading loading-spinner loading-lg opacity-20"></span>
+                    <p class="text-xs font-bold uppercase tracking-widest opacity-60">Loading latest news briefing...</p>
+                </div>
+            `;
+            const url = force ? '/api/assistant/news/list-html?force=true' : '/api/assistant/news/list-html';
+            fetch(url)
+                .then(res => {
+                    if (res.status === 401) {
+                        window.location.href = '/login';
+                        return;
+                    }
+                    return res.text();
+                })
+                .then(html => {
+                    if (!html) return;
+                    panel.innerHTML = html;
+                    if (force) {
+                        // ホーム画面のニュースカードも最新キャッシュで再取得して同期する
+                        document.body.dispatchEvent(new Event('newsUpdated'));
+                    }
+                    setTimeout(() => {
+                        window.newsDetailSwiper = new Swiper('.news-detail-swiper', {
+                            direction: 'horizontal',
+                            slidesPerView: 1,
+                            spaceBetween: 20,
+                            grabCursor: true,
+                            pagination: {
+                                el: '.news-detail-swiper .swiper-pagination',
+                                clickable: true,
+                            },
+                            nested: true,
+                        });
+                    }, 50);
+                })
+                .catch(err => {
+                    panel.innerHTML = `<div class="p-4 text-error text-center font-bold">Failed to load news briefing: ${err.message}</div>`;
+                });
+        }
+
+        function showNewsDecode(title, category, summary) {
+            const modal = document.getElementById('news-decode-modal');
+            const titleEl = document.getElementById('decode-news-title');
+            const categoryEl = document.getElementById('decode-news-category');
+            const summaryEl = document.getElementById('decode-news-summary');
+            const loading = document.getElementById('decode-news-loading');
+            const result = document.getElementById('decode-news-result');
+
+            if (!modal) return;
+
+            titleEl.textContent = title;
+            categoryEl.textContent = category;
+            summaryEl.textContent = summary;
+
+            modal.showModal();
+
+            const cacheKey = 'newsDecodeCache:' + title;
+            const cached = localStorage.getItem(cacheKey);
+            if (cached) {
+                loading.classList.add('hidden');
+                result.classList.remove('hidden');
+                result.innerHTML = typeof marked !== 'undefined' ? marked.parse(cached) : cached;
+                return;
+            }
+
+            loading.classList.remove('hidden');
+            result.classList.add('hidden');
+            result.innerHTML = '';
+
+            fetch('/api/assistant/news/decode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, category, summary })
+            })
+            .then(res => {
+                if (res.status === 401) {
+                    window.location.href = '/login';
+                    return;
+                }
+                if (!res.ok) throw new Error('Failed to decode');
+                return res.json();
+            })
+            .then(data => {
+                if (!data) return;
+                try { localStorage.setItem(cacheKey, data.content); } catch (e) {}
+                loading.classList.add('hidden');
+                result.classList.remove('hidden');
+                result.innerHTML = typeof marked !== 'undefined' ? marked.parse(data.content) : data.content;
+            })
+            .catch(err => {
+                loading.classList.add('hidden');
+                result.classList.remove('hidden');
+                result.innerHTML = `<p class="text-error text-center font-bold">深度解读失败: ${err.message}</p>`;
+            });
+        }
     </script>
     <style>
         #notes-slide-list, #notes-slide-editor { transition: transform 0.4s cubic-bezier(0.25, 0.1, 0.25, 1); will-change: transform; }
@@ -2482,6 +3348,31 @@ function handleSuggestionAction(command, payload) {
                                 <div class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4">
                                     <span class="loading loading-spinner loading-lg opacity-20"></span>
                                     <p class="text-xl font-medium text-center" data-i18n="loading-briefing">Loading your morning briefing...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- News Briefing Slide -->
+                    <div class="swiper-slide" id="news-slide" data-slide-id="news">
+                        <div class="shell-header">
+                            <div class="shell-badge">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4 text-primary"><path stroke-linecap="round" stroke-linejoin="round" d="M12 7.5h1.5m-1.5 3h1.5m-7.5 3h7.5m-7.5 3h7.5m3-9h3.375c.621 0 1.125.504 1.125 1.125V18a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18V6c0-1.1.9-2 2-2h9v3.75c0 .621.504 1.125 1.125 1.125H18M3 18V6c0-1.1.9-2 2-2h9" /></svg>
+                                <span data-i18n="news">News Briefing</span>
+                            </div>
+                            <div class="right-actions">
+                                <button onclick="loadNewsBriefingSlide(true)" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Refresh News">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                </button>
+                                <button onclick="closeSlide('news')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="news-slide-panel" class="flex flex-col flex-1 relative bg-base-200/30 overflow-hidden">
+                            <div id="news-slide-content" class="flex-1 w-full h-full flex flex-col p-4 md:p-8">
+                                <div class="flex flex-col items-center justify-center h-full text-base-content/30 space-y-4">
+                                    <span class="loading loading-spinner loading-lg opacity-20"></span>
+                                    <p class="text-sm font-medium tracking-widest uppercase">Loading News...</p>
                                 </div>
                             </div>
                         </div>
@@ -2850,6 +3741,154 @@ function handleSuggestionAction(command, payload) {
                             </div>
                         </div>
                     </div>
+                    <!-- Vocab slide -->
+                    <div class="swiper-slide" id="vocab-slide">
+                        <div class="shell-header">
+                            <div class="shell-badge">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" /></svg>
+                                <span id="vocab-header-label">Vocab · <span id="vocab-due-count">0</span> due</span>
+                            </div>
+                            <div class="right-actions">
+                                <button onclick="closeSlide('vocab')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- Tab Bar -->
+                        <div class="flex tabs tabs-boxed bg-base-200/50 mx-4 mt-2 p-0.5 rounded-xl justify-center gap-0">
+                            <button onclick="switchVocabTab('study')" id="vocab-tab-study" class="tab tab-sm rounded-lg px-4 font-bold text-xs active bg-primary text-primary-content">Study</button>
+                            <button onclick="switchVocabTab('cards')" id="vocab-tab-cards" class="tab tab-sm rounded-lg px-4 font-bold text-xs">Cards</button>
+                            <button onclick="switchVocabTab('add')" id="vocab-tab-add" class="tab tab-sm rounded-lg px-4 font-bold text-xs">Add</button>
+                        </div>
+                        <div id="vocab-panel" class="flex flex-col flex-1 min-h-0">
+                            <!-- Study Tab -->
+                            <div id="vocab-study-view" class="flex-1 flex flex-col min-h-0 p-4 md:p-6 overflow-y-auto custom-scrollbar">
+                                <div id="vocab-study-content" class="flex-1 flex flex-col items-center justify-center max-w-lg mx-auto w-full">
+                                    <div id="vocab-progress-bar" class="w-full mb-4 bg-base-200 rounded-full h-2 overflow-hidden hidden">
+                                        <div id="vocab-progress-fill" class="h-full bg-primary rounded-full transition-all duration-300" style="width:0%"></div>
+                                    </div>
+                                    <div id="vocab-card-container" class="w-full flex-1 flex items-center justify-center">
+                                        <!-- Card rendered by JS -->
+                                    </div>
+                                    <div id="vocab-done-screen" class="hidden flex-col items-center justify-center py-12 text-center">
+                                        <div class="text-4xl mb-4 opacity-30">&#x1F389;</div>
+                                        <h3 class="text-lg font-black mb-1">All Done!</h3>
+                                        <p class="text-sm opacity-50 mb-6">No more cards due for review.</p>
+                                        <button onclick="loadVocabReview()" class="btn btn-primary btn-sm rounded-xl">Refresh</button>
+                                    </div>
+                                    <div id="vocab-hint" class="text-xs opacity-40 text-center mt-3 flex items-center gap-4">
+                                        <span class="text-error">&#x2190; Wrong</span>
+                                        <span class="opacity-30">|</span>
+                                        <span>Tap to flip</span>
+                                        <span class="opacity-30">|</span>
+                                        <span class="text-success">Correct &#x2192;</span>
+                                    </div>
+                                    <div id="vocab-actions" class="flex items-center gap-3 mt-3 hidden">
+                                        <button onclick="submitVocabResult('wrong')" class="btn btn-outline btn-error btn-sm rounded-xl px-6 font-bold">&#x2717; Wrong</button>
+                                        <button onclick="flipVocabCard()" class="btn btn-ghost btn-sm rounded-xl font-bold">Flip</button>
+                                        <button onclick="submitVocabResult('correct')" class="btn btn-outline btn-success btn-sm rounded-xl px-6 font-bold">&#x2713; Correct</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Cards Tab -->
+                            <div id="vocab-cards-view" class="hidden flex-1 flex-col min-h-0 p-4 md:p-6 overflow-y-auto custom-scrollbar">
+                                <div class="max-w-3xl mx-auto w-full space-y-3">
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <input type="text" id="vocab-search-input" placeholder="Search cards..." oninput="filterVocabCards(this.value)" class="input input-sm input-bordered flex-1 rounded-xl text-xs" />
+                                        <span id="vocab-card-count" class="text-xs opacity-40 font-bold">0</span>
+                                    </div>
+                                    <div id="vocab-stats-container" class="mb-3"></div>
+                                    <div id="vocab-cards-list" class="space-y-2">
+                                        <div class="flex items-center justify-center py-8 opacity-30"><span class="loading loading-spinner loading-sm"></span></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Add Tab -->
+                            <div id="vocab-add-view" class="hidden flex-1 flex-col min-h-0 p-4 md:p-6 overflow-y-auto custom-scrollbar">
+                                <div class="max-w-lg mx-auto w-full">
+                                    <div class="bg-base-100 rounded-2xl border border-base-content/10 p-6 shadow-sm">
+                                        <h3 class="text-sm font-bold mb-4">Add New Card</h3>
+                                        <form id="vocab-add-form" onsubmit="return submitVocabAddForm(event)" class="space-y-3">
+                                            <input type="text" name="word" placeholder="Word *" required class="input input-bordered w-full rounded-xl text-sm" />
+                                            <input type="text" name="translation" placeholder="Translation *" required class="input input-bordered w-full rounded-xl text-sm" />
+                                            <input type="text" name="reading" placeholder="Reading (optional)" class="input input-bordered w-full rounded-xl text-sm" />
+                                            <textarea name="example" placeholder="Example sentence" rows="2" class="textarea textarea-bordered w-full rounded-xl text-sm"></textarea>
+                                            <input type="text" name="exampleTranslation" placeholder="Example translation" class="input input-bordered w-full rounded-xl text-sm" />
+                                            <input type="text" name="category" placeholder="Category (e.g. JLPT N5, HSK1)" class="input input-bordered w-full rounded-xl text-sm" />
+                                            <input type="text" name="tags" placeholder="Tags (comma separated)" class="input input-bordered w-full rounded-xl text-sm" />
+                                            <button type="submit" class="btn btn-primary w-full rounded-xl">Add Card</button>
+                                        </form>
+                                    </div>
+                                    <!-- Edit Modal -->
+                                    <div id="vocab-edit-modal" class="modal">
+                                        <div class="modal-box max-w-lg">
+                                            <h3 class="font-bold text-sm mb-4">Edit Card</h3>
+                                            <form id="vocab-edit-form" onsubmit="return submitVocabEditForm(event)" class="space-y-3">
+                                                <input type="hidden" id="vocab-edit-id" />
+                                                <input type="text" id="vocab-edit-word" placeholder="Word *" required class="input input-bordered w-full rounded-xl text-sm" />
+                                                <input type="text" id="vocab-edit-translation" placeholder="Translation *" required class="input input-bordered w-full rounded-xl text-sm" />
+                                                <input type="text" id="vocab-edit-reading" placeholder="Reading" class="input input-bordered w-full rounded-xl text-sm" />
+                                                <textarea id="vocab-edit-example" placeholder="Example sentence" rows="2" class="textarea textarea-bordered w-full rounded-xl text-sm"></textarea>
+                                                <input type="text" id="vocab-edit-exampleTranslation" placeholder="Example translation" class="input input-bordered w-full rounded-xl text-sm" />
+                                                <input type="text" id="vocab-edit-category" placeholder="Category" class="input input-bordered w-full rounded-xl text-sm" />
+                                                <input type="text" id="vocab-edit-tags" placeholder="Tags" class="input input-bordered w-full rounded-xl text-sm" />
+                                                <div class="flex gap-2 justify-end">
+                                                    <button type="button" onclick="closeVocabEditModal()" class="btn btn-ghost btn-sm">Cancel</button>
+                                                    <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                                                </div>
+                                            </form>
+                                        </div>
+                                        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Courses slide (Duolingo-style) -->
+                    <div class="swiper-slide" id="courses-slide">
+                        <div class="shell-header">
+                            <div class="shell-badge">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M4.26 10.147a60.438 60.438 0 0 0-.491 6.347A48.627 48.627 0 0 1 12 20.904a48.627 48.627 0 0 1 8.232-4.41 60.46 60.46 0 0 0-.491-6.347m-15.482 0a50.57 50.57 0 0 0-2.658-.813A59.906 59.906 0 0 1 12 3.493a59.903 59.903 0 0 1 10.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0 1 12 13.489a50.702 50.702 0 0 1 7.74-3.342M6.75 15a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm0 0v-3.675A55.378 55.378 0 0 1 12 8.443m-7.007 11.55A5.981 5.981 0 0 0 6.75 15.75v-1.5" /></svg>
+                                <span>English Courses</span>
+                            </div>
+                            <div class="right-actions flex items-center gap-1">
+                                <!-- XP display -->
+                                <div id="courses-xp-badge" class="hidden items-center gap-1.5 px-3 py-1 bg-yellow-400/20 rounded-full text-xs font-bold text-yellow-700 dark:text-yellow-300">
+                                    <span>⚡</span><span id="courses-xp-val">0</span> XP
+                                </div>
+                                <button onclick="generateCourse()" id="courses-gen-btn" class="btn btn-ghost btn-sm btn-circle text-primary" title="AIでコース生成">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                </button>
+                                <button onclick="closeSlide('courses')" class="btn btn-ghost btn-sm btn-circle opacity-60 hover:opacity-100" title="Close">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- XP bar + streak -->
+                        <div class="px-4 pt-2 pb-1 flex items-center gap-3">
+                            <div class="flex items-center gap-1 text-xs font-bold opacity-50">🔥 <span id="courses-streak">0</span></div>
+                            <div class="flex-1 xp-bar">
+                                <div id="courses-xp-bar-fill" class="xp-bar-fill" style="width:0%"></div>
+                            </div>
+                            <div class="text-xs font-black opacity-60">Lv.<span id="courses-level">1</span></div>
+                        </div>
+
+                        <!-- Course path (scrollable) -->
+                        <div id="courses-path" class="flex-1 overflow-y-auto custom-scrollbar px-4 py-4">
+                            <!-- Rendered by JS -->
+                            <div class="flex items-center justify-center py-16 opacity-30">
+                                <span class="loading loading-spinner loading-md"></span>
+                            </div>
+                        </div>
+
+                        <!-- Gen status toast -->
+                        <div id="courses-gen-status" class="absolute bottom-20 left-1/2 -translate-x-1/2 bg-base-300 text-xs font-bold px-4 py-2 rounded-full shadow-lg z-50 items-center gap-2" style="display:none">
+                            <span class="loading loading-spinner loading-xs"></span>
+                            <span id="courses-gen-status-text">生成中...</span>
+                        </div>
+                    </div>
+
                     <div class="swiper-slide">
                         <div class="shell-header">
                             <div class="shell-badge"><span data-i18n="projects-title">Projects</span></div>
@@ -3177,6 +4216,44 @@ function handleSuggestionAction(command, payload) {
     <!-- Modals component loaded via HTMX -->
     <div hx-get="/components/modals.html" hx-trigger="load" hx-swap="outerHTML"></div>
 
+    <!-- News Decode Modal -->
+    <dialog id="news-decode-modal" class="modal backdrop-blur-md">
+        <div class="modal-box max-w-2xl bg-base-100/90 border border-base-content/10 shadow-2xl rounded-3xl p-6 md:p-8 relative overflow-hidden">
+            <div class="absolute -top-24 -right-24 w-48 h-48 bg-primary/10 rounded-full blur-3xl pointer-events-none"></div>
+            <div class="absolute -bottom-24 -left-24 w-48 h-48 bg-secondary/10 rounded-full blur-3xl pointer-events-none"></div>
+            
+            <div class="flex justify-between items-center mb-6 relative">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-black">AI</div>
+                    <div>
+                        <h3 class="font-black text-sm uppercase tracking-widest opacity-40">AI Deep Decode</h3>
+                        <span id="decode-news-category" class="badge badge-primary badge-xs font-bold uppercase mt-0.5">Category</span>
+                    </div>
+                </div>
+                <form method="dialog">
+                    <button class="btn btn-sm btn-circle btn-ghost opacity-60 hover:opacity-100">✕</button>
+                </form>
+            </div>
+            
+            <div class="space-y-6 relative">
+                <div>
+                    <h2 id="decode-news-title" class="text-lg md:text-xl font-black text-base-content leading-snug">News Title</h2>
+                    <p id="decode-news-summary" class="text-xs md:text-sm text-base-content/50 mt-2 italic leading-relaxed border-l-2 border-base-content/20 pl-3">News Summary</p>
+                </div>
+                
+                <div class="pt-6 border-t border-base-content/5">
+                    <div id="decode-news-loading" class="flex flex-col items-center justify-center py-12 gap-4 text-primary">
+                        <span class="loading loading-infinity loading-lg"></span>
+                        <p class="text-xs font-bold uppercase tracking-widest animate-pulse">Analyzing global impact...</p>
+                    </div>
+                    <div id="decode-news-result" class="prose prose-sm max-w-none text-base-content/80 max-h-[300px] overflow-y-auto custom-scrollbar hidden">
+                        <!-- Content -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </dialog>
+
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
@@ -3184,6 +4261,56 @@ function handleSuggestionAction(command, payload) {
         });
       }
     </script>
+
+    <!-- Exercise modal (global overlay, outside Swiper to avoid transform clipping) -->
+    <div id="exercise-modal" class="hidden fixed inset-0 bg-base-100 z-[200] flex flex-col">
+        <!-- Header -->
+        <div class="flex items-center gap-3 px-4 py-3 border-b border-base-content/10">
+            <button onclick="closeExerciseModal()" class="btn btn-ghost btn-sm btn-circle">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+            <div class="flex-1 bg-base-200 rounded-full h-3 overflow-hidden">
+                <div id="ex-progress-bar" class="h-full bg-primary rounded-full transition-all duration-300" style="width:0%"></div>
+            </div>
+            <div class="text-xs font-bold text-error flex items-center gap-1" id="ex-hearts">❤️❤️❤️</div>
+        </div>
+        <!-- Exercise content -->
+        <div class="flex-1 overflow-y-auto flex flex-col items-center justify-start px-4 py-6 max-w-lg mx-auto w-full">
+            <div id="ex-type-badge" class="text-xs font-black uppercase tracking-widest opacity-40 mb-3"></div>
+            <div id="ex-question" class="text-xl font-black text-center mb-6 leading-snug"></div>
+            <div id="ex-options" class="w-full space-y-3"></div>
+            <div id="ex-translate-area" class="hidden w-full">
+                <input id="ex-translate-input" type="text" class="input input-bordered w-full text-base rounded-xl" placeholder="Type your answer..." />
+            </div>
+        </div>
+        <!-- Footer: hint + check button -->
+        <div class="px-4 pb-6 max-w-lg mx-auto w-full space-y-3">
+            <div id="ex-feedback" class="hidden rounded-2xl p-4 text-sm font-bold"></div>
+            <div class="flex gap-3">
+                <button onclick="showExHint()" id="ex-hint-btn" class="btn btn-ghost btn-sm rounded-xl flex-1 opacity-60">💡 Hint</button>
+                <button onclick="checkExercise()" id="ex-check-btn" class="btn btn-primary rounded-xl flex-1 font-bold">Check</button>
+                <button onclick="nextExercise()" id="ex-next-btn" class="hidden btn btn-success rounded-xl flex-1 font-bold">Continue →</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lesson complete modal (global overlay, outside Swiper) -->
+    <div id="lesson-complete-modal" class="hidden fixed inset-0 bg-base-100/95 backdrop-blur z-[201] flex flex-col items-center justify-center text-center p-8">
+        <div id="lc-emoji" class="text-6xl mb-4">🎉</div>
+        <h2 class="text-2xl font-black mb-2">Lesson Complete!</h2>
+        <p class="opacity-60 text-sm mb-6" id="lc-subtitle">Great work!</p>
+        <div class="flex items-center gap-4 mb-8">
+            <div class="text-center">
+                <div class="text-3xl font-black text-yellow-500" id="lc-xp">+0</div>
+                <div class="text-xs opacity-40 uppercase font-bold">XP earned</div>
+            </div>
+            <div class="text-center">
+                <div class="text-3xl font-black text-primary" id="lc-score">100%</div>
+                <div class="text-xs opacity-40 uppercase font-bold">Score</div>
+            </div>
+        </div>
+        <button onclick="closeLessonComplete()" class="btn btn-primary btn-lg rounded-2xl px-10 font-black">Continue</button>
+    </div>
 
 </body>
 </html>

@@ -21,15 +21,17 @@ public class CliExecutorService : ICliExecutor, IDisposable
 {
     private readonly ILogger<CliExecutorService> _logger;
     private readonly IConfiguration _config;
+    private readonly LmStudioProvider? _lmStudio;
 
     // Pre-warmed processes: started but stdin not yet written, ready for the next request.
     // Key = "{provider}_{workingDir}_{outputFormat}"
     private readonly ConcurrentDictionary<string, Process> _warmPool = new();
 
-    public CliExecutorService(ILogger<CliExecutorService> logger, IConfiguration config)
+    public CliExecutorService(ILogger<CliExecutorService> logger, IConfiguration config, IServiceProvider serviceProvider)
     {
         _logger = logger;
         _config = config;
+        try { _lmStudio = serviceProvider.GetRequiredService<LmStudioProvider>(); } catch { }
     }
 
     private string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "antigravity";
@@ -74,10 +76,17 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
     public async Task<CliResult> ExecuteAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null)
     {
+        if (provider?.ToLowerInvariant() == "lmstudio" && _lmStudio != null)
+        {
+            var response = await _lmStudio.GetResponseAsync(prompt, systemPrompt ?? "");
+            return new CliResult(response, "lmstudio", 0, 0, 0);
+        }
+
+        var effectiveProvider = provider ?? DefaultProvider;
         CliResult result;
         try
         {
-            result = await ExecuteSingleShotAsync(prompt, provider, systemPrompt, userPrompt, workingDirectory, agentMode, outputFormat);
+            result = await ExecuteSingleShotAsync(prompt, effectiveProvider, systemPrompt, userPrompt, workingDirectory, agentMode, outputFormat);
         }
         catch (Exception ex)
         {
@@ -101,6 +110,13 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
     public async IAsyncEnumerable<StreamChunk> ExecuteStreamAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null)
     {
+        if (provider?.ToLowerInvariant() == "lmstudio" && _lmStudio != null)
+        {
+            await foreach (var chunk in _lmStudio.GetResponseStreamAsync(prompt, systemPrompt ?? ""))
+                yield return new StreamChunk(chunk, "lmstudio", 0, 0, 0);
+            yield break;
+        }
+
         var targetProvider = (provider ?? DefaultProvider).ToLowerInvariant();
         var useJsonStreaming = targetProvider is "claude" or "claudecode" or "copilot" or "codex" or "opencode";
 

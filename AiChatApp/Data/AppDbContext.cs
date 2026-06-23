@@ -29,6 +29,7 @@ public class AppDbContext : DbContext
     public DbSet<PromptVariant> PromptVariants => Set<PromptVariant>();
     public DbSet<VocabCard> VocabCards => Set<VocabCard>();
     public DbSet<Course> Courses => Set<Course>();
+    public DbSet<FileSnapshot> FileSnapshots => Set<FileSnapshot>();
     public DbSet<Lesson> Lessons => Set<Lesson>();
     public DbSet<UserLessonProgress> UserLessonProgresses => Set<UserLessonProgress>();
 

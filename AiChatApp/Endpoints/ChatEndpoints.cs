@@ -590,5 +590,48 @@ public static class ChatEndpoints
                 await SendEvent("done", "");
             }
         }).DisableAntiforgery();
+
+        // Plan Mode endpoint: AI generates a plan without executing
+        group.MapPost("/chat/plan", async (HttpContext context, AppDbContext db, AiService ai, ClaimsPrincipal user) =>
+        {
+            var form = await context.Request.ReadFormAsync();
+            var content = form["content"].ToString();
+            if (string.IsNullOrWhiteSpace(content))
+                content = "";
+            var provider = form["provider"].ToString();
+            int? sessionId = int.TryParse(form["sessionId"].ToString(), out var sid) ? sid : null;
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var userDefaultProvider = user.FindFirstValue("DefaultProvider") ?? "";
+
+            context.Response.Headers.Append("Content-Type", "text/event-stream");
+            context.Response.Headers.Append("Cache-Control", "no-cache");
+            context.Response.Headers.Append("X-Accel-Buffering", "no");
+
+            ChatSession? session = null;
+            if (sessionId.HasValue)
+            {
+                session = await db.ChatSessions.Include(s => s.Project).FirstOrDefaultAsync(s => s.Id == sessionId.Value && s.UserId == userId);
+                provider = string.IsNullOrEmpty(provider)
+                    ? (session?.PreferredProvider ?? (string.IsNullOrEmpty(userDefaultProvider) ? ai.DefaultProvider : userDefaultProvider))
+                    : provider;
+            }
+            else
+            {
+                provider = string.IsNullOrEmpty(provider)
+                    ? (string.IsNullOrEmpty(userDefaultProvider) ? ai.DefaultProvider : userDefaultProvider)
+                    : provider;
+            }
+
+            var systemPrompt = await ai.GetPlanAsync(content, "", userId, sessionId, provider);
+            // The plan content comes back as AI response text — stream it
+            await foreach (var chunk in ai.GetResponseStreamAsync(content, userId, sessionId, provider))
+            {
+                var data = chunk.Replace("\n", "\\n").Replace("\r", "\\r");
+                await context.Response.WriteAsync($"data: {data}\n\n");
+                await context.Response.Body.FlushAsync();
+            }
+            await context.Response.WriteAsync("data: [PLAN_COMPLETE]\n\n");
+            await context.Response.Body.FlushAsync();
+        }).DisableAntiforgery();
     }
 }

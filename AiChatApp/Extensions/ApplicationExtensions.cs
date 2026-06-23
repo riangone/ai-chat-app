@@ -412,6 +412,31 @@ public static class ApplicationExtensions
         command.CommandText = "CREATE INDEX IF NOT EXISTS IX_UserLessonProgresses_UserId ON UserLessonProgresses (UserId, LessonId);";
         command.ExecuteNonQuery();
 
+        // Add PlanModeEnabled to ChatSessions if missing
+        command.CommandText = "PRAGMA table_info(ChatSessions);";
+        var sessionColumns2 = new List<string>();
+        using (var reader2 = command.ExecuteReader())
+        {
+            while (reader2.Read()) sessionColumns2.Add(reader2.GetString(1));
+        }
+        if (!sessionColumns2.Contains("PlanModeEnabled"))
+        {
+            command.CommandText = "ALTER TABLE ChatSessions ADD COLUMN PlanModeEnabled INTEGER NOT NULL DEFAULT 0;";
+            command.ExecuteNonQuery();
+        }
+
+        // FileSnapshots table
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS FileSnapshots (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                SessionId INTEGER NOT NULL,
+                MessageId INTEGER NOT NULL DEFAULT 0,
+                ProjectPath TEXT NOT NULL,
+                SnapshotCommitHash TEXT NOT NULL,
+                CreatedAt TEXT NOT NULL
+            );";
+        command.ExecuteNonQuery();
+
         // Invalidate policy cache when policy files change
         var policiesPath = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies");
         if (Directory.Exists(policiesPath))
