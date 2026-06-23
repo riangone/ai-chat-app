@@ -46,7 +46,6 @@ public static class ServiceExtensions
         services.AddSingleton<ProactiveBrainService>();
         services.AddSingleton<WebPushService>();
         services.AddSingleton<NewsCacheService>();
-        services.AddSingleton<ShadowGitService>();
         services.AddHttpClient<LmStudioProvider>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(300);

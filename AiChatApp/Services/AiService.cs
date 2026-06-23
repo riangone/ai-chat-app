@@ -17,8 +17,6 @@ public class AiService
     private readonly ICliExecutor _cliExecutor;
     private readonly IConfiguration _config;
     private readonly ILogger<AiService> _logger;
-    private readonly ShadowGitService? _shadowGit;
-
     private readonly AiPromptService _promptService;
     private readonly AiResponseProcessor _responseProcessor;
     private readonly AiCollaborationService _collaborationService;
@@ -35,8 +33,7 @@ public class AiService
         AiResponseProcessor responseProcessor,
         AiCollaborationService collaborationService,
         AssistantToolService toolService,
-        HeadroomCompressionService headroom,
-        IServiceProvider serviceProvider)
+        HeadroomCompressionService headroom)
     {
         _db = db;
         _skillManager = skillManager;
@@ -48,7 +45,6 @@ public class AiService
         _collaborationService = collaborationService;
         _toolService = toolService;
         _headroom = headroom;
-        try { _shadowGit = serviceProvider.GetRequiredService<ShadowGitService>(); } catch { }
     }
 
     public string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "antigravity";
@@ -99,9 +95,6 @@ public class AiService
 
         await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", result.Model, targetProvider, systemPrompt ?? "Default Assistant", fullPrompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
 
-        if (session?.ProjectId != null && session.Project != null)
-            await CreateSnapshotAsync(session);
-
         var toolResults = await _toolService.ExecuteToolCallsAsync(result.Output, userId);
         var cleanResponse = AssistantToolService.StripToolCalls(result.Output);
         var toolHtml = AssistantToolService.BuildResultsHtml(toolResults);
@@ -118,13 +111,6 @@ public class AiService
         }
 
         var result = await _collaborationService.CooperateAsync(task, userId, messageId, chatSessionId, provider, selectedAgentNames, onStepComplete, processType);
-
-        if (chatSessionId.HasValue)
-        {
-            var coopSession = await _db.ChatSessions.Include(s => s.Project).FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
-            if (coopSession?.ProjectId != null && coopSession.Project != null)
-                await CreateSnapshotAsync(coopSession);
-        }
 
         return result;
     }
@@ -217,9 +203,6 @@ public class AiService
 
         await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", extractedModel ?? targetProvider, targetProvider, systemPrompt ?? "Default Assistant", fullPrompt, fullResponse.ToString(), (int)sw.ElapsedMilliseconds, pt, ct, tt);
 
-        if (session?.ProjectId != null && session.Project != null)
-            await CreateSnapshotAsync(session);
-
         var toolResults = await _toolService.ExecuteToolCallsAsync(fullResponse.ToString(), userId);
         var toolHtml = AssistantToolService.BuildResultsHtml(toolResults);
         if (!string.IsNullOrEmpty(toolHtml)) yield return toolHtml;
@@ -286,35 +269,6 @@ Output a plan in this exact JSON format:
 }}";
         var result = await _cliExecutor.ExecuteAsync(planPrompt, targetProvider, systemPrompt: systemPrompt, userPrompt: userMessage);
         return result.Output;
-    }
-
-    private async Task CreateSnapshotAsync(ChatSession session)
-    {
-        if (_shadowGit == null || session.ProjectId == null || session.Project == null) return;
-        try
-        {
-            var projectPath = session.Project.RootPath;
-            if (string.IsNullOrEmpty(projectPath) || !Directory.Exists(projectPath)) return;
-            var hash = await _shadowGit.CreateSnapshotAsync(projectPath, $"AI changes for session {session.Id}");
-            if (!string.IsNullOrEmpty(hash))
-            {
-                var lastMsg = await _db.Messages.Where(m => m.ChatSessionId == session.Id).OrderByDescending(m => m.Id).FirstOrDefaultAsync();
-                var snapshot = new FileSnapshot
-                {
-                    SessionId = session.Id,
-                    MessageId = lastMsg?.Id ?? 0,
-                    ProjectPath = projectPath,
-                    SnapshotCommitHash = hash,
-                    CreatedAt = DateTime.UtcNow
-                };
-                _db.FileSnapshots.Add(snapshot);
-                await _db.SaveChangesAsync();
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to create shadow snapshot for session {SessionId}", session.Id);
-        }
     }
 
     public async Task<string> GenerateTitleAsync(string userPrompt, string aiResponse, string? provider = null)

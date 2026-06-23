@@ -425,18 +425,6 @@ public static class ApplicationExtensions
             command.ExecuteNonQuery();
         }
 
-        // FileSnapshots table
-        command.CommandText = @"
-            CREATE TABLE IF NOT EXISTS FileSnapshots (
-                Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                SessionId INTEGER NOT NULL,
-                MessageId INTEGER NOT NULL DEFAULT 0,
-                ProjectPath TEXT NOT NULL,
-                SnapshotCommitHash TEXT NOT NULL,
-                CreatedAt TEXT NOT NULL
-            );";
-        command.ExecuteNonQuery();
-
         // Invalidate policy cache when policy files change
         var policiesPath = Path.Combine(AppContext.BaseDirectory, "pipelines", "policies");
         if (Directory.Exists(policiesPath))

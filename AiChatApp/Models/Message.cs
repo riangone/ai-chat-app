@@ -14,7 +14,6 @@ public class ChatSession
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public List<Message> Messages { get; set; } = new();
     public Project? Project { get; set; }
-    public List<FileSnapshot> FileSnapshots { get; set; } = new();
 }
 
 public class Message
