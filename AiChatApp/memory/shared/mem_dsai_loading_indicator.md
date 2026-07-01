@@ -5,10 +5,10 @@ type: user
 userId: 0
 tags: dsai,ui,htmx,loading-indicator,ux
 relations: relevanceScore: 80
-relevanceScore: 80
-accessCount: 8
+relevanceScore: 21
+accessCount: 11
 createdAt: 2026-05-01T10:57:38.1162660Z
-lastAccessedAt: 2026-06-23T06:25:27.8858878Z
+lastAccessedAt: 2026-06-24T22:53:04.4164633Z
 boundAgentRole: 
 ---
 

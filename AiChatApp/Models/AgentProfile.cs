@@ -24,5 +24,9 @@ public class AgentProfile
 
     public string? PreferredProvider { get; set; }
 
+    public string? PreferredModel { get; set; }
+
+    public string? PreferredVariant { get; set; }
+
     public Project? Project { get; set; }
 }

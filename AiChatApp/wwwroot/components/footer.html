@@ -4,9 +4,11 @@
             <div id="project-context-banner" class="hidden flex items-center justify-between px-3 py-1.5 bg-secondary/10 border-b border-secondary/20 rounded-t-[20px] -mb-1 mx-0.5"><div class="flex items-center gap-1.5"><span class="text-[11px] font-semibold text-secondary opacity-80" id="project-banner-name"></span></div><button type="button" onclick="deselectProject()" class="text-[10px] opacity-40 hover:opacity-70 transition-opacity">✕ clear</button></div>
             <input type="hidden" name="sessionId" id="session-id-input" /><input type="hidden" name="projectId" id="project-id-input" /><input type="hidden" name="agentId" id="selected-agent-id-input" />
             <input type="hidden" name="attachmentIds" id="attachment-ids-input" />
+            <div id="project-agent-selector" class="flex items-center gap-2 px-3 py-1.5 overflow-x-auto no-scrollbar border-b border-base-content/5 hidden"><span class="text-[9px] font-bold opacity-30 uppercase">Agent:</span><div id="project-agent-chips" class="flex items-center gap-1.5"></div><div class="ml-auto flex items-center gap-1 shrink-0"><span class="text-[9px] font-bold opacity-30 uppercase">Process:</span><button type="button" id="process-toggle-btn" onclick="toggleProcessType()" class="badge badge-xs badge-outline opacity-60 hover:opacity-100 cursor-pointer" title="Toggle Sequential/Hierarchical">Hierarchical</button></div></div>
             <div id="provider-selector-container" class="flex items-center justify-between px-3 pt-1 pb-1 border-b border-base-content/5 mb-1">
-                <div class="flex items-center gap-2">
-                    <select name="provider" onchange="changeSessionProvider(this.value)" class="select select-ghost select-xs opacity-60 font-semibold">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-[9px] font-bold opacity-30 uppercase">Engine:</span>
+                    <select name="provider" id="provider-select" onchange="onProviderChange(this.value)" class="select select-ghost select-xs opacity-60 font-semibold">
                         <option value="antigravity" selected>Antigravity</option>
                         <option value="copilot">GitHub Copilot</option>
                         <option value="claude">Claude Code</option>
@@ -14,19 +16,153 @@
                         <option value="opencode">OpenCode</option>
                         <option value="lmstudio">LM Studio</option>
                     </select>
-                    <div class="flex items-center gap-1.5 ml-2">
+                    <select name="model" id="model-select" onchange="onModelChange(this.value)" class="select select-ghost select-xs opacity-50 font-medium hidden" style="max-width:160px">
+                    </select>
+                    <select name="variant" id="variant-select" class="select select-ghost select-xs opacity-50 font-medium hidden" style="max-width:110px">
+                    </select>
+                    <div class="flex items-center gap-1.5 ml-1">
                         <input type="checkbox" id="stream-toggle" class="checkbox checkbox-xs checkbox-primary" checked onchange="saveStreamPreference(this.checked)" />
                         <label for="stream-toggle" class="text-[10px] font-bold opacity-40 cursor-pointer uppercase">Stream</label>
                     </div>
-                    <div class="flex items-center gap-1.5 ml-2">
+                    <div class="flex items-center gap-1.5 ml-1">
                         <input type="checkbox" id="plan-mode-toggle" class="checkbox checkbox-xs checkbox-warning" onchange="onPlanModeToggle(this.checked)" />
                         <label for="plan-mode-toggle" class="text-[10px] font-bold opacity-40 cursor-pointer uppercase text-warning">Plan</label>
                     </div>
+                    <div class="flex items-center gap-1.5 ml-1 hidden" id="thinking-toggle-container">
+                        <input type="checkbox" id="thinking-toggle" class="checkbox checkbox-xs checkbox-info" onchange="onThinkingToggle(this.checked)" />
+                        <label for="thinking-toggle" class="text-[10px] font-bold opacity-40 cursor-pointer uppercase text-info">Think</label>
+                    </div>
                 </div>
                 <input type="hidden" name="mode" id="mode-input" value="" />
+                <input type="hidden" name="thinking" id="thinking-hidden" value="" />
                 <input type="hidden" name="processType" id="process-type-input" value="hierarchical" />
             </div>
-            <div id="project-agent-selector" class="flex items-center gap-2 px-3 py-1.5 overflow-x-auto no-scrollbar border-b border-base-content/5 hidden"><span class="text-[9px] font-bold opacity-30 uppercase">Agent:</span><div id="project-agent-chips" class="flex items-center gap-1.5"></div><div class="ml-auto flex items-center gap-1 shrink-0"><span class="text-[9px] font-bold opacity-30 uppercase">Process:</span><button type="button" id="process-toggle-btn" onclick="toggleProcessType()" class="badge badge-xs badge-outline opacity-60 hover:opacity-100 cursor-pointer" title="Toggle Sequential/Hierarchical">Hierarchical</button></div></div>
+            <script>
+            (function() {
+                var PROVIDER_MODELS = {
+                    'antigravity': [
+                        { value: 'gemini-3.5-flash', label: '3.5 Flash (Med)' },
+                        { value: 'gemini-3.5-flash-high', label: '3.5 Flash (High)' },
+                        { value: 'gemini-3.5-flash-low', label: '3.5 Flash (Low)' },
+                        { value: 'gemini-3.1-pro', label: '3.1 Pro (Low)' },
+                        { value: 'gemini-3.1-pro-high', label: '3.1 Pro (High)' },
+                    ],
+                    'claude': [
+                        { value: 'claude-opus-4-8', label: 'Opus 4.8' },
+                        { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+                        { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+                    ],
+                    'codex': [
+                        { value: 'o4-mini', label: 'o4-mini' },
+                        { value: 'o3', label: 'o3' },
+                    ],
+                    'copilot': [],
+                    'opencode': [
+                        { value: 'opencode/deepseek-v4-flash-free', label: 'DeepSeek V4 Flash' },
+                        { value: 'opencode/mimo-v2.5-free', label: 'MiMo v2.5' },
+                        { value: 'opencode/nemotron-3-ultra-free', label: 'Nemotron 3 Ultra' },
+                        { value: 'opencode/north-mini-code-free', label: 'North Mini Code' },
+                        { value: 'opencode/big-pickle', label: 'Big Pickle' },
+                    ],
+                    'lmstudio': null, // dynamic
+                };
+                // Per-model metadata for opencode: variants and thinking support
+                var OPENCODE_MODEL_META = {
+                    'opencode/deepseek-v4-flash-free': { variants: ['low', 'medium', 'high', 'max'], thinking: true },
+                    'opencode/mimo-v2.5-free':         { variants: ['low', 'medium', 'high'], thinking: true },
+                    'opencode/nemotron-3-ultra-free':   { variants: ['low', 'medium', 'high'], thinking: true },
+                    'opencode/north-mini-code-free':    { variants: ['low', 'medium', 'high'], thinking: true },
+                    'opencode/big-pickle':              { variants: [], thinking: true },
+                };
+
+                window._providerModels = PROVIDER_MODELS;
+                window._opencodeModelMeta = OPENCODE_MODEL_META;
+                window._lmstudioModels = [];
+                async function fetchLmStudioModels() {
+                    try {
+                        var r = await fetch('/api/lmstudio/models');
+                        if (r.ok) { window._lmstudioModels = await r.json(); }
+                    } catch(e) {}
+                }
+                fetchLmStudioModels();
+
+                window.onProviderChange = function(prov) {
+                    changeSessionProvider(prov);
+                    populateModelSelect(prov);
+                    // Reset variant/thinking when switching provider
+                    _updateVariantAndThinking('');
+                };
+                window.onModelChange = function(val) {
+                    _updateVariantAndThinking(val);
+                };
+                window.onThinkingToggle = function(checked) {
+                    document.getElementById('thinking-hidden').value = checked ? 'true' : '';
+                };
+
+                function _updateVariantAndThinking(modelVal) {
+                    var varSel = document.getElementById('variant-select');
+                    var thinkingCont = document.getElementById('thinking-toggle-container');
+                    var thinkingChk = document.getElementById('thinking-toggle');
+                    var thinkingHid = document.getElementById('thinking-hidden');
+                    if (!varSel || !thinkingCont) return;
+                    var meta = OPENCODE_MODEL_META[modelVal];
+                    // Variant select
+                    if (meta && meta.variants && meta.variants.length > 0) {
+                        varSel.innerHTML = '<option value="">Default</option>' + meta.variants.map(function(v){
+                            var label = v.charAt(0).toUpperCase() + v.slice(1);
+                            return '<option value="' + v + '">' + label + '</option>';
+                        }).join('');
+                        varSel.classList.remove('hidden');
+                    } else {
+                        varSel.innerHTML = '';
+                        varSel.classList.add('hidden');
+                    }
+                    // Thinking toggle
+                    if (meta && meta.thinking) {
+                        thinkingCont.classList.remove('hidden');
+                    } else {
+                        thinkingCont.classList.add('hidden');
+                        if (thinkingChk) thinkingChk.checked = false;
+                        if (thinkingHid) thinkingHid.value = '';
+                    }
+                }
+
+                window.populateModelSelect = function(prov) {
+                    var sel = document.getElementById('model-select');
+                    if (!sel) return;
+                    var models;
+                    if (prov === 'lmstudio') {
+                        models = window._lmstudioModels.map(function(m){ return {value:m, label:m}; });
+                        // Refresh from server
+                        fetchLmStudioModels().then(function(){
+                            models = window._lmstudioModels.map(function(m){ return {value:m, label:m}; });
+                            _fillModelSelect(sel, models);
+                        });
+                    } else {
+                        models = PROVIDER_MODELS[prov] || [];
+                    }
+                    _fillModelSelect(sel, models);
+                    // Reset variant/thinking when model list changes
+                    _updateVariantAndThinking('');
+                };
+
+                function _fillModelSelect(sel, models) {
+                    if (!models || models.length === 0) {
+                        sel.classList.add('hidden');
+                        sel.innerHTML = '';
+                        return;
+                    }
+                    sel.innerHTML = '<option value="">Default</option>' + models.map(function(m){
+                        return '<option value="' + m.value + '">' + m.label + '</option>';
+                    }).join('');
+                    sel.classList.remove('hidden');
+                }
+
+                // Init on page load
+                var provSel = document.getElementById('provider-select');
+                if (provSel) populateModelSelect(provSel.value);
+            })();
+            </script>
             <!-- Attachment preview strip -->
             <div id="attachment-preview" class="hidden flex flex-wrap gap-2 px-3 py-2 border-b border-base-content/5"></div>
             <div class="flex items-end gap-2 w-full">

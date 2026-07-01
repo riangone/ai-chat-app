@@ -5,10 +5,10 @@ type: user
 userId: 0
 tags: agent-system-prompt-leak
 relations: relevanceScore: 80
-relevanceScore: 25
-accessCount: 1161
+relevanceScore: 21
+accessCount: 1162
 createdAt: 2026-04-28T02:06:24.7274365Z
-lastAccessedAt: 2026-05-18T05:09:18.4982055Z
+lastAccessedAt: 2026-06-26T14:07:00.0527175Z
 boundAgentRole: 
 ---
 

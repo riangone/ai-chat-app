@@ -297,8 +297,108 @@
         function updateLanguageSwitcher() { const c = document.getElementById('language-switcher'); if (c) c.innerHTML = renderLanguageButtons(true); const s = document.getElementById('settings-language-switcher'); if (s) s.innerHTML = renderLanguageButtons(false); }
         function updateThemeSwitcher() { const g = document.querySelector('.settings-theme-grid'); if (g) { g.innerHTML = themes.map(t => `<label class="label cursor-pointer settings-theme-item btn btn-ghost border border-base-content/10 rounded-2xl px-4"><input type="radio" name="theme-settings" class="theme-controller sr-only" value="${t}" aria-label="${t}" /><span class="label-text font-semibold">${t}</span></label>`).join(''); initTheme(); } }
         function updatePresetDropdown() { const d = document.getElementById('preset-dropdown'); if(!d) return; const p = translations[currentLang].presets || {}; d.innerHTML = Object.keys(p).map(n => `<li><a onclick="applyRolePreset('${n}')">${n}</a></li>`).join(''); }
-        function syncProviders() { const m = document.querySelector('select[name="provider"]'), a = document.getElementById('new-agent-provider'); if(m&&a) a.innerHTML = Array.from(m.options).map(o => `<option value="${o.value}">${o.textContent}</option>`).join(''); }
-        window.showAgentModal = () => { syncProviders(); document.getElementById('agent_modal').showModal(); };
+        // Pre-defined model metadata in case footer.html hasn't loaded yet
+        window._providerModels = window._providerModels || {
+            'antigravity': [
+                { value: 'gemini-3.5-flash', label: '3.5 Flash (Med)' },
+                { value: 'gemini-3.5-flash-high', label: '3.5 Flash (High)' },
+                { value: 'gemini-3.5-flash-low', label: '3.5 Flash (Low)' },
+                { value: 'gemini-3.1-pro', label: '3.1 Pro (Low)' },
+                { value: 'gemini-3.1-pro-high', label: '3.1 Pro (High)' },
+            ],
+            'claude': [
+                { value: 'claude-opus-4-8', label: 'Opus 4.8' },
+                { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+                { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+            ],
+            'codex': [
+                { value: 'o4-mini', label: 'o4-mini' },
+                { value: 'o3', label: 'o3' },
+            ],
+            'copilot': [],
+            'opencode': [
+                { value: 'opencode/deepseek-v4-flash-free', label: 'DeepSeek V4 Flash' },
+                { value: 'opencode/mimo-v2.5-free', label: 'MiMo v2.5' },
+                { value: 'opencode/nemotron-3-ultra-free', label: 'Nemotron 3 Ultra' },
+                { value: 'opencode/north-mini-code-free', label: 'North Mini Code' },
+                { value: 'opencode/big-pickle', label: 'Big Pickle' },
+            ],
+            'lmstudio': null
+        };
+        window._opencodeModelMeta = window._opencodeModelMeta || {
+            'opencode/deepseek-v4-flash-free': { variants: ['low', 'medium', 'high', 'max'], thinking: true },
+            'opencode/mimo-v2.5-free':         { variants: ['low', 'medium', 'high'], thinking: true },
+            'opencode/nemotron-3-ultra-free':   { variants: ['low', 'medium', 'high'], thinking: true },
+            'opencode/north-mini-code-free':    { variants: ['low', 'medium', 'high'], thinking: true },
+            'opencode/big-pickle':              { variants: [], thinking: true },
+        };
+
+        function syncProviders() {
+            const m = document.querySelector('select[name="provider"]'), a = document.getElementById('new-agent-provider');
+            if (a) {
+                if (m && m.options.length > 0) {
+                    a.innerHTML = Array.from(m.options).map(o => `<option value="${o.value}">${o.textContent}</option>`).join('');
+                    a.value = m.value || 'antigravity';
+                } else if (a.options.length === 0) {
+                    // Fallback defaults if global footer hasn't fully loaded
+                    const defaults = [
+                        { value: 'antigravity', text: 'Antigravity' },
+                        { value: 'copilot', text: 'GitHub Copilot' },
+                        { value: 'claude', text: 'Claude Code' },
+                        { value: 'codex', text: 'Codex' },
+                        { value: 'opencode', text: 'OpenCode' },
+                        { value: 'lmstudio', text: 'LM Studio' }
+                    ];
+                    a.innerHTML = defaults.map(o => `<option value="${o.value}">${o.text}</option>`).join('');
+                    a.value = 'antigravity';
+                }
+            }
+        }
+        function onAgentProviderChange(prov, presetModel, presetVariant) {
+            const modelSel = document.getElementById('new-agent-model');
+            const varSel = document.getElementById('new-agent-variant');
+            if (!modelSel) return;
+            let MODELS = [];
+            const targetKey = (prov === 'gemini') ? 'antigravity' : prov;
+            if (targetKey === 'lmstudio') {
+                MODELS = (window._lmstudioModels || []).map(m => ({ value: m, label: m }));
+            } else {
+                MODELS = (window._providerModels && window._providerModels[targetKey]) || [];
+            }
+            if (MODELS.length > 0) {
+                modelSel.innerHTML = '<option value="">Default Model</option>' + MODELS.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
+                modelSel.classList.remove('hidden');
+                if (presetModel) modelSel.value = presetModel;
+                // update variant on model change
+                modelSel.onchange = function() { _updateAgentVariant(prov, this.value, varSel, null); };
+                _updateAgentVariant(prov, presetModel || '', varSel, presetVariant);
+            } else {
+                modelSel.innerHTML = '<option value="">Default Model</option>';
+                modelSel.classList.add('hidden');
+                if (varSel) { varSel.innerHTML = '<option value="">Default</option>'; varSel.classList.add('hidden'); }
+            }
+        }
+        function _updateAgentVariant(prov, modelVal, varSel, presetVariant) {
+            if (!varSel) return;
+            const META = window._opencodeModelMeta || {};
+            const meta = (prov === 'opencode') ? META[modelVal] : null;
+            if (meta && meta.variants && meta.variants.length > 0) {
+                varSel.innerHTML = '<option value="">Default</option>' + meta.variants.map(v => `<option value="${v}">${v.charAt(0).toUpperCase()+v.slice(1)}</option>`).join('');
+                varSel.classList.remove('hidden');
+                if (presetVariant) varSel.value = presetVariant;
+            } else {
+                varSel.innerHTML = '<option value="">Default</option>';
+                varSel.classList.add('hidden');
+            }
+        }
+        window.showAgentModal = () => {
+            syncProviders();
+            const provSel = document.getElementById('new-agent-provider');
+            if (provSel) {
+                onAgentProviderChange(provSel.value || 'antigravity');
+            }
+            document.getElementById('agent_modal').showModal();
+        };
         function toggleProcessType() {
             const input = document.getElementById('process-type-input');
             const btn = document.getElementById('process-toggle-btn');
@@ -323,11 +423,11 @@
             
             if (prov) {
                 const sel = document.querySelector('select[name="provider"]');
-                if (sel) sel.value = prov;
+                if (sel) { sel.value = prov; if (window.populateModelSelect) populateModelSelect(prov); }
             } else if (!sid) {
                 // If no session, use user default
                 const sel = document.querySelector('select[name="provider"]');
-                if (sel && currentUser?.defaultProvider) sel.value = currentUser.defaultProvider;
+                if (sel && currentUser?.defaultProvider) { sel.value = currentUser.defaultProvider; if (window.populateModelSelect) populateModelSelect(currentUser.defaultProvider); }
             }
         }
         async function changeSessionProvider(provider) {
@@ -392,6 +492,28 @@
             } catch { panel.innerHTML = emptyPanelMarkup(i18n('loading-failed')); }
         }
         function loadChatSession(id) { return loadIntoChatPanel(`/api/chat/load/${id}`); }
+        async function startChatFromTodo(todoId) {
+            try {
+                const response = await fetch(`/api/todos/${todoId}/chat`, {
+                    method: 'POST',
+                    headers: { 'HX-Request': 'true' }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    const historyList = document.getElementById('history-list-container');
+                    if (historyList) {
+                        htmx.trigger(historyList, 'loadHistory');
+                    }
+                    openSlide('chat');
+                    loadChatSession(data.sessionId);
+                } else {
+                    alert('Failed to start chat from this task.');
+                }
+            } catch (e) {
+                console.error(e);
+                alert('An error occurred while creating chat.');
+            }
+        }
         function loadCliSession(source, path) { const params = new URLSearchParams({ source, path }); return loadIntoChatPanel(`/api/cli/load?${params.toString()}`); }
         function wirePanelNavigation() {
             const h = document.getElementById('chat-list'); if (h && !h.dataset.wired) {
@@ -622,9 +744,12 @@
             dismissPlan();
 
             const isStream = document.getElementById('stream-toggle')?.checked !== false;
+            const isCoop = fd.get('mode') === 'cooperative' || (fd.get('projectId') && !fd.get('agentId'));
             
             try { 
-                if (isStream) {
+                if (isStream && isCoop) {
+                    await sendCooperativeMessage(fd);
+                } else if (isStream) {
                     await sendMessageStream(fd); 
                 } else {
                     await sendMessageNormal(fd);
@@ -703,6 +828,182 @@
                     t.split('\n').forEach(l=>{if(l.startsWith('data: ')){const d=l.slice(6); if(d.startsWith('[DONE')){const m=d.match(/^\[DONE:(\d+):(\d+):(\d+)\]$/);if(m)updateTokenInfo(id,+m[1],+m[2],+m[3]);}else if(d.startsWith('[ERROR:')){b.innerHTML=`<span class="text-error">${d.slice(7,-1)}</span>`;}else{acc+=d.replace(/\\n/g,'\n').replace(/\\r/g,'\r'); b.innerHTML=marked.parse(acc); scrollToBottom();}}});
                 }
             } catch(err) { b.innerHTML=`<span class="text-error">${i18n('request-error')}</span>`; }
+        }
+        async function sendCooperativeMessage(fd) {
+            const list = document.getElementById('message-list') || document.getElementById('chat-box');
+            const id = 'progress-' + Date.now();
+            
+            list.insertAdjacentHTML('beforeend', `
+                <div id="${id}" class="chat chat-start message-bubble-container w-full">
+                    <div class="chat-bubble shadow-lg bg-base-200 text-base-content border border-base-300 p-4 md:p-5 rounded-[18px] rounded-bl-none w-full max-w-2xl">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="loading loading-spinner loading-xs text-primary"></span>
+                            <div class="text-xs font-bold opacity-60 tracking-wider uppercase">${i18n('multi-agent-flow') || 'Multi-Agent Execution Flow'}</div>
+                        </div>
+                        <div id="${id}-steps" class="space-y-3 mt-2 pl-1">
+                            <div class="text-xs opacity-50 italic">Initializing collaboration pipeline...</div>
+                        </div>
+                    </div>
+                </div>
+            `);
+            scrollToBottom();
+            
+            try {
+                const r = await fetch('/api/chat/cooperate/stream', { method: 'POST', body: fd });
+                if (!r.ok || !r.body) throw new Error('cooperative stream failed');
+                
+                const headerSessionId = r.headers.get('X-Session-Id');
+                if (headerSessionId) document.getElementById('session-id-input').value = headerSessionId;
+                
+                const re = r.body.getReader(), de = new TextDecoder();
+                let en = '';
+                
+                while (true) {
+                    const { done, value } = await re.read();
+                    if (done) break;
+                    
+                    const t = de.decode(value);
+                    t.split('\n').forEach(l => {
+                        if (l.startsWith('event: ')) {
+                            en = l.slice(7).trim();
+                        } else if (l.startsWith('data: ')) {
+                            const d = l.slice(6).trim();
+                            if (en === 'session') {
+                                const p = JSON.parse(d.replace(/\\n/g, '\n'));
+                                document.getElementById('session-id-input').value = p.sessionId;
+                                
+                                let stepsHtml = '';
+                                p.agents.forEach(role => {
+                                    const safeRole = role.replace(/[^a-zA-Z0-9_-]/g, '_');
+                                    stepsHtml += `
+                                        <div id="${id}-step-${safeRole}" class="text-xs opacity-70 flex flex-col gap-2 p-3 bg-base-300/40 border border-base-300/50 rounded-xl transition-all duration-300">
+                                            <div class="flex items-center justify-between font-semibold">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="step-icon text-base-content/40">○</span>
+                                                    <span>${role}</span>
+                                                </div>
+                                                <span class="step-status text-[10px] px-2 py-0.5 rounded-full bg-base-300/60 font-medium">Pending</span>
+                                            </div>
+                                            <div class="step-progress-log hidden text-[10px] font-mono opacity-80 bg-base-300/80 p-2.5 rounded-lg border border-base-300 overflow-x-auto max-h-36 whitespace-pre-wrap leading-relaxed custom-scrollbar"></div>
+                                        </div>
+                                    `;
+                                });
+                                document.getElementById(`${id}-steps`).innerHTML = stepsHtml;
+                            } 
+                            else if (en === 'step-progress') {
+                                const p = JSON.parse(d.replace(/\\n/g, '\n'));
+                                const safeRole = p.role.replace(/[^a-zA-Z0-9_-]/g, '_');
+                                let stepEl = document.getElementById(`${id}-step-${safeRole}`);
+                                if (!stepEl) {
+                                    const stepsContainer = document.getElementById(`${id}-steps`);
+                                    if (stepsContainer) {
+                                        const italicPlaceholder = stepsContainer.querySelector('.italic');
+                                        if (italicPlaceholder) italicPlaceholder.remove();
+                                        stepsContainer.insertAdjacentHTML('beforeend', `
+                                            <div id="${id}-step-${safeRole}" class="text-xs opacity-70 flex flex-col gap-2 p-3 bg-base-300/40 border border-base-300/50 rounded-xl transition-all duration-300">
+                                                <div class="flex items-center justify-between font-semibold">
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="step-icon text-base-content/40">○</span>
+                                                        <span>${p.role}</span>
+                                                    </div>
+                                                    <span class="step-status text-[10px] px-2 py-0.5 rounded-full bg-base-300/60 font-medium">Pending</span>
+                                                </div>
+                                                <div class="step-progress-log hidden text-[10px] font-mono opacity-80 bg-base-300/80 p-2.5 rounded-lg border border-base-300 overflow-x-auto max-h-36 whitespace-pre-wrap leading-relaxed custom-scrollbar"></div>
+                                            </div>
+                                        `);
+                                        stepEl = document.getElementById(`${id}-step-${safeRole}`);
+                                    }
+                                }
+                                if (stepEl) {
+                                    stepEl.classList.remove('opacity-70');
+                                    stepEl.classList.add('opacity-100', 'border-primary/20', 'bg-primary/5');
+                                    
+                                    const iconEl = stepEl.querySelector('.step-icon');
+                                    if (iconEl && !iconEl.querySelector('.loading')) {
+                                        iconEl.innerHTML = '<span class="loading loading-ring loading-xs text-primary"></span>';
+                                    }
+                                    
+                                    const statusEl = stepEl.querySelector('.step-status');
+                                    if (statusEl && statusEl.textContent !== 'Running') {
+                                        statusEl.textContent = 'Running';
+                                        statusEl.className = 'step-status text-[10px] px-2 py-0.5 rounded-full bg-info/20 text-info font-bold';
+                                    }
+                                    
+                                    const logEl = stepEl.querySelector('.step-progress-log');
+                                    if (logEl) {
+                                        logEl.classList.remove('hidden');
+                                        if (p.progress) {
+                                            const cleanLine = p.progress.replace(/\r/g, '').trimEnd();
+                                            if (cleanLine) {
+                                                let lines = logEl.textContent.split('\n');
+                                                if (lines.length > 50) lines = lines.slice(lines.length - 50);
+                                                logEl.textContent = (lines.join('\n') + '\n' + cleanLine).trim();
+                                                logEl.scrollTop = logEl.scrollHeight;
+                                            }
+                                        }
+                                    }
+                                    scrollToBottom();
+                                }
+                            }
+                            else if (en === 'step-complete') {
+                                const p = JSON.parse(d.replace(/\\n/g, '\n'));
+                                const safeRole = p.role.replace(/[^a-zA-Z0-9_-]/g, '_');
+                                let stepEl = document.getElementById(`${id}-step-${safeRole}`);
+                                if (!stepEl) {
+                                    const stepsContainer = document.getElementById(`${id}-steps`);
+                                    if (stepsContainer) {
+                                        const italicPlaceholder = stepsContainer.querySelector('.italic');
+                                        if (italicPlaceholder) italicPlaceholder.remove();
+                                        stepsContainer.insertAdjacentHTML('beforeend', `
+                                            <div id="${id}-step-${safeRole}" class="text-xs opacity-70 flex flex-col gap-2 p-3 bg-base-300/40 border border-base-300/50 rounded-xl transition-all duration-300">
+                                                <div class="flex items-center justify-between font-semibold">
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="step-icon text-base-content/40">○</span>
+                                                        <span>${p.role}</span>
+                                                    </div>
+                                                    <span class="step-status text-[10px] px-2 py-0.5 rounded-full bg-base-300/60 font-medium">Pending</span>
+                                                </div>
+                                                <div class="step-progress-log hidden text-[10px] font-mono opacity-80 bg-base-300/80 p-2.5 rounded-lg border border-base-300 overflow-x-auto max-h-36 whitespace-pre-wrap leading-relaxed custom-scrollbar"></div>
+                                            </div>
+                                        `);
+                                        stepEl = document.getElementById(`${id}-step-${safeRole}`);
+                                    }
+                                }
+                                if (stepEl) {
+                                    stepEl.classList.remove('border-primary/20', 'bg-primary/5');
+                                    stepEl.classList.add('border-success/20', 'bg-success/5');
+                                    
+                                    const iconEl = stepEl.querySelector('.step-icon');
+                                    if (iconEl) {
+                                        iconEl.textContent = '✓';
+                                        iconEl.className = 'step-icon text-success font-bold text-sm';
+                                    }
+                                    
+                                    const statusEl = stepEl.querySelector('.step-status');
+                                    if (statusEl) {
+                                        statusEl.textContent = 'Completed';
+                                        statusEl.className = 'step-status text-[10px] px-2 py-0.5 rounded-full bg-success/20 text-success font-bold';
+                                    }
+                                    
+                                    const logEl = stepEl.querySelector('.step-progress-log');
+                                    if (logEl) {
+                                        logEl.classList.add('hidden');
+                                    }
+                                    scrollToBottom();
+                                }
+                            }
+                            else if (en === 'final') {
+                                document.getElementById(id).outerHTML = renderAiBubble(marked.parse(d.replace(/\\n/g, '\n')));
+                                renderMarkdown();
+                                scrollToBottom();
+                            }
+                        }
+                    });
+                }
+            } catch (err) {
+                console.error(err);
+                document.getElementById(id).outerHTML = renderAiBubble(`<span class="text-error">${i18n('request-error') || 'An error occurred during multi-agent execution.'}</span>`);
+            }
         }
 
         // ---- Sidebar Session List ----
@@ -845,6 +1146,7 @@
             fd.append('sessionId', document.getElementById('session-id-input')?.value || '');
             fd.append('content', `[APPROVED PLAN - Execute now]\n\n${prompt}`);
             fd.append('provider', document.querySelector('select[name="provider"]')?.value || '');
+            fd.append('model', document.getElementById('model-select')?.value || '');
             const modeInput = document.getElementById('mode-input');
             if (modeInput) modeInput.value = '';
             document.getElementById('chat-input').value = '';
@@ -919,20 +1221,19 @@
         function copyText(b) { const chat = b.closest('.chat'); const content = chat.querySelector('.content-body') || chat.querySelector('.markdown') || chat.querySelector('.chat-bubble'); navigator.clipboard.writeText(content?.innerText || ''); }
         function forwardText(b) { const chat = b.closest('.chat'); const content = chat.querySelector('.content-body') || chat.querySelector('.markdown') || chat.querySelector('.chat-bubble'); const i=document.getElementById('chat-input'); i.value='> '+(content?.innerText || '')+'\n\n'; i.focus(); autoExpand(i); }
         function saveToMemory(b) { const chat = b.closest('.chat'); const content = chat.querySelector('.content-body') || chat.querySelector('.markdown') || chat.querySelector('.chat-bubble'); document.getElementById('memory-content').value=content?.innerText || ''; memory_modal.showModal(); }
-        function selectProject(id,n,p) { 
-            selectedProjectId=id; 
+        function selectProject(id,n,p) {
+            selectedProjectId=id;
             selectedAgentId=null;
-            syncProjectContext(); 
-            document.getElementById('current-project-name').textContent=n; 
-            document.getElementById('current-project-path').textContent=p; 
-            document.getElementById('selected-project-info').classList.remove('hidden'); 
-            document.getElementById('project-context-banner').classList.remove('hidden'); 
-            document.getElementById('project-banner-name').textContent=n; 
-            document.getElementById('session-id-input').value=''; 
-            const providerSelector = document.getElementById('provider-selector-container');
-            if (providerSelector) providerSelector.classList.add('hidden');
-            loadAgents(id); 
-            htmx.ajax('GET',`/api/chat/list?projectId=${id}`,'#project-chat-list'); 
+            syncProjectContext();
+            document.getElementById('current-project-name').textContent=n;
+            document.getElementById('current-project-path').textContent=p;
+            document.getElementById('selected-project-info').classList.remove('hidden');
+            document.getElementById('project-context-banner').classList.remove('hidden');
+            document.getElementById('project-banner-name').textContent=n;
+            document.getElementById('session-id-input').value='';
+            document.getElementById('provider-selector-container').classList.add('hidden');
+            loadAgents(id);
+            htmx.ajax('GET',`/api/chat/list?projectId=${id}`,'#project-chat-list');
         }
         function openProjectEditModal(id, name, path) {
             document.getElementById('edit-project-id').value = id;
@@ -964,25 +1265,31 @@
             selectedProjectId = null;
             selectedAgentId = null;
             editingAgentId = null;
-            syncProjectContext(); 
-            document.getElementById('selected-project-info').classList.add('hidden'); 
-            document.getElementById('project-context-banner').classList.add('hidden'); 
+            syncProjectContext();
+            document.getElementById('selected-project-info').classList.add('hidden');
+            document.getElementById('project-context-banner').classList.add('hidden');
             document.getElementById('project-agent-selector').classList.add('hidden');
-            document.getElementById('session-id-input').value=''; 
-            const providerSelector = document.getElementById('provider-selector-container');
-            if (providerSelector) providerSelector.classList.remove('hidden');
+            document.getElementById('provider-selector-container').classList.remove('hidden');
+            document.getElementById('session-id-input').value='';
         }
         async function loadAgents(pid) { 
-            const r=await fetch('/api/projects'), p=await r.json(), x=p.find(v=>v.id===pid); 
-            if(!x) return; 
-            window.currentProjectAgents = x.agents;
+            try {
+                const r = await fetch('/api/projects');
+                if (r.redirected && r.url.includes('/login')) {
+                    window.location.href = '/login';
+                    return;
+                }
+                const p = await r.json();
+                const x = p.find(v => v.id === pid); 
+                if(!x) return; 
+                window.currentProjectAgents = x.agents;
             
             // Render for project settings
             document.getElementById('agent-list').innerHTML = x.agents.map(a => `
                 <div class="flex items-center justify-between p-2 bg-base-300 rounded text-xs group">
                     <button onclick="viewAgentPrompt(${a.id})" class="flex-1 text-left hover:text-primary transition-colors truncate mr-2">
                         <span class="font-bold">${a.roleName}</span>
-                        ${a.preferredProvider ? `<span class="opacity-50 ml-1">(${a.preferredProvider})</span>` : ''}
+                        ${a.preferredProvider ? `<span class="opacity-50 ml-1">(${a.preferredProvider}${a.preferredModel ? ` · ${a.preferredModel}` : ''}${a.preferredVariant ? ` · ${a.preferredVariant}` : ''})</span>` : ''}
                     </button>
                     <div class="flex items-center gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
                         <button onclick="startEditAgent(${a.id})" class="btn btn-ghost btn-xs px-1 hover:text-primary">
@@ -1005,6 +1312,9 @@
                 selector.classList.add('hidden');
                 selectedAgentId = null;
             }
+            } catch (err) {
+                console.error("Failed to load agents:", err);
+            }
         }
         function selectAgent(aid) {
             if (selectedAgentId) {
@@ -1016,6 +1326,23 @@
             const curr = document.getElementById(`agent-chip-${aid}`);
             if (curr) curr.classList.replace('btn-ghost', 'btn-secondary');
             if (curr) curr.classList.remove('border', 'border-base-content/10');
+            // Sync Engine row to agent's preferred engine settings (as suggestions)
+            const agentDef = (window.currentProjectAgents || []).find(a => a.id === aid);
+            if (agentDef) {
+                const provSel = document.getElementById('provider-select');
+                if (agentDef.preferredProvider && provSel && provSel.value !== agentDef.preferredProvider) {
+                    provSel.value = agentDef.preferredProvider;
+                    if (typeof onProviderChange === 'function') onProviderChange(agentDef.preferredProvider);
+                }
+                if (agentDef.preferredModel) {
+                    const modSel = document.getElementById('model-select');
+                    if (modSel) { modSel.value = agentDef.preferredModel; modSel.classList.remove('hidden'); }
+                }
+                if (agentDef.preferredVariant) {
+                    const varSel = document.getElementById('variant-select');
+                    if (varSel) { varSel.value = agentDef.preferredVariant; varSel.classList.remove('hidden'); }
+                }
+            }
             syncProjectContext();
         }
         function viewAgentPrompt(aid) {
@@ -1036,8 +1363,11 @@
             document.getElementById('new-agent-goal').value = a.goal || '';
             document.getElementById('new-agent-backstory').value = a.backstory || '';
             document.getElementById('new-agent-prompt').value = a.systemPrompt;
-            document.getElementById('new-agent-provider').value = a.preferredProvider || 'antigravity';
+            
+            const prov = a.preferredProvider === 'gemini' ? 'antigravity' : (a.preferredProvider || 'antigravity');
+            document.getElementById('new-agent-provider').value = prov;
             document.getElementById('new-agent-color').value = a.color || 'primary';
+            onAgentProviderChange(prov, a.preferredModel, a.preferredVariant);
 
             const btn = document.getElementById('add-agent-btn');
             if (btn) {
@@ -1052,6 +1382,14 @@
             document.getElementById('new-agent-goal').value = '';
             document.getElementById('new-agent-backstory').value = '';
             document.getElementById('new-agent-prompt').value = '';
+            
+            const provSel = document.getElementById('new-agent-provider');
+            if (provSel) {
+                const mainProv = document.querySelector('select[name="provider"]')?.value || 'antigravity';
+                provSel.value = mainProv;
+                onAgentProviderChange(mainProv);
+            }
+            
             const btn = document.getElementById('add-agent-btn');
             if (btn) {
                 btn.textContent = 'Add';
@@ -1066,6 +1404,8 @@
             f.append('backstory', document.getElementById('new-agent-backstory').value);
             f.append('systemPrompt', document.getElementById('new-agent-prompt').value);
             f.append('preferredProvider', document.getElementById('new-agent-provider').value);
+            f.append('preferredModel', document.getElementById('new-agent-model')?.value || '');
+            f.append('preferredVariant', document.getElementById('new-agent-variant')?.value || '');
             f.append('color', document.getElementById('new-agent-color').value);
 
             const url = editingAgentId
@@ -1075,11 +1415,18 @@
 
             try {
                 const res = await fetch(url, { method, body: f });
+                if (res.redirected && res.url.includes('/login')) {
+                    window.location.href = '/login';
+                    return;
+                }
                 if (res.ok) {
-                    loadAgents(selectedProjectId);
+                    await loadAgents(selectedProjectId);
                     cancelEditAgent();
+                    document.getElementById('agent_modal')?.close();
                 } else {
-                    alert("Failed to save agent: " + await res.text());
+                    const errText = await res.text();
+                    alert("Failed to save agent: " + errText);
+                    console.error("Save agent failed:", res.status, errText);
                 }
             } catch (err) {
                 alert("Network error while saving agent.");
@@ -1707,8 +2054,8 @@ function handleSuggestionAction(command, payload) {
                 wrapper.appendChild(slideEl);
                 if (!openSlideIds.includes(slideId)) openSlideIds.push(slideId);
                 if (swiper) swiper.update();
-                ensureSlideDataLoaded(slideId);
             }
+            ensureSlideDataLoaded(slideId);
             const slides = Array.from(wrapper.querySelectorAll(':scope > .swiper-slide'));
             const idx = slides.findIndex(s => s.dataset.slideId === slideId);
             if (idx >= 0 && swiper) swiper.slideTo(idx, 0);
@@ -1766,7 +2113,7 @@ function handleSuggestionAction(command, payload) {
                 'courses':  () => { const el=document.getElementById('courses-path'); if(el&&!el.dataset.loaded){el.dataset.loaded='loading'; loadCourses().then(()=>{el.dataset.loaded='true';}).catch(()=>{delete el.dataset.loaded;}); } },
                 'projects': () => { const el=document.getElementById('projects-list-container');if(el&&!el.dataset.loaded){htmx.trigger(el,'loadProjects');el.dataset.loaded='true';} },
                 'skills':   () => { const el=document.getElementById('skills-list-container');  if(el&&!el.dataset.loaded){htmx.trigger(el,'loadSkills');el.dataset.loaded='true';} },
-                'history':  () => { const el=document.getElementById('history-list-container'); if(el&&!el.dataset.loaded){htmx.trigger(el,'loadHistory');el.dataset.loaded='true';} },
+                'history':  () => { const el=document.getElementById('history-list-container'); if(el&&!el.dataset.loaded){el.dataset.loaded='loading';htmx.trigger(el,'loadHistory');} },
                 'cli':      () => { const el=document.getElementById('cli-list-container');     if(el&&!el.dataset.loaded){htmx.trigger(el,'loadCli');el.dataset.loaded='true';} },
                 'harness':  () => { const h=document.getElementById('harness-content-area');   if(h&&!h.dataset.loaded){switchHarnessTab('pipelines');h.dataset.loaded='true';} },
                 'pipeline': () => { const p=document.getElementById('pipeline-panel');          if(p&&!p.dataset.loaded){initPipelinePanel();p.dataset.loaded='true';} },
@@ -2521,6 +2868,10 @@ function handleSuggestionAction(command, payload) {
                 if (e.detail.pathInfo.requestPath.includes('modals.html')) {
                     updatePresetDropdown();
                     syncProviders();
+                    const agentModal = document.getElementById('agent_modal');
+                    if (agentModal) {
+                        agentModal.addEventListener('close', () => cancelEditAgent());
+                    }
                 }
             });
 
@@ -3390,7 +3741,18 @@ function handleSuggestionAction(command, payload) {
         htmx.config.timeout = 120000; // 120 seconds global timeout
 
         // Global HTMX Error Handling
+        // Mark lazy-loaded panels as done only after successful HTMX swap
+        document.addEventListener('htmx:afterSwap', (event) => {
+            const el = event.detail.target;
+            if (el && el.dataset.loaded === 'loading') el.dataset.loaded = 'true';
+        });
+        // Reset lazy-load flag on failure so the panel retries on next visit
+        function _resetLazyLoad(event) {
+            const el = event.detail.elt || event.detail.target;
+            if (el && el.dataset.loaded === 'loading') delete el.dataset.loaded;
+        }
         document.addEventListener('htmx:responseError', (event) => {
+            _resetLazyLoad(event);
             console.error('HTMX Response Error:', event.detail);
             const status = event.detail.xhr.status;
             const toastArea = document.getElementById('notes-toast-area');
@@ -3400,6 +3762,7 @@ function handleSuggestionAction(command, payload) {
             }
         });
         document.addEventListener('htmx:sendError', (event) => {
+            _resetLazyLoad(event);
             console.error('HTMX Send Error:', event.detail);
             const toastArea = document.getElementById('notes-toast-area');
             if (toastArea) {

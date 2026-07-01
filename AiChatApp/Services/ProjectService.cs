@@ -57,7 +57,7 @@ public class ProjectService
         return project;
     }
 
-    public async Task<AgentProfile> AddAgentAsync(int projectId, string roleName, string systemPrompt, string color, string? preferredProvider = null, string goal = "", string backstory = "")
+    public async Task<AgentProfile> AddAgentAsync(int projectId, string roleName, string systemPrompt, string color, string? preferredProvider = null, string goal = "", string backstory = "", string? preferredModel = null, string? preferredVariant = null)
     {
         var agent = new AgentProfile
         {
@@ -67,7 +67,9 @@ public class ProjectService
             Backstory = backstory,
             SystemPrompt = systemPrompt,
             Color = color,
-            PreferredProvider = preferredProvider
+            PreferredProvider = preferredProvider,
+            PreferredModel = preferredModel,
+            PreferredVariant = preferredVariant
         };
 
         _db.AgentProfiles.Add(agent);
@@ -107,7 +109,7 @@ public class ProjectService
         }
     }
 
-    public async Task<AgentProfile?> UpdateAgentAsync(int agentId, string roleName, string systemPrompt, string color, string? preferredProvider, int userId, string goal = "", string backstory = "")
+    public async Task<AgentProfile?> UpdateAgentAsync(int agentId, string roleName, string systemPrompt, string color, string? preferredProvider, int userId, string goal = "", string backstory = "", string? preferredModel = null, string? preferredVariant = null)
     {
         var agent = await _db.AgentProfiles
             .Include(a => a.Project)
@@ -121,6 +123,8 @@ public class ProjectService
         agent.SystemPrompt = systemPrompt;
         agent.Color = color;
         agent.PreferredProvider = preferredProvider;
+        agent.PreferredModel = string.IsNullOrWhiteSpace(preferredModel) ? null : preferredModel;
+        agent.PreferredVariant = string.IsNullOrWhiteSpace(preferredVariant) ? null : preferredVariant;
 
         await _db.SaveChangesAsync();
         return agent;

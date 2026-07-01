@@ -13,8 +13,8 @@ public record StreamChunk(string? Text, string? Model, int PromptTokens, int Com
 
 public interface ICliExecutor
 {
-    Task<CliResult> ExecuteAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null);
-    IAsyncEnumerable<StreamChunk> ExecuteStreamAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null);
+    Task<CliResult> ExecuteAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null, string? model = null, string? variant = null, bool thinking = false, Action<string>? onProgress = null);
+    IAsyncEnumerable<StreamChunk> ExecuteStreamAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null, string? model = null, string? variant = null, bool thinking = false);
 }
 
 public class CliExecutorService : ICliExecutor, IDisposable
@@ -36,7 +36,29 @@ public class CliExecutorService : ICliExecutor, IDisposable
 
     private string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "antigravity";
     private string FallbackProvider => _config["AiSettings:FallbackProvider"] ?? "antigravity";
-    private int TimeoutSeconds => int.TryParse(_config["AiSettings:TimeoutSeconds"], out var s) ? s : 300;
+
+    private class ActivityTimeRef
+    {
+        public DateTime Value { get; set; } = DateTime.UtcNow;
+    }
+
+    private static readonly AsyncLocal<string?> _currentExecutionId = new();
+    private static readonly ConcurrentDictionary<string, (string? ParentId, Action RefreshActivity)> _activeExecutions = new();
+
+    private int GetTimeoutSeconds(string? provider, bool agentMode = false)
+    {
+        var targetProvider = provider?.ToLowerInvariant();
+        int baseTimeout = int.TryParse(_config["AiSettings:TimeoutSeconds"], out var defaultTimeout) ? defaultTimeout : 300;
+        if (agentMode || targetProvider == "opencode" || targetProvider == "claudecode" || targetProvider == "claude" || targetProvider == "antigravity" || targetProvider == "gemini" || targetProvider == "copilot" || targetProvider == "codex")
+        {
+            if (int.TryParse(_config["AiSettings:AgentTimeoutSeconds"] ?? _config["AiSettings:OpencodeTimeoutSeconds"], out var agentTimeout))
+            {
+                return agentTimeout;
+            }
+            return 1800;
+        }
+        return baseTimeout;
+    }
 
     // Only stdin-based providers can be pre-warmed; arg-based ones need the prompt at spawn time.
     private static bool SupportsPreWarm(string normalizedProvider) =>
@@ -74,19 +96,19 @@ public class CliExecutorService : ICliExecutor, IDisposable
         });
     }
 
-    public async Task<CliResult> ExecuteAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null)
+    public async Task<CliResult> ExecuteAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null, string? model = null, string? variant = null, bool thinking = false, Action<string>? onProgress = null)
     {
         if (provider?.ToLowerInvariant() == "lmstudio" && _lmStudio != null)
         {
-            var response = await _lmStudio.GetResponseAsync(prompt, systemPrompt ?? "");
-            return new CliResult(response, "lmstudio", 0, 0, 0);
+            var response = await _lmStudio.GetResponseAsync(prompt, systemPrompt ?? "", model ?? "");
+            return new CliResult(response, model ?? "lmstudio", 0, 0, 0);
         }
 
         var effectiveProvider = provider ?? DefaultProvider;
         CliResult result;
         try
         {
-            result = await ExecuteSingleShotAsync(prompt, effectiveProvider, systemPrompt, userPrompt, workingDirectory, agentMode, outputFormat);
+            result = await ExecuteSingleShotAsync(prompt, effectiveProvider, systemPrompt, userPrompt, workingDirectory, agentMode, outputFormat, model, variant, thinking, onProgress);
         }
         catch (Exception ex)
         {
@@ -94,7 +116,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
             if (provider != FallbackProvider)
             {
                 _logger.LogInformation("Falling back to {Fallback}", FallbackProvider);
-                return await ExecuteAsync(prompt, FallbackProvider, systemPrompt, userPrompt, workingDirectory, agentMode, outputFormat);
+                return await ExecuteAsync(prompt, FallbackProvider, systemPrompt, userPrompt, workingDirectory, agentMode, outputFormat, model, variant, thinking, onProgress);
             }
             throw;
         }
@@ -108,12 +130,12 @@ public class CliExecutorService : ICliExecutor, IDisposable
         return result;
     }
 
-    public async IAsyncEnumerable<StreamChunk> ExecuteStreamAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null)
+    public async IAsyncEnumerable<StreamChunk> ExecuteStreamAsync(string prompt, string provider, string? systemPrompt = null, string? userPrompt = null, string? workingDirectory = null, bool agentMode = false, string? outputFormat = null, string? model = null, string? variant = null, bool thinking = false)
     {
         if (provider?.ToLowerInvariant() == "lmstudio" && _lmStudio != null)
         {
-            await foreach (var chunk in _lmStudio.GetResponseStreamAsync(prompt, systemPrompt ?? ""))
-                yield return new StreamChunk(chunk, "lmstudio", 0, 0, 0);
+            await foreach (var chunk in _lmStudio.GetResponseStreamAsync(prompt, systemPrompt ?? "", model ?? ""))
+                yield return new StreamChunk(chunk, model ?? "lmstudio", 0, 0, 0);
             yield break;
         }
 
@@ -121,7 +143,28 @@ public class CliExecutorService : ICliExecutor, IDisposable
         var useJsonStreaming = targetProvider is "claude" or "claudecode" or "copilot" or "codex" or "opencode";
 
         var format = outputFormat ?? (useJsonStreaming ? "stream-json" : null);
-        var processInfo = SetupProcessInfo(provider ?? DefaultProvider, workingDirectory, format, agentMode: agentMode, persistent: false);
+        var processInfo = SetupProcessInfo(provider ?? DefaultProvider, workingDirectory, format, agentMode: agentMode, persistent: false, model: model, variant: variant, thinking: thinking);
+
+        // --- Track parent-child execution relationship ---
+        var executionId = Guid.NewGuid().ToString();
+        var parentId = Environment.GetEnvironmentVariable("CLI_EXECUTION_ID") ?? _currentExecutionId.Value;
+        var oldExecutionId = _currentExecutionId.Value;
+        _currentExecutionId.Value = executionId;
+        processInfo.EnvironmentVariables["CLI_EXECUTION_ID"] = executionId;
+
+        var activityRef = new ActivityTimeRef { Value = DateTime.UtcNow };
+        Action refresh = null!;
+        refresh = () =>
+        {
+            activityRef.Value = DateTime.UtcNow;
+            if (!string.IsNullOrEmpty(parentId) && _activeExecutions.TryGetValue(parentId, out var parentEntry))
+            {
+                parentEntry.RefreshActivity();
+            }
+        };
+
+        _activeExecutions.TryAdd(executionId, (parentId, refresh));
+        // -------------------------------------------------
 
         string inputToStdin = string.IsNullOrEmpty(systemPrompt)
             ? prompt
@@ -139,23 +182,32 @@ public class CliExecutorService : ICliExecutor, IDisposable
             inputToStdin = string.Empty;
         }
 
-        var warmKey = $"{targetProvider}_{workingDirectory ?? "default"}_{format ?? "raw"}";
+        var warmKey = $"{targetProvider}_{workingDirectory ?? "default"}_{format ?? "raw"}_{model ?? ""}";
         var warm = SupportsPreWarm(targetProvider) ? ClaimWarmProcess(warmKey) : null;
 
         Process process;
-        if (warm != null)
+        try
         {
-            _logger.LogDebug("Stream: using pre-warmed process for {Provider}", targetProvider);
-            process = warm;
-        }
-        else
-        {
-            process = new Process { StartInfo = processInfo };
-            if (!process.Start())
+            if (warm != null)
             {
-                process.Dispose();
-                yield break;
+                _logger.LogDebug("Stream: using pre-warmed process for {Provider}", targetProvider);
+                process = warm;
             }
+            else
+            {
+                process = new Process { StartInfo = processInfo };
+                if (!process.Start())
+                {
+                    process.Dispose();
+                    _activeExecutions.TryRemove(executionId, out _);
+                    yield break;
+                }
+            }
+        }
+        finally
+        {
+            // Restore AsyncLocal to prevent context leak during stream consumption
+            _currentExecutionId.Value = oldExecutionId;
         }
 
         // Kick off the next pre-warm immediately so it's ready for the following request.
@@ -168,12 +220,32 @@ public class CliExecutorService : ICliExecutor, IDisposable
             process.StandardInput.Close();
         }
 
+        var timeoutSeconds = GetTimeoutSeconds(provider, agentMode);
+        var timeoutMs = timeoutSeconds * 1000;
+
         using var cts = new CancellationTokenSource();
-        _ = Task.Delay(TimeSpan.FromSeconds(TimeoutSeconds), cts.Token).ContinueWith(t =>
+        var monitorTask = Task.Run(async () =>
         {
-            if (t.IsCompletedSuccessfully)
-                try { if (!process.HasExited) process.Kill(true); } catch { }
-        }, TaskScheduler.Default);
+            try
+            {
+                while (!process.HasExited && !cts.Token.IsCancellationRequested)
+                {
+                    var elapsed = (DateTime.UtcNow - activityRef.Value).TotalMilliseconds;
+                    if (elapsed > timeoutMs)
+                    {
+                        _logger.LogWarning("Stream process {Provider} timed out after {TimeoutSeconds}s due to inactivity.", provider, timeoutSeconds);
+                        try { if (!process.HasExited) process.Kill(true); } catch { }
+                        break;
+                    }
+                    await Task.Delay(1000, cts.Token);
+                }
+            }
+            catch (TaskCanceledException) { }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in stream timeout monitor for {Provider}", provider);
+            }
+        });
 
         string? extractedModel = null;
         int pt = 0, ct = 0, tt = 0;
@@ -186,6 +258,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
             while ((line = await process.StandardOutput.ReadLineAsync()) != null)
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
+                refresh(); // Heartbeat extension
                 bool isDeltaHandled = false;
                 bool skipLine = false;
 
@@ -258,22 +331,48 @@ public class CliExecutorService : ICliExecutor, IDisposable
             var buffer = new char[64];
             int read;
             while ((read = await process.StandardOutput.ReadAsync(buffer, 0, buffer.Length)) > 0)
+            {
+                refresh(); // Heartbeat extension
                 yield return new StreamChunk(new string(buffer, 0, read), null, 0, 0, 0);
+            }
         }
 
         try { await process.WaitForExitAsync(); } catch { }
         cts.Cancel();
+        try { await monitorTask; } catch { }
         process.Dispose();
+        _activeExecutions.TryRemove(executionId, out _);
     }
 
-    private async Task<CliResult> ExecuteSingleShotAsync(string prompt, string provider, string? systemPrompt, string? userPrompt, string? workingDirectory, bool agentMode, string? outputFormat = null)
+    private async Task<CliResult> ExecuteSingleShotAsync(string prompt, string provider, string? systemPrompt, string? userPrompt, string? workingDirectory, bool agentMode, string? outputFormat = null, string? model = null, string? variant = null, bool thinking = false, Action<string>? onProgress = null)
     {
         var targetProvider = provider.ToLowerInvariant();
         var effectiveFormat = outputFormat ?? "json";
-        var warmKey = $"{targetProvider}_{workingDirectory ?? "default"}_{effectiveFormat}";
+        var warmKey = $"{targetProvider}_{workingDirectory ?? "default"}_{effectiveFormat}_{model ?? ""}";
 
-        var processInfo = SetupProcessInfo(provider, workingDirectory, outputFormat: outputFormat, agentMode: agentMode, persistent: false);
+        var processInfo = SetupProcessInfo(provider, workingDirectory, outputFormat: outputFormat, agentMode: agentMode, persistent: false, model: model, variant: variant, thinking: thinking);
         string inputToStdin = string.IsNullOrEmpty(systemPrompt) ? prompt : $"System: {systemPrompt}\n\nUser: {prompt}";
+
+        // --- Track parent-child execution relationship ---
+        var executionId = Guid.NewGuid().ToString();
+        var parentId = Environment.GetEnvironmentVariable("CLI_EXECUTION_ID") ?? _currentExecutionId.Value;
+        var oldExecutionId = _currentExecutionId.Value;
+        _currentExecutionId.Value = executionId;
+        processInfo.EnvironmentVariables["CLI_EXECUTION_ID"] = executionId;
+
+        var activityRef = new ActivityTimeRef { Value = DateTime.UtcNow };
+        Action refresh = null!;
+        refresh = () =>
+        {
+            activityRef.Value = DateTime.UtcNow;
+            if (!string.IsNullOrEmpty(parentId) && _activeExecutions.TryGetValue(parentId, out var parentEntry))
+            {
+                parentEntry.RefreshActivity();
+            }
+        };
+
+        _activeExecutions.TryAdd(executionId, (parentId, refresh));
+        // -------------------------------------------------
 
         if (targetProvider == "opencode")
         {
@@ -290,15 +389,22 @@ public class CliExecutorService : ICliExecutor, IDisposable
         var warm = SupportsPreWarm(targetProvider) ? ClaimWarmProcess(warmKey) : null;
         Process process;
 
-        if (warm != null)
+        try
         {
-            _logger.LogDebug("Using pre-warmed process for {Provider}", provider);
-            process = warm;
+            if (warm != null)
+            {
+                _logger.LogDebug("Using pre-warmed process for {Provider}", provider);
+                process = warm;
+            }
+            else
+            {
+                process = new Process { StartInfo = processInfo };
+                process.Start();
+            }
         }
-        else
+        finally
         {
-            process = new Process { StartInfo = processInfo };
-            process.Start();
+            _currentExecutionId.Value = oldExecutionId;
         }
 
         // Kick off the next pre-warm immediately — overlaps with the current AI response time.
@@ -316,25 +422,70 @@ public class CliExecutorService : ICliExecutor, IDisposable
             process.StandardInput.Close();
         }
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
+        var stdoutBuilder = new StringBuilder();
+        var stderrBuilder = new StringBuilder();
+        var timeoutSeconds = GetTimeoutSeconds(provider, agentMode);
+        var timeoutMs = timeoutSeconds * 1000;
 
-        if (!process.WaitForExit(TimeoutSeconds * 1000))
+        process.OutputDataReceived += (sender, e) =>
         {
-            try { process.Kill(true); } catch { }
+            if (e.Data != null)
+            {
+                lock (stdoutBuilder)
+                {
+                    stdoutBuilder.AppendLine(e.Data);
+                }
+                refresh(); // Heartbeat extension
+                onProgress?.Invoke(e.Data);
+            }
+        };
+
+        process.ErrorDataReceived += (sender, e) =>
+        {
+            if (e.Data != null)
+            {
+                lock (stderrBuilder)
+                {
+                    stderrBuilder.AppendLine(e.Data);
+                }
+                refresh(); // Heartbeat extension
+                onProgress?.Invoke(e.Data);
+            }
+        };
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        try
+        {
+            while (!process.HasExited)
+            {
+                var elapsedSinceLastActivity = (DateTime.UtcNow - activityRef.Value).TotalMilliseconds;
+                if (elapsedSinceLastActivity > timeoutMs)
+                {
+                    try { process.Kill(true); } catch { }
+                    process.Dispose();
+                    throw new TimeoutException($"CLI process ({provider}) timed out due to inactivity.");
+                }
+                await Task.Delay(500);
+            }
+
+            process.WaitForExit();
+
+            var output = stdoutBuilder.ToString();
+            var stderr = stderrBuilder.ToString();
+
+            var result = ParseCliOutput(output, stderr, provider, systemPrompt, userPrompt);
             process.Dispose();
-            throw new TimeoutException($"CLI process ({provider}) timed out.");
+            return result;
         }
-
-        var output = await stdoutTask;
-        var stderr = await stderrTask;
-
-        var result = ParseCliOutput(output, stderr, provider, systemPrompt, userPrompt);
-        process.Dispose();
-        return result;
+        finally
+        {
+            _activeExecutions.TryRemove(executionId, out _);
+        }
     }
 
-    private ProcessStartInfo SetupProcessInfo(string provider, string? workingDirectory, string? outputFormat = null, bool agentMode = false, bool persistent = false)
+    private ProcessStartInfo SetupProcessInfo(string provider, string? workingDirectory, string? outputFormat = null, bool agentMode = false, bool persistent = false, string? model = null, string? variant = null, bool thinking = false)
     {
         var targetProvider = provider.ToLowerInvariant();
         string fileName = targetProvider switch
@@ -372,12 +523,31 @@ public class CliExecutorService : ICliExecutor, IDisposable
             processInfo.ArgumentList.Add("--color");
             processInfo.ArgumentList.Add("never");
             processInfo.ArgumentList.Add("--json");
+            if (!string.IsNullOrEmpty(model))
+            {
+                processInfo.ArgumentList.Add("--model");
+                processInfo.ArgumentList.Add(model);
+            }
         }
         else if (targetProvider == "opencode")
         {
             processInfo.ArgumentList.Add("run");
             processInfo.ArgumentList.Add("--format");
             processInfo.ArgumentList.Add("json");
+            if (!string.IsNullOrEmpty(model))
+            {
+                processInfo.ArgumentList.Add("-m");
+                processInfo.ArgumentList.Add(model);
+            }
+            if (!string.IsNullOrEmpty(variant))
+            {
+                processInfo.ArgumentList.Add("--variant");
+                processInfo.ArgumentList.Add(variant);
+            }
+            if (thinking)
+            {
+                processInfo.ArgumentList.Add("--thinking");
+            }
         }
         else if (targetProvider == "copilot")
         {
@@ -388,6 +558,11 @@ public class CliExecutorService : ICliExecutor, IDisposable
         else if (targetProvider == "antigravity" || targetProvider == "gemini" || fileName == "antigravity")
         {
             processInfo.ArgumentList.Add("--dangerously-skip-permissions");
+            if (!string.IsNullOrEmpty(model))
+            {
+                processInfo.ArgumentList.Add("--model");
+                processInfo.ArgumentList.Add(model);
+            }
         }
         else
         {
@@ -402,6 +577,11 @@ public class CliExecutorService : ICliExecutor, IDisposable
                 processInfo.ArgumentList.Add("--output-format");
                 processInfo.ArgumentList.Add(outputFormat ?? "json");
                 if (outputFormat == "stream-json") processInfo.ArgumentList.Add("--verbose");
+                if (!string.IsNullOrEmpty(model))
+                {
+                    processInfo.ArgumentList.Add("--model");
+                    processInfo.ArgumentList.Add(model);
+                }
             }
             else
             {

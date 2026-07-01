@@ -56,7 +56,7 @@ public class AiService
         return skills.Select(s => new AgentDefinition(s.Name, s.DisplayName, s.Description, s.Prompt)).ToList();
     }
 
-    public async Task<string> GetResponseAsync(string prompt, int userId, int? chatSessionId, string? provider = null, int? agentId = null)
+    public async Task<string> GetResponseAsync(string prompt, int userId, int? chatSessionId, string? provider = null, int? agentId = null, string? model = null, string? variant = null, bool thinking = false)
     {
         var user = await _db.Users.FindAsync(userId);
         bool isAdmin = user?.IsAdmin ?? false;
@@ -81,7 +81,9 @@ public class AiService
         fullPrompt = _promptService.ResolveImageReferences(fullPrompt, workingDir);
 
         var systemPrompt = await _promptService.BuildSystemPromptAsync(fullPrompt, userId, chatSessionId, agent?.RoleName, agent, session);
-        if (agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
+        if (string.IsNullOrWhiteSpace(provider) && agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
+        if (string.IsNullOrWhiteSpace(model) && agent?.PreferredModel != null) model = agent.PreferredModel;
+        if (string.IsNullOrWhiteSpace(variant) && agent?.PreferredVariant != null) variant = agent.PreferredVariant;
 
         var compressed = await _headroom.CompressAsync(systemPrompt, history, targetProvider);
         var effectiveSystem = compressed?.CompressedSystemPrompt ?? systemPrompt;
@@ -90,7 +92,7 @@ public class AiService
         effectivePrompt = _promptService.ResolveImageReferences(effectivePrompt, workingDir);
 
         var sw = Stopwatch.StartNew();
-        var result = await _cliExecutor.ExecuteAsync(effectivePrompt, targetProvider, effectiveSystem, prompt, workingDir);
+        var result = await _cliExecutor.ExecuteAsync(effectivePrompt, targetProvider, effectiveSystem, prompt, workingDir, model: model, variant: variant, thinking: thinking);
         sw.Stop();
 
         await LogAgentStepAsync(messageId, agent?.RoleName ?? "Assistant", result.Model, targetProvider, systemPrompt ?? "Default Assistant", fullPrompt, result.Output, (int)sw.ElapsedMilliseconds, result.PromptTokens, result.CompletionTokens, result.TotalTokens);
@@ -101,7 +103,7 @@ public class AiService
         return cleanResponse + (string.IsNullOrEmpty(toolHtml) ? "" : "\n" + toolHtml);
     }
 
-    public async Task<(string Html, List<AgentStep> Steps)> CooperateAsync(string task, int userId, int messageId, int? chatSessionId, string? provider = null, List<string>? selectedAgentNames = null, Func<string, string, Task>? onStepComplete = null, CrewProcessType processType = CrewProcessType.Hierarchical)
+    public async Task<(string Html, List<AgentStep> Steps)> CooperateAsync(string task, int userId, int messageId, int? chatSessionId, string? provider = null, List<string>? selectedAgentNames = null, Func<string, string, Task>? onStepComplete = null, CrewProcessType processType = CrewProcessType.Hierarchical, Func<string, string, Task>? onStepProgress = null)
     {
         var user = await _db.Users.FindAsync(userId);
         bool isAdmin = user?.IsAdmin ?? false;
@@ -110,12 +112,12 @@ public class AiService
             return ("拒绝执行：检测到代码修改指示。由于您没有管理员权限，无法执行涉及代码修改的操作。\nAccess Denied: Code modification request detected. Since you do not have administrator permissions, operations involving code modifications cannot be executed.", new List<AgentStep>());
         }
 
-        var result = await _collaborationService.CooperateAsync(task, userId, messageId, chatSessionId, provider, selectedAgentNames, onStepComplete, processType);
+        var result = await _collaborationService.CooperateAsync(task, userId, messageId, chatSessionId, provider, selectedAgentNames, onStepComplete, processType, onStepProgress);
 
         return result;
     }
 
-    public async IAsyncEnumerable<string> GetResponseStreamAsync(string prompt, int userId, int? chatSessionId, string? provider = null, int? agentId = null)
+    public async IAsyncEnumerable<string> GetResponseStreamAsync(string prompt, int userId, int? chatSessionId, string? provider = null, int? agentId = null, string? model = null, string? variant = null, bool thinking = false)
     {
         var user = await _db.Users.FindAsync(userId);
         bool isAdmin = user?.IsAdmin ?? false;
@@ -141,7 +143,9 @@ public class AiService
         string fullPrompt = string.IsNullOrEmpty(history) ? prompt : $"{history}\nUser: {prompt}";
         string processedPrompt = _promptService.ResolveImageReferences(fullPrompt, workingDir);
 
-        if (agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
+        if (string.IsNullOrWhiteSpace(provider) && agent?.PreferredProvider != null) targetProvider = agent.PreferredProvider;
+        if (string.IsNullOrWhiteSpace(model) && agent?.PreferredModel != null) model = agent.PreferredModel;
+        if (string.IsNullOrWhiteSpace(variant) && agent?.PreferredVariant != null) variant = agent.PreferredVariant;
 
         var compressed = await _headroom.CompressAsync(systemPrompt, history, targetProvider);
         var effectiveSystem = compressed?.CompressedSystemPrompt ?? systemPrompt;
@@ -161,7 +165,7 @@ public class AiService
 
         var filter = new WorkSummaryStreamFilter();
 
-        await foreach (var chunk in _cliExecutor.ExecuteStreamAsync(effectivePrompt, targetProvider, effectiveSystem, prompt, workingDir))
+        await foreach (var chunk in _cliExecutor.ExecuteStreamAsync(effectivePrompt, targetProvider, effectiveSystem, prompt, workingDir, model: model, variant: variant, thinking: thinking))
         {
             if (chunk.Text != null)
             {

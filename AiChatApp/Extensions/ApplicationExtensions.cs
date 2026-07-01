@@ -180,6 +180,11 @@ public static class ApplicationExtensions
             command.CommandText = "ALTER TABLE TodoItems ADD COLUMN IsNotified INTEGER NOT NULL DEFAULT 0;";
             command.ExecuteNonQuery();
         }
+        if (!todoColumns.Contains("ChatSessionId"))
+        {
+            command.CommandText = "ALTER TABLE TodoItems ADD COLUMN ChatSessionId INTEGER;";
+            command.ExecuteNonQuery();
+        }
 
         // 5a. Add UpdatedAt to LongTermMemories if missing
         command.CommandText = "PRAGMA table_info(LongTermMemories);";
@@ -315,6 +320,16 @@ public static class ApplicationExtensions
         if (!agentProfileColumns.Contains("Backstory"))
         {
             command.CommandText = "ALTER TABLE AgentProfiles ADD COLUMN Backstory TEXT NOT NULL DEFAULT '';";
+            command.ExecuteNonQuery();
+        }
+        if (!agentProfileColumns.Contains("PreferredModel"))
+        {
+            command.CommandText = "ALTER TABLE AgentProfiles ADD COLUMN PreferredModel TEXT;";
+            command.ExecuteNonQuery();
+        }
+        if (!agentProfileColumns.Contains("PreferredVariant"))
+        {
+            command.CommandText = "ALTER TABLE AgentProfiles ADD COLUMN PreferredVariant TEXT;";
             command.ExecuteNonQuery();
         }
 

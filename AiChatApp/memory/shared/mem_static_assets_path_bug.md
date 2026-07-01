@@ -5,10 +5,10 @@ type: user
 userId: 0
 tags: bug,frontend,static-assets,daisyui,css,js,path
 relations: relevanceScore: 80
-relevanceScore: 25
-accessCount: 158
+relevanceScore: 21
+accessCount: 161
 createdAt: 2026-04-30T11:04:48.0253430Z
-lastAccessedAt: 2026-05-18T01:44:29.0584014Z
+lastAccessedAt: 2026-06-25T08:34:03.0203192Z
 boundAgentRole: 
 ---
 

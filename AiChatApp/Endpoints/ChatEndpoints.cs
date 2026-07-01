@@ -251,6 +251,17 @@ public static class ChatEndpoints
             return Results.Ok();
         }).DisableAntiforgery();
 
+        group.MapGet("/lmstudio/models", async (IServiceProvider sp) => {
+            try {
+                var lmStudio = sp.GetService<LmStudioProvider>();
+                if (lmStudio == null) return Results.Ok(new List<string>());
+                var models = await lmStudio.GetModelsAsync();
+                return Results.Ok(models);
+            } catch {
+                return Results.Ok(new List<string>());
+            }
+        });
+
         group.MapPost("/user/settings/provider", async (HttpContext context, AppDbContext db, ClaimsPrincipal user) => {
             var form = await context.Request.ReadFormAsync();
             var provider = form["provider"].ToString();
@@ -298,6 +309,10 @@ public static class ChatEndpoints
             var sessionIdStr = form["sessionId"].ToString();
             int? projectId = int.TryParse(form["projectId"].ToString(), out var postedProjectId) ? postedProjectId : null;
             var provider = form["provider"].ToString();
+            var model = form["model"].ToString();
+            var variant = form["variant"].ToString();
+            var thinkingStr = form["thinking"].ToString();
+            bool thinking = thinkingStr == "true" || thinkingStr == "1";
             var selectedAgents = form["selectedAgents"].ToString().Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
             var agentIdStr = form["agentId"].ToString();
             int? agentId = int.TryParse(agentIdStr, out var aid) ? aid : null;
@@ -355,7 +370,7 @@ public static class ChatEndpoints
 
                 Message aMsg;
                 try {
-                    aiResponse = await ai.GetResponseAsync(enrichedContent, userId, session.Id, provider, agentId);
+                    aiResponse = await ai.GetResponseAsync(enrichedContent, userId, session.Id, provider, agentId, string.IsNullOrEmpty(model) ? null : model, string.IsNullOrEmpty(variant) ? null : variant, thinking);
                     string agentName = provider;
                     if (agentId.HasValue) {
                         var agentProfile = await db.AgentProfiles.FindAsync(agentId.Value);
@@ -388,6 +403,10 @@ public static class ChatEndpoints
             if (string.IsNullOrWhiteSpace(content))
                 content = "";
             var provider = form["provider"].ToString();
+            var model = form["model"].ToString();
+            var variant = form["variant"].ToString();
+            var thinkingStr = form["thinking"].ToString();
+            bool thinking = thinkingStr == "true" || thinkingStr == "1";
             var sessionIdStr = form["sessionId"].ToString();
             var agentIdStr = form["agentId"].ToString();
             int? agentId = int.TryParse(agentIdStr, out var aid) ? aid : null;
@@ -429,7 +448,7 @@ public static class ChatEndpoints
                 _ = StartKeepAliveAsync(context, keepAliveCts.Token);
 
                 try {
-                    await foreach (var chunk in ai.GetResponseStreamAsync(enrichedContent, userId, session.Id, provider, agentId))
+                    await foreach (var chunk in ai.GetResponseStreamAsync(enrichedContent, userId, session.Id, provider, agentId, string.IsNullOrEmpty(model) ? null : model, string.IsNullOrEmpty(variant) ? null : variant, thinking))
                     {
                         fullResponse.Append(chunk);
                         var data = chunk.Replace("\n", "\\n").Replace("\r", "\\r");
@@ -566,7 +585,12 @@ public static class ChatEndpoints
                     {
                         var payload = JsonSerializer.Serialize(new { role, html = stepHtml });
                         await SendEvent("step-complete", payload);
-                    }, processType: streamProcessType);
+                    }, processType: streamProcessType,
+                    onStepProgress: async (role, progress) =>
+                    {
+                        var payload = JsonSerializer.Serialize(new { role, progress });
+                        await SendEvent("step-progress", payload);
+                    });
                 keepAliveCts2.Cancel();
                 aMsg.Content = html;
                 session.UpdatedAt = DateTime.UtcNow;

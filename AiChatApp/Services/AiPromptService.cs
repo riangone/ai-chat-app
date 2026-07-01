@@ -116,23 +116,25 @@ public class AiPromptService
         var memoriesTask = _memorySearch.SearchAsync(prompt, userId, agentRole: agentRole);
         var policiesTask = LoadPoliciesAsync();
 
-        async Task<(List<Skill> Skills, ChatSession? Session, string SessionMemoryContext)> LoadDbDataAsync()
+        async Task<(List<Skill> Skills, ChatSession? Session, string SessionMemoryContext, TodoItem? Todo)> LoadDbDataAsync()
         {
             var skillsResult = await _memorySearch.SearchSkillsAsync(prompt, userId, agentRole);
             ChatSession? sessionResult = preloadedSession;
             string sessionMemoryContextResult = "";
+            TodoItem? todoResult = null;
             if (chatSessionId.HasValue)
             {
                 if (sessionResult == null) sessionResult = await _db.ChatSessions.Include(s => s.Project).ThenInclude(p => p!.Agents).FirstOrDefaultAsync(s => s.Id == chatSessionId.Value);
                 sessionMemoryContextResult = await _sessionMemory.ReadAllAsContextAsync(chatSessionId.Value);
+                todoResult = await _db.TodoItems.FirstOrDefaultAsync(t => t.ChatSessionId == chatSessionId.Value);
             }
-            return (skillsResult, sessionResult, sessionMemoryContextResult);
+            return (skillsResult, sessionResult, sessionMemoryContextResult, todoResult);
         }
 
         var dbTask = LoadDbDataAsync();
         await Task.WhenAll(memoriesTask, policiesTask, dbTask);
 
-        var (skills, session, sessionMemoryContext) = await dbTask;
+        var (skills, session, sessionMemoryContext, todo) = await dbTask;
         var memories = (await memoriesTask).Take(5).ToList();
         var policies = await policiesTask;
 
@@ -163,6 +165,10 @@ public class AiPromptService
                     sb.Append($"- {agent.RoleName}: {TruncateMessage(agent.SystemPrompt, 100)}\n");
                 }
             }
+        }
+        if (todo != null)
+        {
+            sb.Append($"\n\n[当前作业的待办任务]:\n任务名称: {todo.Title}\n任务描述: {todo.Description ?? "无"}\n状态: {(todo.IsCompleted ? "已完成" : "进行中")}\n请针对该任务与用户一同协作和开发。当用户问及相关任务时，请主动结合此任务的上下文进行回答。");
         }
         if (!string.IsNullOrEmpty(sessionMemoryContext)) sb.Append("\n\n" + Truncate(sessionMemoryContext, 2000));
         if (memories.Any()) { sb.Append("\n\n[ユーザーの既知情報・長期記憶]:\n以下はこのユーザーとのこれまでの会話から得られた情報です。応答内容や対応の仕方をこれに合わせて調整してください。\n"); foreach (var m in memories) sb.Append($"- {Truncate(m.Content, 300)}\n"); }

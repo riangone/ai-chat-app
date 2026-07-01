@@ -54,7 +54,7 @@ public class AiCollaborationService
         _logger = logger;
     }
 
-    public async Task<(string Html, List<AgentStep> Steps)> CooperateAsync(string task, int userId, int messageId, int? chatSessionId, string? provider = null, List<string>? selectedAgentNames = null, Func<string, string, Task>? onStepComplete = null, CrewProcessType processType = CrewProcessType.Hierarchical)
+    public async Task<(string Html, List<AgentStep> Steps)> CooperateAsync(string task, int userId, int messageId, int? chatSessionId, string? provider = null, List<string>? selectedAgentNames = null, Func<string, string, Task>? onStepComplete = null, CrewProcessType processType = CrewProcessType.Hierarchical, Func<string, string, Task>? onStepProgress = null)
     {
         var targetProvider = provider ?? "antigravity"; // Default to antigravity if not provided
         var workingDir = await GetProjectRootAsync(chatSessionId);
@@ -98,7 +98,9 @@ public class AiCollaborationService
             foreach (var agent in agentsToRun)
             {
                 string input = string.IsNullOrEmpty(lastOutput) ? task : $"Task: {task}\n\nPrevious Agent Output:\n{lastOutput}";
-                var step = await RunAgentStepAsync(agent.Name, agent.SystemPrompt, input, messageId, targetProvider, userId, chatSessionId, workingDir: sharedProjectRoot, policies: sharedPolicies, session: session, agentGoal: agent.Goal, agentBackstory: agent.Backstory);
+                var step = await RunAgentStepAsync(agent.Name, agent.SystemPrompt, input, messageId, targetProvider, userId, chatSessionId, workingDir: sharedProjectRoot, policies: sharedPolicies, session: session, agentGoal: agent.Goal, agentBackstory: agent.Backstory, onProgress: async (prog) => {
+                    if (onStepProgress != null) await onStepProgress(agent.Name, prog);
+                });
                 var toolOutput = await _toolExecutor.ExecuteToolsAsync(step.Output, sharedProjectRoot);
                 if (toolOutput != step.Output) { step.Output = toolOutput; await _db.SaveChangesAsync(); }
 
@@ -152,7 +154,9 @@ public class AiCollaborationService
             for (int attempt = 1; attempt <= stage.MaxAttempts; attempt++)
             {
                 string combinedInput = string.IsNullOrEmpty(contextFromPreviousStages) ? currentInput : $"Task: {task}\n\nContext from previous stages:\n{contextFromPreviousStages}\n\nCurrent stage input: {currentInput}";
-                stageStep = await RunAgentStepAsync(stage.Name, stagePersona, combinedInput, messageId, stage.Provider ?? targetProvider, userId, chatSessionId, attempt, pipelineProjectRoot, pipelinePolicies, session);
+                stageStep = await RunAgentStepAsync(stage.Name, stagePersona, combinedInput, messageId, stage.Provider ?? targetProvider, userId, chatSessionId, attempt, pipelineProjectRoot, pipelinePolicies, session, onProgress: async (prog) => {
+                    if (onStepProgress != null) await onStepProgress(stage.Name, prog);
+                });
                 stageStep.PromptVariantId = stageVariantId;
                 var toolOutput = await _toolExecutor.ExecuteToolsAsync(stageStep.Output, pipelineProjectRoot);
                 if (toolOutput != stageStep.Output) stageStep.Output = toolOutput;
@@ -198,7 +202,7 @@ public class AiCollaborationService
                     activePlan = plan;
                     var skills = await _skillManager.GetAllSkillsAsync(userId);
                     pipelineAgents ??= skills.Select(s => new AgentDefinition(s.Name, s.DisplayName, s.Description, s.Prompt)).ToList();
-                    activeBoard = await ExecuteTaskGraphAsync(plan, task, messageId, targetProvider, userId, chatSessionId, onStepComplete, steps, pipelineAgents, session);
+                    activeBoard = await ExecuteTaskGraphAsync(plan, task, messageId, targetProvider, userId, chatSessionId, onStepComplete, steps, pipelineAgents, session, onStepProgress);
                     currentInput = BuildTaskGraphReviewInput(plan, activeBoard, task);
                     contextFromPreviousStages = $"Orchestrator plan:\n{stageStep.Output}";
                     continue;
@@ -221,12 +225,14 @@ public class AiCollaborationService
                 var feedback = TryParseReviewerFeedback(reviewerStep.Output);
                 if (feedback?.OverallVerdict is "revision_needed" or "failed")
                 {
-                    var revised = await ReviseFailedSubtasksAsync(activePlan, feedback, activeBoard, messageId, targetProvider, userId, chatSessionId, onStepComplete, steps, pipelineAgents!, session);
+                    var revised = await ReviseFailedSubtasksAsync(activePlan, feedback, activeBoard, messageId, targetProvider, userId, chatSessionId, onStepComplete, steps, pipelineAgents!, session, onStepProgress);
                     if (revised)
                     {
                         var reviewResolved = await _pipelineLoader.ResolvePromptAsync("stage_reviewer.md", _db, Random.Shared);
                         var reviewInput = BuildTaskGraphReviewInput(activePlan, activeBoard, task);
-                        var newReviewStep = await RunAgentStepAsync("Reviewer", reviewResolved.Content, reviewInput, messageId, targetProvider, userId, chatSessionId, 2, pipelineProjectRoot, pipelinePolicies);
+                        var newReviewStep = await RunAgentStepAsync("Reviewer", reviewResolved.Content, reviewInput, messageId, targetProvider, userId, chatSessionId, 2, pipelineProjectRoot, pipelinePolicies, onProgress: async (prog) => {
+                            if (onStepProgress != null) await onStepProgress("Reviewer", prog);
+                        });
                         newReviewStep.PromptVariantId = reviewResolved.VariantId;
                         newReviewStep.WasAccepted = true;
                         await _db.SaveChangesAsync();
@@ -247,7 +253,7 @@ public class AiCollaborationService
         return (_responseProcessor.BuildCooperativeHtml(steps, steps.Last().Output), steps);
     }
 
-    public async Task<AgentStep> RunAgentStepAsync(string role, string persona, string input, int messageId, string provider, int userId, int? chatSessionId = null, int attemptNumber = 1, string? workingDir = null, string? policies = null, ChatSession? session = null, IEnumerable<LongTermMemory>? sharedMemories = null, IEnumerable<Skill>? sharedSkills = null, string? agentGoal = null, string? agentBackstory = null)
+    public async Task<AgentStep> RunAgentStepAsync(string role, string persona, string input, int messageId, string provider, int userId, int? chatSessionId = null, int attemptNumber = 1, string? workingDir = null, string? policies = null, ChatSession? session = null, IEnumerable<LongTermMemory>? sharedMemories = null, IEnumerable<Skill>? sharedSkills = null, string? agentGoal = null, string? agentBackstory = null, Action<string>? onProgress = null)
     {
         var roleSkillsTask = sharedSkills != null ? Task.FromResult(sharedSkills.ToList()) : _memorySearch.SearchSkillsAsync(input, userId, agentRole: role);
         var memoriesTask = sharedMemories != null ? Task.FromResult(sharedMemories.ToList()) : _memorySearch.SearchAsync(input, userId, agentRole: role);
@@ -286,7 +292,7 @@ public class AiCollaborationService
         if (roleSkills.Any()) { sb.AppendLine("\n[追加スキル指示]:"); sb.Append(string.Join("\n", roleSkills.Select(s => $"- {s.Description}"))); }
         string fullPersona = sb.ToString();
         var sw = Stopwatch.StartNew();
-        var result = await _cliExecutor.ExecuteAsync(input, provider, fullPersona, input, workingDir, agentMode: true);
+        var result = await _cliExecutor.ExecuteAsync(input, provider, fullPersona, input, workingDir, agentMode: true, onProgress: onProgress);
         sw.Stop();
         if (chatSessionId.HasValue) await _responseProcessor.ParseAndSaveMemoryAsync(chatSessionId.Value, role, result.Output);
         var step = new AgentStep { MessageId = messageId, Role = role, Model = string.IsNullOrEmpty(result.Model) ? provider : result.Model, Provider = provider.ToLower(), PromptTokens = result.PromptTokens, CompletionTokens = result.CompletionTokens, TotalTokens = result.TotalTokens, Persona = _promptService.TruncateMessage(fullPersona, 1000), Input = _promptService.TruncateMessage(input, 2000), Output = result.Output, AttemptNumber = attemptNumber, WasAccepted = true, DurationMs = (int)sw.ElapsedMilliseconds, CreatedAt = DateTime.UtcNow };
@@ -325,35 +331,81 @@ public class AiCollaborationService
     private static HashSet<string> GetSubtasksToRevise(List<SubtaskDef> all, HashSet<string> failed) { var toRevise = new HashSet<string>(failed); bool changed = true; while (changed) { changed = false; foreach (var st in all) if (!toRevise.Contains(st.Id) && st.Deps.Any(d => toRevise.Contains(d))) { toRevise.Add(st.Id); changed = true; } } return toRevise; }
     private string BuildAgentInput(SubtaskDef subtask, TaskBlackboard board, OrchestratorPlan plan, string? reviewerIssues = null) { var sb = new StringBuilder(); sb.AppendLine($"## Your Assignment: {subtask.Title}"); sb.AppendLine($"**Task:** {subtask.Task}"); sb.AppendLine($"**Expected Output:** {subtask.ExpectedOutput}"); sb.Append(board.BuildDepContext(subtask.Deps, plan.Subtasks)); if (!string.IsNullOrEmpty(reviewerIssues)) { sb.AppendLine("\n## Revision Required — Reviewer Feedback:"); sb.AppendLine(reviewerIssues); sb.AppendLine("\nPlease address ALL issues above in your revised output."); } return sb.ToString(); }
 
-    public async Task RunSubtaskLayerAsync(List<SubtaskDef> layer, OrchestratorPlan plan, TaskBlackboard board, int messageId, string provider, int userId, int? chatSessionId, Func<string, string, Task>? onStepComplete, List<AgentStep> steps, List<AgentDefinition> allAgents, string? projectRoot, Dictionary<string, string>? reviewerIssuesPerTask = null, int revisionNumber = 0, ChatSession? session = null) {
+    public async Task RunSubtaskLayerAsync(List<SubtaskDef> layer, OrchestratorPlan plan, TaskBlackboard board, int messageId, string provider, int userId, int? chatSessionId, Func<string, string, Task>? onStepComplete, List<AgentStep> steps, List<AgentDefinition> allAgents, string? projectRoot, Dictionary<string, string>? reviewerIssuesPerTask = null, int revisionNumber = 0, ChatSession? session = null, Func<string, string, Task>? onStepProgress = null) {
         var policiesTask = _promptService.LoadPoliciesAsync(); var memoriesTask = _memorySearch.SearchAsync(plan.Goal, userId); var skillsTask = _memorySearch.SearchSkillsAsync(plan.Goal, userId);
         var policies = await policiesTask; var sharedMemories = await memoriesTask; var sharedSkills = await skillsTask;
         var layerTasks = layer.Select(async subtask => {
+            // CHECKPOINT: If subtask is already loaded from checkpoint, skip execution
+            var existingArtifact = board.Read(subtask.Id);
+            if (existingArtifact != null)
+            {
+                _logger.LogInformation("Subtask {SubtaskId} loaded from checkpoint, skipping execution.", subtask.Id);
+                return (subtask.Id, (AgentStep?)null);
+            }
+
             var agentDef = allAgents.FirstOrDefault(a => a.Name.Equals(subtask.Agent, StringComparison.OrdinalIgnoreCase)) ?? new AgentDefinition(subtask.Agent, subtask.Agent, "", "You are a helpful AI assistant.");
             string? issues = null; reviewerIssuesPerTask?.TryGetValue(subtask.Id, out issues); var input = BuildAgentInput(subtask, board, plan, issues);
-            var step = await RunAgentStepAsync(agentDef.Name, agentDef.SystemPrompt, input, messageId, provider, userId, chatSessionId, revisionNumber + 1, projectRoot, policies, session, null, null, agentDef.Goal, agentDef.Backstory);
+            var step = await RunAgentStepAsync(agentDef.Name, agentDef.SystemPrompt, input, messageId, provider, userId, chatSessionId, revisionNumber + 1, projectRoot, policies, session, null, null, agentDef.Goal, agentDef.Backstory, onProgress: async (prog) => {
+                if (onStepProgress != null) await onStepProgress($"{agentDef.Name}: {subtask.Title}", prog);
+            });
             var metadata = ExtractMetadataFromOutput(step.Output);
             board.Write(subtask.Id, agentDef.Name, step.Output, revision: revisionNumber, metadata: metadata);
+
+            // CHECKPOINT: Save current status to checkpoint file
+            await SaveCheckpointAsync(projectRoot, plan.Goal, plan, board);
+
             _ = Task.Run(async () => { try { await _evalService.EvaluateStepAsync(step.Id, subtask.Task, step.Output, provider); } catch (Exception ex) { _logger.LogError(ex, "EvaluateStepAsync failed for step {StepId}", step.Id); } });
             return (subtask.Id, step);
         }).ToList();
         var results = await Task.WhenAll(layerTasks);
-        foreach (var (_, step) in results) { steps.Add(step); if (onStepComplete != null) await onStepComplete(step.Role, _responseProcessor.BuildStepHtml(step)); }
+        foreach (var (subtaskId, step) in results) { 
+            if (step != null) {
+                steps.Add(step); 
+                if (onStepComplete != null) {
+                    var def = plan.Subtasks.FirstOrDefault(s => s.Id == subtaskId);
+                    var displayRole = def != null ? $"{step.Role}: {def.Title}" : step.Role;
+                    await onStepComplete(displayRole, _responseProcessor.BuildStepHtml(step)); 
+                }
+            }
+        }
     }
 
-    public async Task<TaskBlackboard> ExecuteTaskGraphAsync(OrchestratorPlan plan, string originalTask, int messageId, string defaultProvider, int userId, int? chatSessionId, Func<string, string, Task>? onStepComplete, List<AgentStep> steps, List<AgentDefinition> allAgents, ChatSession? session = null) {
+    public async Task<TaskBlackboard> ExecuteTaskGraphAsync(OrchestratorPlan plan, string originalTask, int messageId, string defaultProvider, int userId, int? chatSessionId, Func<string, string, Task>? onStepComplete, List<AgentStep> steps, List<AgentDefinition> allAgents, ChatSession? session = null, Func<string, string, Task>? onStepProgress = null) {
         var projectRoot = await GetProjectRootAsync(chatSessionId); var board = new TaskBlackboard(); var layers = TopologicalLayers(plan.Subtasks);
-        foreach (var layer in layers) await RunSubtaskLayerAsync(layer, plan, board, messageId, defaultProvider, userId, chatSessionId, onStepComplete, steps, allAgents, projectRoot, session: session);
+
+        // CHECKPOINT: Load existing checkpoint if available
+        await LoadCheckpointAsync(projectRoot, plan.Goal, plan, board);
+
+        foreach (var layer in layers) await RunSubtaskLayerAsync(layer, plan, board, messageId, defaultProvider, userId, chatSessionId, onStepComplete, steps, allAgents, projectRoot, session: session, onStepProgress: onStepProgress);
+
+        // CHECKPOINT: Cleanup checkpoint file upon successful execution
+        if (!string.IsNullOrEmpty(projectRoot))
+        {
+            try
+            {
+                var checkpointFile = Path.Combine(projectRoot, ".hyperion_checkpoint.json");
+                if (File.Exists(checkpointFile))
+                {
+                    File.Delete(checkpointFile);
+                    _logger.LogInformation("Cleared checkpoint after successful task completion.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to clear checkpoint file");
+            }
+        }
+
         return board;
     }
 
-    public async Task<bool> ReviseFailedSubtasksAsync(OrchestratorPlan plan, ReviewerFeedback feedback, TaskBlackboard board, int messageId, string defaultProvider, int userId, int? chatSessionId, Func<string, string, Task>? onStepComplete, List<AgentStep> steps, List<AgentDefinition> allAgents, ChatSession? session = null) {
+    public async Task<bool> ReviseFailedSubtasksAsync(OrchestratorPlan plan, ReviewerFeedback feedback, TaskBlackboard board, int messageId, string defaultProvider, int userId, int? chatSessionId, Func<string, string, Task>? onStepComplete, List<AgentStep> steps, List<AgentDefinition> allAgents, ChatSession? session = null, Func<string, string, Task>? onStepProgress = null) {
         var failedIds = feedback.SubtaskReviews.Where(r => r.Verdict is "revision_needed" or "failed").Select(r => r.SubtaskId).ToHashSet(); if (!failedIds.Any()) return false;
         var toRevise = GetSubtasksToRevise(plan.Subtasks, failedIds);
         var issuesMap = feedback.SubtaskReviews.Where(r => toRevise.Contains(r.SubtaskId) && r.Issues.Any()).ToDictionary(r => r.SubtaskId, r => string.Join("\n", r.Issues.Select(i => $"- [{i.Severity.ToUpper()}] {i.Description}\n  → Suggestion: {i.Suggestion}")));
         var subtasksToRevise = plan.Subtasks.Where(s => toRevise.Contains(s.Id)).ToList(); var layers = TopologicalLayers(subtasksToRevise); var projectRoot = await GetProjectRootAsync(chatSessionId);
         _logger.LogInformation("Directing revision for {Count} subtasks: {Ids}", toRevise.Count, string.Join(", ", toRevise));
-        foreach (var layer in layers) await RunSubtaskLayerAsync(layer, plan, board, messageId, defaultProvider, userId, chatSessionId, onStepComplete, steps, allAgents, projectRoot, issuesMap, 1, session);
+        foreach (var layer in layers) await RunSubtaskLayerAsync(layer, plan, board, messageId, defaultProvider, userId, chatSessionId, onStepComplete, steps, allAgents, projectRoot, issuesMap, 1, session, onStepProgress: onStepProgress);
         return true;
     }
 
@@ -417,4 +469,98 @@ public class AiCollaborationService
     public record ReviewIssue(string Severity, string Description, string Suggestion);
     public record SubtaskReview(string SubtaskId, string Verdict, double Score, List<ReviewIssue> Issues);
     public record ReviewerFeedback(string OverallVerdict, double FinalScore, List<SubtaskReview> SubtaskReviews, string Summary);
+
+    public class CheckpointData
+    {
+        public string OriginalTask { get; set; } = "";
+        public string Goal { get; set; } = "";
+        public Dictionary<string, CheckpointArtifact> CompletedSubtasks { get; set; } = new();
+    }
+
+    public class CheckpointArtifact
+    {
+        public string AgentRole { get; set; } = "";
+        public string Content { get; set; } = "";
+        public string ArtifactType { get; set; } = "text";
+        public int RevisionNumber { get; set; }
+        public string? Metadata { get; set; }
+        public DateTime CompletedAt { get; set; }
+    }
+
+    private async Task SaveCheckpointAsync(string? projectRoot, string originalTask, OrchestratorPlan plan, TaskBlackboard board)
+    {
+        if (string.IsNullOrEmpty(projectRoot)) return;
+        try
+        {
+            var checkpointFile = Path.Combine(projectRoot, ".hyperion_checkpoint.json");
+            var data = new CheckpointData
+            {
+                OriginalTask = originalTask,
+                Goal = plan.Goal,
+                CompletedSubtasks = new Dictionary<string, CheckpointArtifact>()
+            };
+
+            foreach (var subtask in plan.Subtasks)
+            {
+                var artifact = board.Read(subtask.Id);
+                if (artifact != null)
+                {
+                    data.CompletedSubtasks[subtask.Id] = new CheckpointArtifact
+                    {
+                        AgentRole = artifact.AgentRole,
+                        Content = artifact.Content,
+                        ArtifactType = artifact.ArtifactType,
+                        RevisionNumber = artifact.RevisionNumber,
+                        Metadata = artifact.Metadata,
+                        CompletedAt = artifact.CreatedAt
+                    };
+                }
+            }
+
+            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(checkpointFile, json, Encoding.UTF8);
+            _logger.LogInformation("Saved task graph checkpoint to {File}", checkpointFile);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save task graph checkpoint");
+        }
+    }
+
+    private async Task LoadCheckpointAsync(string? projectRoot, string originalTask, OrchestratorPlan plan, TaskBlackboard board)
+    {
+        if (string.IsNullOrEmpty(projectRoot)) return;
+        try
+        {
+            var checkpointFile = Path.Combine(projectRoot, ".hyperion_checkpoint.json");
+            if (!File.Exists(checkpointFile)) return;
+
+            var json = await File.ReadAllTextAsync(checkpointFile, Encoding.UTF8);
+            var data = JsonSerializer.Deserialize<CheckpointData>(json);
+            if (data == null) return;
+
+            if (data.OriginalTask != originalTask || data.Goal != plan.Goal)
+            {
+                _logger.LogInformation("Checkpoint task or goal mismatch. Ignoring checkpoint.");
+                return;
+            }
+
+            foreach (var kvp in data.CompletedSubtasks)
+            {
+                board.Write(
+                    subtaskId: kvp.Key,
+                    agentRole: kvp.Value.AgentRole,
+                    content: kvp.Value.Content,
+                    artifactType: kvp.Value.ArtifactType,
+                    revision: kvp.Value.RevisionNumber,
+                    metadata: kvp.Value.Metadata
+                );
+                _logger.LogInformation("Loaded subtask {SubtaskId} from checkpoint.", kvp.Key);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load task graph checkpoint");
+        }
+    }
 }

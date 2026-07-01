@@ -93,6 +93,79 @@ public static class TodoEndpoints
 
             return Results.Content("", "text/html");
         }).DisableAntiforgery();
+
+        // POST /api/todos/{id}/chat → create or load chat session for a todo item
+        group.MapPost("/{id}/chat", async (int id, ClaimsPrincipal user, AppDbContext db, AiService ai) =>
+        {
+            var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var item = await db.TodoItems.FirstOrDefaultAsync(t => t.Id == id && t.UserId == userId);
+            if (item is null) return Results.NotFound();
+
+            // If we already have a ChatSessionId, verify if the session still exists
+            if (item.ChatSessionId.HasValue)
+            {
+                var existingSession = await db.ChatSessions.FirstOrDefaultAsync(s => s.Id == item.ChatSessionId.Value && s.UserId == userId);
+                if (existingSession != null)
+                {
+                    return Results.Ok(new { sessionId = existingSession.Id });
+                }
+            }
+
+            // Create new ChatSession
+            var session = new ChatSession
+            {
+                UserId = userId,
+                Title = $"Todo: {item.Title}",
+                PreferredProvider = ai.DefaultProvider,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            db.ChatSessions.Add(session);
+            await db.SaveChangesAsync();
+
+            // Link the session to the todo
+            item.ChatSessionId = session.Id;
+            await db.SaveChangesAsync();
+
+            // Create initial user message
+            var descContext = string.IsNullOrWhiteSpace(item.Description) ? "" : $"\n任务描述：{item.Description}";
+            var userMsgContent = $"针对待办任务【{item.Title}】开始作业。{descContext}\n请协助我分析并提供实现或优化方案。";
+            var uMsg = new Message
+            {
+                ChatSessionId = session.Id,
+                Content = userMsgContent,
+                IsAi = false,
+                Timestamp = DateTime.UtcNow
+            };
+            db.Messages.Add(uMsg);
+            await db.SaveChangesAsync();
+
+            // Request AI Response
+            string aiResponse;
+            try
+            {
+                aiResponse = await ai.GetResponseAsync(userMsgContent, userId, session.Id, ai.DefaultProvider, null, null, null, false);
+            }
+            catch (Exception ex)
+            {
+                aiResponse = ex is TimeoutException
+                    ? "[AI 响应超时。已为您创建会话，请在会话中手动发送消息以重试。]"
+                    : $"[AI 响应出错：{ex.Message}]";
+            }
+
+            var aMsg = new Message
+            {
+                ChatSessionId = session.Id,
+                Content = aiResponse,
+                IsAi = true,
+                AgentName = ai.DefaultProvider,
+                Timestamp = DateTime.UtcNow
+            };
+            db.Messages.Add(aMsg);
+            await db.SaveChangesAsync();
+
+            return Results.Ok(new { sessionId = session.Id });
+        }).DisableAntiforgery();
     }
 
     private static string BuildListHtml(List<TodoItem> items, int page, int pageSize, bool hasMore)
@@ -121,7 +194,18 @@ public static class TodoEndpoints
                 hx-put="/api/todos/{item.Id}/toggle"
                 hx-target="#todo-{item.Id}"
                 hx-swap="outerHTML" />
-              <span class="flex-1 {completedClass}">{encodedTitle}</span>
+              <span class="flex-1 {completedClass} cursor-pointer hover:text-primary transition-colors duration-200"
+                onclick="startChatFromTodo({item.Id})"
+                title="与 AI 一起作业">
+                {encodedTitle}
+              </span>
+              <button class="btn btn-ghost btn-xs text-primary"
+                onclick="startChatFromTodo({item.Id})"
+                title="与 AI 一起作业">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
+                </svg>
+              </button>
               <button class="btn btn-ghost btn-xs text-error"
                 hx-delete="/api/todos/{item.Id}"
                 hx-target="#todo-{item.Id}"

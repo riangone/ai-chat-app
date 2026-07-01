@@ -67,7 +67,8 @@ public static class ProjectApiController
             var agent = await projectService.AddAgentAsync(id,
                 form["roleName"].ToString(), form["systemPrompt"].ToString(),
                 form["color"].ToString(), form["preferredProvider"].ToString(),
-                form["goal"].ToString(), form["backstory"].ToString());
+                form["goal"].ToString(), form["backstory"].ToString(),
+                form["preferredModel"].ToString(), form["preferredVariant"].ToString());
             return Results.Ok(agent);
         }).DisableAntiforgery();
 
@@ -79,7 +80,7 @@ public static class ProjectApiController
             if (project == null) return Results.NotFound();
             await projectService.DeleteAgentAsync(agentId, userId);
             return Results.Ok();
-        });
+        }).DisableAntiforgery();
 
         group.MapPut("/{projectId}/agents/{agentId}", async (
             int projectId, int agentId, HttpContext context,
@@ -90,7 +91,8 @@ public static class ProjectApiController
             var agent = await projectService.UpdateAgentAsync(agentId,
                 form["roleName"].ToString(), form["systemPrompt"].ToString(),
                 form["color"].ToString(), form["preferredProvider"].ToString(), userId,
-                form["goal"].ToString(), form["backstory"].ToString());
+                form["goal"].ToString(), form["backstory"].ToString(),
+                form["preferredModel"].ToString(), form["preferredVariant"].ToString());
             return agent != null ? Results.Ok(agent) : Results.NotFound();
         }).DisableAntiforgery();
         

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vocab Quest - Word Game</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.87.0/dist/phaser.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0f172a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: system-ui, sans-serif;
+        }
+        #game-container {
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 0 60px rgba(99, 102, 241, 0.15);
+        }
+        #back-link {
+            position: fixed;
+            top: 16px;
+            left: 16px;
+            color: #94a3b8;
+            text-decoration: none;
+            font-size: 14px;
+            background: rgba(30, 41, 59, 0.8);
+            padding: 8px 16px;
+            border-radius: 8px;
+            backdrop-filter: blur(8px);
+            transition: 0.2s;
+        }
+        #back-link:hover { color: #e2e8f0; background: rgba(30, 41, 59, 1); }
+    </style>
+</head>
+<body>
+    <a id="back-link" href="/">← Back to Chat</a>
+    <div id="game-container"></div>
+    <script src="game.js"></script>
+</body>
+</html>
