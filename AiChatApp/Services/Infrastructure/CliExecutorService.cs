@@ -61,9 +61,11 @@ public class CliExecutorService : ICliExecutor, IDisposable
     }
 
     // Only stdin-based providers can be pre-warmed; arg-based ones need the prompt at spawn time.
+    // claude/claudecode also need the system prompt at spawn time (via --system-prompt), so they can't be pre-warmed either.
     private static bool SupportsPreWarm(string normalizedProvider) =>
         normalizedProvider != "opencode" && normalizedProvider != "copilot" &&
-        normalizedProvider != "antigravity" && normalizedProvider != "gemini";
+        normalizedProvider != "antigravity" && normalizedProvider != "gemini" &&
+        normalizedProvider != "claude" && normalizedProvider != "claudecode";
 
     private Process? ClaimWarmProcess(string key)
     {
@@ -143,7 +145,8 @@ public class CliExecutorService : ICliExecutor, IDisposable
         var useJsonStreaming = targetProvider is "claude" or "claudecode" or "copilot" or "codex" or "opencode";
 
         var format = outputFormat ?? (useJsonStreaming ? "stream-json" : null);
-        var processInfo = SetupProcessInfo(provider ?? DefaultProvider, workingDirectory, format, agentMode: agentMode, persistent: false, model: model, variant: variant, thinking: thinking);
+        var isClaudeCli = targetProvider == "claude" || targetProvider == "claudecode";
+        var processInfo = SetupProcessInfo(provider ?? DefaultProvider, workingDirectory, format, agentMode: agentMode, persistent: false, model: model, variant: variant, thinking: thinking, systemPrompt: isClaudeCli ? systemPrompt : null);
 
         // --- Track parent-child execution relationship ---
         var executionId = Guid.NewGuid().ToString();
@@ -166,7 +169,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
         _activeExecutions.TryAdd(executionId, (parentId, refresh));
         // -------------------------------------------------
 
-        string inputToStdin = string.IsNullOrEmpty(systemPrompt)
+        string inputToStdin = isClaudeCli || string.IsNullOrEmpty(systemPrompt)
             ? prompt
             : $"{systemPrompt}\n\n{prompt}";
 
@@ -350,8 +353,13 @@ public class CliExecutorService : ICliExecutor, IDisposable
         var effectiveFormat = outputFormat ?? "json";
         var warmKey = $"{targetProvider}_{workingDirectory ?? "default"}_{effectiveFormat}_{model ?? ""}";
 
-        var processInfo = SetupProcessInfo(provider, workingDirectory, outputFormat: outputFormat, agentMode: agentMode, persistent: false, model: model, variant: variant, thinking: thinking);
-        string inputToStdin = string.IsNullOrEmpty(systemPrompt) ? prompt : $"System: {systemPrompt}\n\nUser: {prompt}";
+        var isClaudeCli = targetProvider == "claude" || targetProvider == "claudecode";
+        var processInfo = SetupProcessInfo(provider, workingDirectory, outputFormat: outputFormat, agentMode: agentMode, persistent: false, model: model, variant: variant, thinking: thinking, systemPrompt: isClaudeCli ? systemPrompt : null);
+        // No "System: .../User: ..." role labels here — antigravity/opencode/copilot/codex have no
+        // dedicated system-prompt flag (unlike claude's --system-prompt above), so the persona text
+        // has to travel in the same blob as the user prompt anyway. Keep it unlabeled so it doesn't
+        // read as a spoofed protocol message, matching ExecuteStreamAsync's format below.
+        string inputToStdin = isClaudeCli || string.IsNullOrEmpty(systemPrompt) ? prompt : $"{systemPrompt}\n\n{prompt}";
 
         // --- Track parent-child execution relationship ---
         var executionId = Guid.NewGuid().ToString();
@@ -485,7 +493,7 @@ public class CliExecutorService : ICliExecutor, IDisposable
         }
     }
 
-    private ProcessStartInfo SetupProcessInfo(string provider, string? workingDirectory, string? outputFormat = null, bool agentMode = false, bool persistent = false, string? model = null, string? variant = null, bool thinking = false)
+    private ProcessStartInfo SetupProcessInfo(string provider, string? workingDirectory, string? outputFormat = null, bool agentMode = false, bool persistent = false, string? model = null, string? variant = null, bool thinking = false, string? systemPrompt = null)
     {
         var targetProvider = provider.ToLowerInvariant();
         string fileName = targetProvider switch
@@ -558,6 +566,8 @@ public class CliExecutorService : ICliExecutor, IDisposable
         else if (targetProvider == "antigravity" || targetProvider == "gemini" || fileName == "antigravity")
         {
             processInfo.ArgumentList.Add("--dangerously-skip-permissions");
+            processInfo.ArgumentList.Add("--print-timeout");
+            processInfo.ArgumentList.Add("120m");
             if (!string.IsNullOrEmpty(model))
             {
                 processInfo.ArgumentList.Add("--model");
@@ -581,6 +591,17 @@ public class CliExecutorService : ICliExecutor, IDisposable
                 {
                     processInfo.ArgumentList.Add("--model");
                     processInfo.ArgumentList.Add(model);
+                }
+                // Pass the persona/tool instructions as a genuine system prompt instead of faking
+                // "System: ...\n\nUser: ..." text in stdin — the latter reads as an embedded prompt
+                // injection attempt to the model and triggers its injection-detection disclosure.
+                // Use --system-prompt (full replace), not --append-system-prompt: appending keeps the
+                // default Claude Code system prompt active, which still flags the persona/tool override
+                // as an injection attempt even when delivered as genuine system-role content.
+                if (!string.IsNullOrEmpty(systemPrompt))
+                {
+                    processInfo.ArgumentList.Add("--system-prompt");
+                    processInfo.ArgumentList.Add(systemPrompt);
                 }
             }
             else
