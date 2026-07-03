@@ -6,9 +6,9 @@ userId: 1
 tags: diary-companion,DashboardController,bugfix
 relations: diary-companion,DashboardController,_DiaryDashboardDebugFactory.cs,views/Dashboard/Index.cshtml,docs/detailed_design_for_additional_framework_features.md,config/layout.yml,project.yaml,_SectionInteractiveForm.cshtml,DiaryForm.yaml,database/diary-companion.db,views/_Layout.cshtml,Hooks/DiaryCompanionHooks.cs
 relevanceScore: 90
-accessCount: 28
+accessCount: 32
 createdAt: 2026-07-02T08:49:36.6550521Z
-lastAccessedAt: 2026-07-03T04:06:58.5351194Z
+lastAccessedAt: 2026-07-03T05:06:21.9747532Z
 boundAgentRole: 
 ---
 

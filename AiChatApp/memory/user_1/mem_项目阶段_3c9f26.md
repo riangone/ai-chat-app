@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: 项目阶段,安全重构,声明式授权,敏感字段脱敏
 relations: PagePermissionService,declarative authorization,sensitive field masking
-relevanceScore: 29
+relevanceScore: 22
 accessCount: 0
 createdAt: 2026-07-01T05:02:51.3223563Z
 lastAccessedAt: 2026-07-01T05:02:51.3223566Z

@@ -6,9 +6,9 @@ userId: 1
 tags: project,technical,background-tasks
 relations: AiChatApp,NetYamlForge,Loop Engineering,ProjectPulseService,SkillManagerService,AiService,diary-companion,feature/hyperion-improvements
 relevanceScore: 90
-accessCount: 1
+accessCount: 4
 createdAt: 2026-07-03T03:47:36.1710157Z
-lastAccessedAt: 2026-07-03T04:06:58.5351195Z
+lastAccessedAt: 2026-07-03T04:51:03.7165599Z
 boundAgentRole: 
 ---
 

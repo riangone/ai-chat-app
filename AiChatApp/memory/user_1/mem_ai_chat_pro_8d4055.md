@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: ai-chat-Pro,AiChatApp,tech_stack
 relations: ai-chat-pro,AiChatApp,ASP.NET Core,HTMX,opencode
-relevanceScore: 86
+relevanceScore: 82
 accessCount: 0
 createdAt: 2026-07-02T02:17:48.0136243Z
 lastAccessedAt: 2026-07-02T02:17:56.1228140Z

@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: 项目结构,代码库,AiLanguage
 relations: NetYamlForge,DiaryCompanionHooks.cs,AiLanguage
-relevanceScore: 46
+relevanceScore: 40
 accessCount: 0
 createdAt: 2026-07-01T10:08:43.0815219Z
 lastAccessedAt: 2026-07-01T10:08:43.0815220Z

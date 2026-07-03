@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: tech_stack,pwa,aspnet_core
 relations: _Layout.cshtml,manifest.json,service-worker.js,PWA
-relevanceScore: 80
+relevanceScore: 76
 accessCount: 0
 createdAt: 2026-07-02T04:26:42.2300570Z
 lastAccessedAt: 2026-07-02T04:26:42.2300570Z

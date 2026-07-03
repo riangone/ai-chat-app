@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: 平台优化,超时解决,最佳实践
 relations: Antigravity,WaitMsBeforeAsync,grep_search
-relevanceScore: 76
+relevanceScore: 72
 accessCount: 1
 createdAt: 2026-07-01T12:46:59.6095144Z
 lastAccessedAt: 2026-07-02T02:14:31.8170625Z

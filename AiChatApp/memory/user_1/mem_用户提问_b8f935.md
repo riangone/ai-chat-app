@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: 用户提问,系统设定,权限
 relations: 用户,系统设定
-relevanceScore: 76
+relevanceScore: 72
 accessCount: 0
 createdAt: 2026-07-02T02:57:34.8958781Z
 lastAccessedAt: 2026-07-02T02:57:34.8958782Z

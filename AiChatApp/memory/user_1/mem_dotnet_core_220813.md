@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: dotnet-core,middleware,bug-fix,routing
 relations: ASP.NET Core,app.UseStaticFiles(),ServiceWorker
-relevanceScore: 80
+relevanceScore: 76
 accessCount: 0
 createdAt: 2026-07-02T04:55:28.5980737Z
 lastAccessedAt: 2026-07-02T04:55:28.5980738Z

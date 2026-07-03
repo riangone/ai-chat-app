@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: 代码架构,PagePermissionService
 relations: PagePermissionService
-relevanceScore: 29
+relevanceScore: 22
 accessCount: 0
 createdAt: 2026-07-01T05:02:51.3236314Z
 lastAccessedAt: 2026-07-01T05:02:51.3236316Z

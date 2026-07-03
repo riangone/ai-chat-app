@@ -125,11 +125,18 @@ public class PulseActionService
         else
             existingLedger.Status = "running";
 
+        await _db.SaveChangesAsync(ct); // ledger.Id を確定させる
+
+        // ブランチ名は worktree 作成前に確定させ、即座に ledger へ保存しておく。
+        // こうしておかないと、CooperateAsync 実行中にプロセスが落ちた場合
+        // （kill/クラッシュで finally が走らない場合）、"running" のまま残ったledgerから
+        // どの worktree を指していたか分からず孤児化する（起動時 reconciliation が回収できなくなる）。
+        var branchName = $"pulse/{DateTime.UtcNow:yyyyMMdd-HHmmss}-{ledger.Id}";
+        ledger.BranchName = branchName;
         await _db.SaveChangesAsync(ct);
 
         try
         {
-            var branchName = $"pulse/{DateTime.UtcNow:yyyyMMdd-HHmmss}-{ledger.Id}";
             var diffSummary = await _gitPulseSource.GetDiffSummaryAsync(project.RootPath, oldHash, newHash)
                               ?? "(no diff)";
 
@@ -159,13 +166,34 @@ Project: {project.Name} ({project.RootPath})";
                 var agentNames = project.Agents?.Select(a => a.RoleName).Where(n => !string.IsNullOrEmpty(n)).ToList();
                 var onStepComplete = BuildStepCallback(project.Id);
 
+                // AgentStep.MessageId / Message.ChatSessionId は NOT NULL の外部キーなので、
+                // CooperateAsync に渡す前に実在する ChatSession/Message 行を作っておく必要がある。
+                // 以前は messageId: 0 / chatSessionId: null のダミー値を渡しており、
+                // 参照先が存在せず SQLite の FOREIGN KEY constraint failed で
+                // AutoFix ループ全体が必ず失敗していた。
+                var pulseSession = new ChatSession
+                {
+                    UserId = project.UserId,
+                    ProjectId = project.Id,
+                    Title = $"Pulse AutoFix: {branchName}",
+                    PreferredProvider = "opencode"
+                };
+                _db.ChatSessions.Add(pulseSession);
+                await _db.SaveChangesAsync(ct);
+
+                var pulseUserMsg = new Message { ChatSessionId = pulseSession.Id, Content = agentTask, IsAi = false };
+                var pulseAiMsg = new Message { ChatSessionId = pulseSession.Id, Content = "", IsAi = true, AgentName = "Multi-Agent" };
+                _db.Messages.Add(pulseUserMsg);
+                _db.Messages.Add(pulseAiMsg);
+                await _db.SaveChangesAsync(ct); // pulseAiMsg.Id を確定させる
+
                 _logger.LogInformation("Starting CooperateAsync for project {ProjectId} on branch {Branch}", project.Id, branchName);
 
                 var (htmlOutput, steps) = await _aiService.CooperateAsync(
                     agentTask,
-                    userId: 1,
-                    messageId: 0,
-                    chatSessionId: null,
+                    userId: project.UserId,
+                    messageId: pulseAiMsg.Id,
+                    chatSessionId: pulseSession.Id,
                     provider: "opencode",
                     selectedAgentNames: agentNames,
                     onStepComplete: onStepComplete);
@@ -197,9 +225,9 @@ Project: {project.Name} ({project.RootPath})";
                     ledger.ResultSummary = $"AutoFix failed: Accuracy={accuracy?.ToString("0.00") ?? "N/A"}, Safety={safety?.ToString("0.00") ?? "N/A"}. Branch '{branchName}' {(keepFailedBranches ? "kept for review" : "deleted")}.";
 
                     if (!keepFailedBranches && worktreePath != null)
-                        await _worktreeManager.RemoveAsync(worktreePath, branchName, deleteBranch: true, ct);
+                        await _worktreeManager.RemoveAsync(project.RootPath, worktreePath, branchName, deleteBranch: true, ct);
                     else if (worktreePath != null)
-                        await _worktreeManager.RemoveAsync(worktreePath, branchName, deleteBranch: false, ct);
+                        await _worktreeManager.RemoveAsync(project.RootPath, worktreePath, branchName, deleteBranch: false, ct);
 
                     worktreePath = null;
                     ledger.CompletedAt = DateTime.UtcNow;
@@ -216,7 +244,7 @@ Project: {project.Name} ({project.RootPath})";
                 ledger.CompletedAt = DateTime.UtcNow;
 
                 if (worktreePath != null)
-                    await _worktreeManager.RemoveAsync(worktreePath, branchName, deleteBranch: false, ct);
+                    await _worktreeManager.RemoveAsync(project.RootPath, worktreePath, branchName, deleteBranch: false, ct);
 
                 worktreePath = null;
             }
@@ -226,7 +254,7 @@ Project: {project.Name} ({project.RootPath})";
                 {
                     try
                     {
-                        await _worktreeManager.RemoveAsync(worktreePath, branchName, deleteBranch: false, ct);
+                        await _worktreeManager.RemoveAsync(project.RootPath, worktreePath, branchName, deleteBranch: false, ct);
                     }
                     catch (Exception ex)
                     {

@@ -6,7 +6,7 @@ type: user
 userId: 1
 tags: bugfix,Razor,select
 relations: _SectionInteractiveForm.cshtml,ProjectApiController.cs
-relevanceScore: 80
+relevanceScore: 76
 accessCount: 18
 createdAt: 2026-07-01T06:21:33.7149000Z
 lastAccessedAt: 2026-07-01T23:54:00.5060557Z

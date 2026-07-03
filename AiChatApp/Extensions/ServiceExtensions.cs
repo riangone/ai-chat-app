@@ -77,12 +77,17 @@ public static class ServiceExtensions
         // 毎朝7時に米中日のニュースを自動収集
         services.AddHostedService<NewsBriefingScheduler>();
 
+        // ProjectPulseService は「常に DI から解決できる」ようにシングルトン登録しておく。
+        // 管理者による手動トリガー(POST /pulse-ledger/trigger)は ProactiveSettings:Enabled が
+        // false でも動作させたいため、IHostedService としての自動起動とは切り離す。
+        services.AddSingleton<ProjectPulseService>();
+
         var proactiveEnabled = configuration.GetValue<bool>("ProactiveSettings:Enabled");
         if (proactiveEnabled)
         {
             // ENABLED: Proactive Scanning (Sentinel Phase)
             services.AddHostedService<FileWatcherService>();
-            services.AddHostedService<ProjectPulseService>();
+            services.AddHostedService(sp => sp.GetRequiredService<ProjectPulseService>());
             services.AddHostedService<ReminderService>();
         }
 

@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: suggestion,configuration,timeout
 relations: Antigravity,WaitMsBeforeAsync
-relevanceScore: 76
+relevanceScore: 72
 accessCount: 0
 createdAt: 2026-07-02T02:35:26.9117737Z
 lastAccessedAt: 2026-07-02T02:35:26.9117738Z

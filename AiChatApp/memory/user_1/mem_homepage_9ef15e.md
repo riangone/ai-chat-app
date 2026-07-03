@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: homepage,pagination,lazy_load,_SectionFancyDiaryList.cshtml
 relations: 主页卡片流,_SectionFancyDiaryList.cshtml,HomePage.yaml,diary_list,pageSize
-relevanceScore: 30
+relevanceScore: 22
 accessCount: 9
 createdAt: 2026-06-28T13:03:36.9336385Z
 lastAccessedAt: 2026-07-01T04:06:03.1887950Z

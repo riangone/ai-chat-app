@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: environment,oracle-cloud,dotnet-core,domain
 relations: Oracle Cloud VM,ASP.NET Core,https://nyf.0101.click/
-relevanceScore: 80
+relevanceScore: 76
 accessCount: 0
 createdAt: 2026-07-02T04:55:28.5956233Z
 lastAccessedAt: 2026-07-02T04:55:28.5956235Z

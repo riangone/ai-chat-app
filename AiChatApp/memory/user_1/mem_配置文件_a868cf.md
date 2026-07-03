@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: 配置文件,路径,系统设定
 relations: settings.json,系统设定
-relevanceScore: 76
+relevanceScore: 72
 accessCount: 0
 createdAt: 2026-07-02T02:57:34.8971943Z
 lastAccessedAt: 2026-07-02T02:57:34.8971945Z

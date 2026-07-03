@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: 需求,ai-chat-pro,agy-cli,代码修改
 relations: ai-chat-pro,agy CLI
-relevanceScore: 88
+relevanceScore: 84
 accessCount: 0
 createdAt: 2026-07-02T03:47:59.4225830Z
 lastAccessedAt: 2026-07-02T03:48:06.5095819Z

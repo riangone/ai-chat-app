@@ -5,7 +5,7 @@ type: user
 userId: 1
 tags: 代码审查,超时,同步阻塞
 relations: DiaryCompanionHooks.cs,Task.WhenAny
-relevanceScore: 53
+relevanceScore: 47
 accessCount: 0
 createdAt: 2026-07-01T12:46:59.6074194Z
 lastAccessedAt: 2026-07-01T12:46:59.6074196Z
