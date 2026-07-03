@@ -2566,13 +2566,13 @@ function handleSuggestionAction(command, payload) {
             if (status) status.style.display = 'flex';
 
             const abortCtrl = new AbortController();
-            const TIMEOUT_MS = 100000;
+            const TIMEOUT_MS = 600000;
             const timeoutId = setTimeout(() => abortCtrl.abort(), TIMEOUT_MS);
-            // Hard fallback: force-hide after 110s no matter what
+            // Hard fallback: force-hide after 610s no matter what
             const hardHideId = setTimeout(() => {
                 if (status) status.style.display = 'none';
                 if (btn) btn.disabled = false;
-            }, 110000);
+            }, 610000);
 
             // Animated dots while waiting
             let dotCount = 0;
@@ -2623,7 +2623,7 @@ function handleSuggestionAction(command, payload) {
             } catch (e) {
                 clearTimeout(timeoutId);
                 console.error('generateCourse', e);
-                if (statusText) statusText.textContent = e.name === 'AbortError' ? '生成がタイムアウトしました (2分)' : 'エラーが発生しました';
+                if (statusText) statusText.textContent = e.name === 'AbortError' ? '生成がタイムアウトしました (10分)' : 'エラーが発生しました';
             } finally {
                 clearInterval(dotTimer);
                 clearTimeout(timeoutId);
@@ -3738,7 +3738,7 @@ function handleSuggestionAction(command, payload) {
             }
         });
 
-        htmx.config.timeout = 120000; // 120 seconds global timeout
+        htmx.config.timeout = 600000; // 600 seconds global timeout
 
         // Global HTMX Error Handling
         // Mark lazy-loaded panels as done only after successful HTMX swap

@@ -6,9 +6,9 @@ userId: 1
 tags: technical_detail,routing,DashboardController,NetYamlForge
 relations: NetYamlForge,DashboardController,HomePage
 relevanceScore: 80
-accessCount: 35
+accessCount: 39
 createdAt: 2026-06-28T01:21:43.4857971Z
-lastAccessedAt: 2026-06-30T23:10:18.9331243Z
+lastAccessedAt: 2026-07-03T01:10:35.5119906Z
 boundAgentRole: 
 ---
 

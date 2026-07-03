@@ -34,8 +34,8 @@ public class CliExecutorService : ICliExecutor, IDisposable
         try { _lmStudio = serviceProvider.GetRequiredService<LmStudioProvider>(); } catch { }
     }
 
-    private string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "antigravity";
-    private string FallbackProvider => _config["AiSettings:FallbackProvider"] ?? "antigravity";
+    private string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "opencode";
+    private string FallbackProvider => _config["AiSettings:FallbackProvider"] ?? "opencode";
 
     private class ActivityTimeRef
     {

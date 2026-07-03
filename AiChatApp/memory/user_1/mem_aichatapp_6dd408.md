@@ -8,9 +8,9 @@ userId: 1
 tags: AiChatApp,Bug修复,BatchJobExecutor,定时任务
 relations: BatchJobExecutor.cs,AutomatedBlogGenerator,OutboxJob,AgentProfile,PreferredModel,PreferredVariant,footer.html,Agent chip
 relevanceScore: 90
-accessCount: 89
+accessCount: 157
 createdAt: 2026-06-24T23:40:23.0274516Z
-lastAccessedAt: 2026-07-01T04:03:30.6607523Z
+lastAccessedAt: 2026-07-03T03:43:47.8699438Z
 boundAgentRole: 
 ---
 

@@ -24,11 +24,12 @@ public class AiCollaborationService
     private readonly ICliExecutor _cliExecutor;
     private readonly AiPromptService _promptService;
     private readonly AiResponseProcessor _responseProcessor;
+    private readonly IConfiguration _config;
     private readonly ILogger<AiCollaborationService> _logger;
 
     public AiCollaborationService(
-        AppDbContext db, 
-        MemorySearchService memorySearch, 
+        AppDbContext db,
+        MemorySearchService memorySearch,
         SessionMemoryService sessionMemory,
         SkillManagerService skillManager,
         PipelineLoaderService pipelineLoader,
@@ -38,6 +39,7 @@ public class AiCollaborationService
         ICliExecutor cliExecutor,
         AiPromptService promptService,
         AiResponseProcessor responseProcessor,
+        IConfiguration config,
         ILogger<AiCollaborationService> logger)
     {
         _db = db;
@@ -51,12 +53,15 @@ public class AiCollaborationService
         _cliExecutor = cliExecutor;
         _promptService = promptService;
         _responseProcessor = responseProcessor;
+        _config = config;
         _logger = logger;
     }
 
+    private string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "opencode";
+
     public async Task<(string Html, List<AgentStep> Steps)> CooperateAsync(string task, int userId, int messageId, int? chatSessionId, string? provider = null, List<string>? selectedAgentNames = null, Func<string, string, Task>? onStepComplete = null, CrewProcessType processType = CrewProcessType.Hierarchical, Func<string, string, Task>? onStepProgress = null)
     {
-        var targetProvider = provider ?? "antigravity"; // Default to antigravity if not provided
+        var targetProvider = provider ?? DefaultProvider; // Falls back to AiSettings:DefaultProvider (appsettings.json)
         var workingDir = await GetProjectRootAsync(chatSessionId);
         task = _promptService.ResolveImageReferences(task, workingDir);
         var steps = new List<AgentStep>();

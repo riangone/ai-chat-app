@@ -29,6 +29,8 @@ public class AppDbContext : DbContext
     public DbSet<PromptVariant> PromptVariants => Set<PromptVariant>();
     public DbSet<VocabCard> VocabCards => Set<VocabCard>();
     public DbSet<Course> Courses => Set<Course>();
+    public DbSet<ProjectPulseLedger> ProjectPulseLedgers => Set<ProjectPulseLedger>();
+    public DbSet<ProjectPulseCursor> ProjectPulseCursors => Set<ProjectPulseCursor>();
     public DbSet<Lesson> Lessons => Set<Lesson>();
     public DbSet<UserLessonProgress> UserLessonProgresses => Set<UserLessonProgress>();
 
@@ -69,5 +71,13 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<VocabCard>()
             .HasIndex(v => new { v.UserId, v.NextReviewAt });
+
+        modelBuilder.Entity<ProjectPulseLedger>()
+            .HasIndex(l => new { l.ProjectId, l.SourceType, l.SourceKey })
+            .HasDatabaseName("IX_ProjectPulseLedgers_Dedup")
+            .IsUnique();
+
+        modelBuilder.Entity<ProjectPulseCursor>()
+            .HasKey(c => c.ProjectId);
     }
 }

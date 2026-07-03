@@ -288,14 +288,15 @@ public static class HarnessEndpoints
             return Results.Ok(stats);
         });
 
-        group.MapGet("/visualizer/model-stats-html", async (AppDbContext db) => {
+        group.MapGet("/visualizer/model-stats-html", async (AppDbContext db, IConfiguration config) => {
             // 获取所有步骤，包括 Provider 字段和 session 信息
+            var defaultProvider = config["AiSettings:DefaultProvider"] ?? "opencode";
             var stepsWithInfo = await db.AgentSteps
                 .Include(s => s.Evaluations)
                 .Join(db.Messages, s => s.MessageId, m => m.Id, (s, m) => new { Step = s, m.ChatSessionId })
                 .Join(db.ChatSessions, x => x.ChatSessionId, cs => cs.Id, (x, cs) => new {
                     Step = x.Step,
-                    SessionProvider = (cs.PreferredProvider ?? "antigravity").ToLower()
+                    SessionProvider = (cs.PreferredProvider ?? defaultProvider).ToLower()
                 })
                 .ToListAsync();
 

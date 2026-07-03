@@ -5,10 +5,10 @@ type: user
 userId: 1
 tags: bug_fix,sql,diary-companion
 relations: HomePage.yaml,DiaryForm.yaml,ImageBase64,ImageLabel
-relevanceScore: 80
-accessCount: 17
+relevanceScore: 72
+accessCount: 21
 createdAt: 2026-06-28T02:14:41.3138932Z
-lastAccessedAt: 2026-06-30T06:03:41.8540480Z
+lastAccessedAt: 2026-07-02T09:09:24.9167288Z
 boundAgentRole: 
 ---
 

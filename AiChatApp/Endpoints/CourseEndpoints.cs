@@ -206,9 +206,9 @@ Requirements:
             {
                 await Send("status", "AIがカリキュラムを設計中");
                 var executeTask = cli.ExecuteAsync(prompt, "gemini");
-                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(90));
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(600));
                 if (await Task.WhenAny(executeTask, timeoutTask) == timeoutTask)
-                    throw new TimeoutException("AI生成がタイムアウトしました (90秒)");
+                    throw new TimeoutException("AI生成がタイムアウトしました (10分)");
                 var result = await executeTask;
                 var raw = result.Output?.Trim() ?? "";
 

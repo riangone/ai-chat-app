@@ -5,6 +5,7 @@ using AiChatApp.Services;
 using Microsoft.EntityFrameworkCore;
 using System.Net;
 using System.Security.Claims;
+using System.Text.RegularExpressions;
 
 namespace AiChatApp.Endpoints;
 
@@ -49,11 +50,14 @@ public static class TodoEndpoints
                 return Results.BadRequest();
 
             var userId = int.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var (cleanTitle, dueDate) = ParseNaturalLanguageDate(title);
+
             var item = new TodoItem 
             { 
-                Title = title.Trim(),
+                Title = cleanTitle,
                 UserId = userId,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow,
+                DueDate = dueDate
             };
             db.TodoItems.Add(item);
             await db.SaveChangesAsync();
@@ -213,7 +217,78 @@ public static class TodoEndpoints
                 hx-confirm="Delete this todo?">
                 ✕
               </button>
-            </li>
             """;
+    }
+
+    private static (string cleanTitle, DateTime? dueDate) ParseNaturalLanguageDate(string rawTitle)
+    {
+        string cleanTitle = rawTitle.Trim();
+        DateTime? dueDate = null;
+
+        // Convert UTC now to Tokyo standard time (JST) for context
+        var nowJst = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Tokyo Standard Time"));
+
+        // Match patterns like: "今夜20時", "明日10:30"
+        var match = Regex.Match(cleanTitle, @"(今日|今夜|明日|明後日)\s*([0-2]?\d)[時:：]([0-5]?\d)?分?");
+        if (match.Success)
+        {
+            string dayStr = match.Groups[1].Value;
+            int hour = int.Parse(match.Groups[2].Value);
+            int minute = match.Groups[3].Success ? int.Parse(match.Groups[3].Value) : 0;
+
+            DateTime targetDateJst = nowJst.Date;
+            if (dayStr == "明日")
+            {
+                targetDateJst = targetDateJst.AddDays(1);
+            }
+            else if (dayStr == "明後日")
+            {
+                targetDateJst = targetDateJst.AddDays(2);
+            }
+
+            try
+            {
+                var dueDateJst = new DateTime(targetDateJst.Year, targetDateJst.Month, targetDateJst.Day, hour, minute, 0, DateTimeKind.Unspecified);
+                dueDate = TimeZoneInfo.ConvertTimeToUtc(dueDateJst, TimeZoneInfo.FindSystemTimeZoneById("Tokyo Standard Time"));
+                
+                var cleanRegex = new Regex(@"(、)?\s*" + Regex.Escape(match.Value) + @"(に?(通知して|リマインドして|教えて|アラーム| reminder)?)*", RegexOptions.IgnoreCase);
+                cleanTitle = cleanRegex.Replace(cleanTitle, "").Trim();
+                cleanTitle = Regex.Replace(cleanTitle, @"[，,、。！？!?]$", "").Trim();
+            }
+            catch {}
+        }
+        else
+        {
+            // Match time-only pattern: "20時", "15:30"
+            var matchTimeOnly = Regex.Match(cleanTitle, @"([0-2]?\d)[時:：]([0-5]?\d)?分?");
+            if (matchTimeOnly.Success)
+            {
+                int hour = int.Parse(matchTimeOnly.Groups[1].Value);
+                int minute = matchTimeOnly.Groups[2].Success ? int.Parse(matchTimeOnly.Groups[2].Value) : 0;
+                
+                DateTime targetDateJst = nowJst.Date;
+                var dueDateJst = new DateTime(targetDateJst.Year, targetDateJst.Month, targetDateJst.Day, hour, minute, 0, DateTimeKind.Unspecified);
+                if (dueDateJst < nowJst)
+                {
+                    dueDateJst = dueDateJst.AddDays(1);
+                }
+
+                try
+                {
+                    dueDate = TimeZoneInfo.ConvertTimeToUtc(dueDateJst, TimeZoneInfo.FindSystemTimeZoneById("Tokyo Standard Time"));
+                    var cleanRegex = new Regex(@"(、)?\s*" + Regex.Escape(matchTimeOnly.Value) + @"(に?(通知して|リマインドして|教えて|アラーム| reminder)?)*", RegexOptions.IgnoreCase);
+                    cleanTitle = cleanRegex.Replace(cleanTitle, "").Trim();
+                    cleanTitle = Regex.Replace(cleanTitle, @"[，,、。！？!?]$", "").Trim();
+                }
+                catch {}
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(cleanTitle))
+        {
+            cleanTitle = rawTitle;
+        }
+
+        return (cleanTitle, dueDate);
     }
 }

@@ -47,8 +47,8 @@ public class AiService
         _headroom = headroom;
     }
 
-    public string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "antigravity";
-    public string FallbackProvider => _config["AiSettings:FallbackProvider"] ?? "antigravity";
+    public string DefaultProvider => _config["AiSettings:DefaultProvider"] ?? "opencode";
+    public string FallbackProvider => _config["AiSettings:FallbackProvider"] ?? "opencode";
 
     public async Task<List<AgentDefinition>> GetAvailableAgentsAsync(int userId)
     {

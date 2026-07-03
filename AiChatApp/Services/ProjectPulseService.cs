@@ -1,168 +1,135 @@
-using System;
-using System.Diagnostics;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
+using AiChatApp.Data;
+using AiChatApp.Models;
+using AiChatApp.Services.Pulse;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Configuration;
-using AiChatApp.Models;
-using AiChatApp.Data;
-using Microsoft.EntityFrameworkCore;
 
-namespace AiChatApp.Services
+namespace AiChatApp.Services;
+
+public class ProjectPulseService : BackgroundService
 {
-    /// <summary>
-    /// 项目脉搏服务：使用 Git 增量扫描项目状态（哨兵阶段），并驱动主动分析。
-    /// </summary>
-    public class ProjectPulseService : BackgroundService
+    private readonly IServiceProvider _serviceProvider;
+    private readonly ILogger<ProjectPulseService> _logger;
+    private readonly IConfiguration _configuration;
+    private readonly TimeSpan _checkInterval = TimeSpan.FromMinutes(10);
+
+    public ProjectPulseService(
+        IServiceProvider serviceProvider,
+        ILogger<ProjectPulseService> logger,
+        IConfiguration configuration)
     {
-        private readonly IServiceProvider _serviceProvider;
-        private readonly ILogger<ProjectPulseService> _logger;
-        private readonly IConfiguration _configuration;
-        private readonly TimeSpan _checkInterval = TimeSpan.FromMinutes(10);
-        private string? _lastProcessedCommit;
+        _serviceProvider = serviceProvider;
+        _logger = logger;
+        _configuration = configuration;
+    }
 
-        public ProjectPulseService(
-            IServiceProvider serviceProvider,
-            ILogger<ProjectPulseService> logger,
-            IConfiguration configuration)
-        {
-            _serviceProvider = serviceProvider;
-            _logger = logger;
-            _configuration = configuration;
-        }
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _logger.LogInformation("ProjectPulseService (Loop) started with multi-project Git scanning.");
 
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-        {
-            _logger.LogInformation("ProjectPulseService (Sentinel) started with Git incremental scanning.");
+        await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
 
-            await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
-
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                try
-                {
-                    await PerformPulseCheckAsync(stoppingToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error during project pulse check.");
-                }
-
-                await Task.Delay(_checkInterval, stoppingToken);
-            }
-        }
-
-        private async Task PerformPulseCheckAsync(CancellationToken stoppingToken)
-        {
-            if (!_configuration.GetValue<bool>("ProactiveSettings:Enabled"))
-            {
-                _logger.LogDebug("Sentinel (ProjectPulse) is disabled via configuration.");
-                return;
-            }
-
-            var watchPath = _configuration.GetValue<string>("FileWatcher:Path") ?? Directory.GetCurrentDirectory();
-            
-            // 1. 获取当前 Git Hash
-            var currentCommit = await GetCurrentCommitHashAsync(watchPath);
-            if (string.IsNullOrEmpty(currentCommit)) return;
-
-            // 2. 如果是首次运行或 Hash 未变，跳过分析
-            if (_lastProcessedCommit == null)
-            {
-                _lastProcessedCommit = currentCommit;
-                _logger.LogDebug("Sentinel initialized at commit {Hash}", currentCommit);
-                return;
-            }
-
-            if (_lastProcessedCommit == currentCommit)
-            {
-                _logger.LogDebug("No new commits detected. Sentinel sleeping.");
-                return;
-            }
-
-            // 3. 获取增量内容 (Git Diff Summary)
-            var diffSummary = await GetDiffSummaryAsync(watchPath, _lastProcessedCommit, currentCommit);
-            
-            if (!string.IsNullOrWhiteSpace(diffSummary))
-            {
-                _logger.LogInformation("Significant changes detected between {Old} and {New}. Triggering AI analysis.", _lastProcessedCommit, currentCommit);
-                
-                using var scope = _serviceProvider.CreateScope();
-                var proactiveBrain = scope.ServiceProvider.GetRequiredService<ProactiveBrainService>();
-                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-                // 获取一个活跃用户 ID 来进行通知 (演示逻辑)
-                var activeUserId = (await db.Users.Select(u => (int?)u.Id).FirstOrDefaultAsync()) ?? 1;
-                
-                // 触发 AI 分析 (使用 opencode 免费模型)
-                await proactiveBrain.AnalyzeProjectPulseAsync(diffSummary, activeUserId);
-            }
-
-            _lastProcessedCommit = currentCommit;
-        }
-
-        private async Task<string?> GetCurrentCommitHashAsync(string workingDir)
+        while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var psi = new ProcessStartInfo("git", "rev-parse HEAD")
-                {
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    WorkingDirectory = workingDir
-                };
-                using var proc = Process.Start(psi);
-                if (proc == null) return null;
-                var output = await proc.StandardOutput.ReadToEndAsync();
-                await proc.WaitForExitAsync();
-                return output.Trim();
+                await PerformPulseCheckAsync(stoppingToken);
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during project pulse check.");
+            }
+
+            await Task.Delay(_checkInterval, stoppingToken);
+        }
+    }
+
+    private async Task PerformPulseCheckAsync(CancellationToken ct)
+    {
+        if (!_configuration.GetValue<bool>("ProactiveSettings:Enabled"))
+        {
+            _logger.LogDebug("ProjectPulse is disabled via configuration.");
+            return;
         }
 
-        private async Task<string?> GetDiffSummaryAsync(string workingDir, string oldHash, string newHash)
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var gitPulseSource = scope.ServiceProvider.GetRequiredService<GitCommitPulseSource>();
+        var pulseAction = scope.ServiceProvider.GetRequiredService<PulseActionService>();
+
+        var projects = await db.Projects.Include(p => p.Agents).ToListAsync(ct);
+        var maxConcurrent = _configuration.GetValue<int>("ProactiveSettings:MaxConcurrentProjects");
+        if (maxConcurrent <= 0) maxConcurrent = 2;
+
+        using var semaphore = new SemaphoreSlim(maxConcurrent);
+
+        var tasks = projects.Select(async project =>
         {
+            await semaphore.WaitAsync(ct);
             try
             {
-                // 只看文件统计和摘要，避免内容过长超出 Token 限制（虽然 opencode 免费，但保持效率更好）
-                var psi = new ProcessStartInfo("git", $"diff --stat {oldHash} {newHash}")
-                {
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    WorkingDirectory = workingDir
-                };
-                using var proc = Process.Start(psi);
-                if (proc == null) return null;
-                var output = await proc.StandardOutput.ReadToEndAsync();
-                await proc.WaitForExitAsync();
-                
-                // For small change sets, fetch actual diff content (limited context lines)
-                if (output.Split('\n').Length < 20)
-                {
-                    var psiDetail = new ProcessStartInfo("git", $"diff -U1 {oldHash} {newHash}")
-                    {
-                        RedirectStandardOutput = true,
-                        UseShellExecute = false,
-                        WorkingDirectory = workingDir
-                    };
-                    using var procDetail = Process.Start(psiDetail);
-                    var detail = await procDetail!.StandardOutput.ReadToEndAsync();
-                    await procDetail.WaitForExitAsync();
-
-                    // Truncate to avoid overwhelming the AI with large diffs
-                    const int maxDiffChars = 3000;
-                    return detail.Length > maxDiffChars
-                        ? detail[..maxDiffChars] + "\n... [diff truncated]"
-                        : detail;
-                }
-
-                return output;
+                await ProcessProjectAsync(project, db, gitPulseSource, pulseAction, ct);
             }
-            catch { return null; }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task ProcessProjectAsync(
+        Project project,
+        AppDbContext db,
+        GitCommitPulseSource gitPulseSource,
+        PulseActionService pulseAction,
+        CancellationToken ct)
+    {
+        try
+        {
+            var currentHash = await gitPulseSource.GetCurrentCommitHashAsync(project.RootPath);
+            if (string.IsNullOrEmpty(currentHash))
+            {
+                _logger.LogDebug("Project {ProjectId} ({Name}) is not a git repository, skipping.", project.Id, project.Name);
+                return;
+            }
+
+            var cursor = await db.ProjectPulseCursors
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.ProjectId == project.Id, ct);
+
+            if (cursor == null)
+            {
+                cursor = new ProjectPulseCursor
+                {
+                    ProjectId = project.Id,
+                    LastKnownHash = currentHash,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.ProjectPulseCursors.Add(cursor);
+                await db.SaveChangesAsync(ct);
+                _logger.LogDebug("Initialized cursor for project {Name} at {Hash}", project.Name, currentHash[..8]);
+                return;
+            }
+
+            if (cursor.LastKnownHash == currentHash)
+            {
+                _logger.LogDebug("No new commits for project {Name}.", project.Name);
+                return;
+            }
+
+            var sourceKey = $"{cursor.LastKnownHash}..{currentHash}";
+            _logger.LogInformation("Detected changes for project {Name}: {Key}", project.Name, sourceKey);
+
+            await pulseAction.ExecuteAsync(project, sourceKey, cursor.LastKnownHash, currentHash, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing project {Name} (Id={Id})", project.Name, project.Id);
         }
     }
 }

@@ -2,6 +2,7 @@ using AiChatApp.Data;
 using AiChatApp.Hubs;
 using AiChatApp.Services;
 using AiChatApp.Services.Harness;
+using AiChatApp.Services.Pulse;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.SignalR;
@@ -46,9 +47,12 @@ public static class ServiceExtensions
         services.AddSingleton<ProactiveBrainService>();
         services.AddSingleton<WebPushService>();
         services.AddSingleton<NewsCacheService>();
+        services.AddSingleton<WorktreeManagerService>();
+        services.AddScoped<GitCommitPulseSource>();
+        services.AddScoped<PulseActionService>();
         services.AddHttpClient<LmStudioProvider>(client =>
         {
-            client.Timeout = TimeSpan.FromSeconds(300);
+            client.Timeout = TimeSpan.FromSeconds(1200);
         });
 
         services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options => {

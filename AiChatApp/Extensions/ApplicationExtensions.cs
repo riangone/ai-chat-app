@@ -427,6 +427,32 @@ public static class ApplicationExtensions
         command.CommandText = "CREATE INDEX IF NOT EXISTS IX_UserLessonProgresses_UserId ON UserLessonProgresses (UserId, LessonId);";
         command.ExecuteNonQuery();
 
+        // ProjectPulseLedgers table (Loop Engineering: state ledger)
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS ProjectPulseLedgers (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ProjectId INTEGER NOT NULL,
+                SourceType TEXT NOT NULL DEFAULT 'git_commit',
+                SourceKey TEXT NOT NULL,
+                Status TEXT NOT NULL DEFAULT 'pending',
+                BranchName TEXT,
+                ResultSummary TEXT,
+                CreatedAt TEXT NOT NULL,
+                CompletedAt TEXT
+            );";
+        command.ExecuteNonQuery();
+        command.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS IX_ProjectPulseLedgers_Dedup ON ProjectPulseLedgers(ProjectId, SourceType, SourceKey);";
+        command.ExecuteNonQuery();
+
+        // ProjectPulseCursors table (Loop Engineering: per-project cursor)
+        command.CommandText = @"
+            CREATE TABLE IF NOT EXISTS ProjectPulseCursors (
+                ProjectId INTEGER PRIMARY KEY,
+                LastKnownHash TEXT NOT NULL,
+                UpdatedAt TEXT NOT NULL
+            );";
+        command.ExecuteNonQuery();
+
         // Add PlanModeEnabled to ChatSessions if missing
         command.CommandText = "PRAGMA table_info(ChatSessions);";
         var sessionColumns2 = new List<string>();

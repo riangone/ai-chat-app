@@ -96,7 +96,7 @@ public static class BriefingEndpoints
                 _ => "晚上好"
             };
 
-            // Call Antigravity for a dynamic greeting
+            // 调用默认 AI Provider（AiSettings:DefaultProvider）生成动态问候语
             string aiGreeting = "";
             try 
             {

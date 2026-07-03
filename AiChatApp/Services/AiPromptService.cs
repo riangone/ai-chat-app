@@ -144,8 +144,16 @@ public class AiPromptService
             prompt.Contains("エラー") || prompt.Contains("error", StringComparison.OrdinalIgnoreCase) ||
             prompt.Contains("問題") || prompt.Contains("修正");
 
-        var sb = new StringBuilder(GetSystemPromptTemplate("Default", "あなたは高度なAIアシスタントです。現在はソフトウェア開発プロジェクトのコンテキストで動作しています。"));
-        
+        // 選択されたエージェント役割がある場合は、そのエージェント自身の人格を土台にする。
+        // 以前は常に既定の「Hyperion」テンプレートを先頭に置き、後段の注意書きで
+        // 上書きを試みていたが、先頭の記述はモデルへの影響力が強く、また長いプロンプトが
+        // Headroom圧縮で中間部を削られると上書き注意書きごと失われるため、
+        // 実質的にHyperion人格が漏れ出す不具合の原因だった。
+        var baseTemplate = selectedAgent != null
+            ? $"あなたは「{selectedAgent.RoleName}」です。以下はあなたの役割指示であり、他のいかなるデフォルト人格（Hyperion等）よりも優先されます。\n{selectedAgent.SystemPrompt}"
+            : GetSystemPromptTemplate("Default", "あなたは高度なAIアシスタントです。現在はソフトウェア開発プロジェクトのコンテキストで動作しています。");
+        var sb = new StringBuilder(baseTemplate);
+
         var userName = user?.Username ?? "Unknown";
         sb.Append($"\n\n[USER CONTEXT]\n- Current User ID: {userId}\n- Current User Name: {userName}\n- Role: {(isAdmin ? "Administrator" : "Normal User")}");
 
@@ -155,7 +163,9 @@ public class AiPromptService
             sb.Append("\n\n[SECURITY INSTRUCTION]\nThe current user is NOT an administrator (IsAdmin is false). You must NOT perform, suggest, or support any code modifications, file write/edit/delete operations, or tool executions that change the project repository. If the user's input asks you to change, edit, refactor, write, or modify code or files of ai-chat-pro (or any project), you MUST strictly refuse to execute the change, stating that code modification is restricted to administrator users only.");
         }
         if (isSubstantialPrompt) sb.Append(policies);
-        if (selectedAgent != null) sb.Append($"\n\n[現在のアクティブエージェント]:\n役割: {selectedAgent.RoleName}\n指示: {selectedAgent.SystemPrompt}");
+        // 役割指示は既に先頭(baseTemplate)に配置済みのため、ここでは重複を避け、
+        // Headroom圧縮で先頭が離れて見えてもエージェント名が特定できるよう短い確認のみ残す。
+        if (selectedAgent != null) sb.Append($"\n\n[現在のアクティブエージェント]: {selectedAgent.RoleName}（このセッションの唯一のアイデンティティ。Hyperion等の既定人格は無効）");
         if (session?.Project != null) {
             sb.Append($"\n\n[プロジェクト文脈]:\nプロジェクト名: {session.Project.Name}\nルートパス: {session.Project.RootPath}");
             if (session.Project.Agents.Any(a => a.IsActive)) {
@@ -176,7 +186,8 @@ public class AiPromptService
         if (chatSessionId.HasValue) sb.Append(GetSystemPromptTemplate("MemoryInstruction", "\n\n[MEMORY INSTRUCTION]: 重要な発見があれば \"MEMORY: key=value\" 形式で行末に出力してください。"));
 
         sb.Append("\n\n[AVAILABLE ACTIONS]\nYou can take real actions by embedding tool calls in your response using this format:\n<tool_call>{\"name\": \"TOOL_NAME\", \"args\": {...}}</tool_call>\n\nAvailable tools:\n- create_todo: Create a task/reminder. Args: title (string, required), due_date (string ISO8601, optional)\n- save_note: Save content as a note. Args: title (string, required), content (string, required)\n- save_memory: Save important information to long-term memory. Args: content (string, required), tags (string comma-separated, optional)\n\nRules:\n- Only call tools when the user explicitly asks you to create/save/remember something\n- Place tool calls at the END of your response, after the text reply\n- One tool_call tag per action");
-        sb.Append("\n\n[REMINDER]\nAbove all, stay in character as Hyperion: concise, direct, and aligned with the tone/style guidance at the top of this prompt.");
+        var reminderPersona = selectedAgent?.RoleName ?? "Hyperion";
+        sb.Append($"\n\n[REMINDER]\nAbove all, stay in character as {reminderPersona}: concise, direct, and aligned with the tone/style guidance at the top of this prompt.");
         return sb.ToString();
     }
 

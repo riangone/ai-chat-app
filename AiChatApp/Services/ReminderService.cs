@@ -57,12 +57,44 @@ public class ReminderService : BackgroundService
             {
                 _logger.LogInformation("Sending reminder for task: {Title} to user {UserId}", task.Title, task.UserId);
                 
+                string content = $"您有一个即将到期的任务：**{task.Title}**";
+
+                // Hyperion Optimization: If the task is related to timesheet submission, run the timesheet generator to include a summary
+                if (task.Title.Contains("勤務表") || task.Title.ToLower().Contains("timesheet"))
+                {
+                    try
+                    {
+                        var processInfo = new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = "python3",
+                            Arguments = "/home/ubuntu/ws/ai-chat-app/AiChatApp/Scripts/generate_timesheet.py",
+                            RedirectStandardOutput = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        };
+                        using var process = System.Diagnostics.Process.Start(processInfo);
+                        if (process != null)
+                        {
+                            string output = await process.StandardOutput.ReadToEndAsync();
+                            await process.WaitForExitAsync();
+                            if (!string.IsNullOrWhiteSpace(output))
+                            {
+                                content += $"\n\n### 📊 今日自动生成的工作简报建议：\n{output}";
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to run generate_timesheet.py dynamically for task reminder");
+                    }
+                }
+
                 // 1. Send via ProactiveBrain (SignalR + Web Push)
                 await brain.SendSuggestionAsync(new ProactiveSuggestion
                 {
                     UserId = task.UserId,
                     Title = "任务提醒",
-                    Content = $"您有一个即将到期的任务：**{task.Title}**",
+                    Content = content,
                     Type = "task",
                     Actions = new List<SuggestionAction>
                     {

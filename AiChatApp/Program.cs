@@ -65,6 +65,7 @@ app.MapFinanceEndpoints();
 app.MapCrewEndpoints();
 app.MapVocabEndpoints();
 app.MapCourseEndpoints();
+app.MapPulseEndpoints();
 
 app.MapHub<ProactiveAgentHub>("/hub/proactive-agent");
 
